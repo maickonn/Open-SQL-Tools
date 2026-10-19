@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowDown, ArrowUp, Key, Plus, Save, Trash2, Undo2 } from 'lucide-react'
 import type { CheckDef, ColumnDef, DbEngine, FkAction, ForeignKeyDef, IndexDef, IndexType, PartitionMethod, Partitioning, TableStructure } from '@shared/model'
+import { joinType, splitType } from '@domain/sql/columnType'
 import type { SessionState } from '../../stores/workspaceStore'
 import { useWorkspace } from '../../stores/workspaceStore'
 import { Badge, Button, Checkbox, Field, IconButton, Input, SegmentedTabs, Select, Spinner, cx } from '../../components/ui'
@@ -11,15 +12,6 @@ type Section = 'columns' | 'indexes' | 'foreignKeys' | 'checks' | 'options' | 'p
 
 const FK_ACTIONS: FkAction[] = ['NO ACTION', 'RESTRICT', 'CASCADE', 'SET NULL', 'SET DEFAULT']
 
-/** Splits "varchar(255) unsigned" into base type, arguments and trailing modifiers. */
-export function splitType(fullType: string): { base: string; args: string; suffix: string } {
-  const m = /^([^(]+?)\s*(?:\(([^)]*)\))?\s*(.*)$/.exec(fullType.trim())
-  return m ? { base: m[1].trim(), args: m[2] ?? '', suffix: m[3].trim() } : { base: fullType, args: '', suffix: '' }
-}
-
-export function joinType(base: string, args: string, suffix: string): string {
-  return `${base}${args.trim() ? `(${args.trim()})` : ''}${suffix.trim() ? ` ${suffix.trim()}` : ''}`
-}
 
 const blankColumn = (engine: string): ColumnDef => ({
   name: '',
