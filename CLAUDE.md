@@ -23,7 +23,7 @@ npm run test:e2e:db -- postgres18 firebird5    # build + Playwright Electron flo
 npm run dist                # electron-builder installers
 ```
 
-- Integration tests (`tests/integration`) select servers through `DB_TARGETS` (comma-separated compose service names, see `tests/integration/targets.ts`); tests for servers that aren't reachable are skipped. `PERF=1` enables `perf.test.ts` (1M-row streaming benchmarks). `connectivity.test.ts` needs the `tools` profile services (`sshd`, `postgres18ssl`).
+- Integration tests (`tests/integration`) select servers through `DB_TARGETS` (comma-separated compose service names, see `tests/integration/targets.ts`); tests for servers that aren't reachable are skipped. `PERF=1` enables the benchmarks: `perf.test.ts` (1M-row streaming) and `sshPerf.test.ts` (object-tree browsing through the `sshd` tunnel with simulated latency, `PERF_RTT_MS`, default 60; prints timings in round trips). `connectivity.test.ts` needs the `tools` profile services (`sshd`, `postgres18ssl`).
 - E2E (`tests/e2e`) uses Playwright `_electron` against `out/`, so always build first. `OST_E2E_TARGETS` selects engines for `engines.spec.ts`; `OST_USER_DATA` gives the app an isolated profile directory.
 - Service names, ports and credentials are in `docker/compose.yml` and the README (MySQL/MariaDB `root`/`test`, PostgreSQL `postgres`/`test`, Firebird `SYSDBA`/`masterkey`, database `testdb`). Firebird 2.5 is a custom image built from the official tarball (`docker/firebird25`).
 
@@ -109,7 +109,8 @@ The renderer can't import `application`/`infrastructure` (only `shared`, `domain
 
 - **Main process** (`src/main`): composition root, window, IPC handlers (`ipc.ts`, typed by `IpcInvokeMap` in `src/shared/ipc.ts`), SQLite persistence (`node:sqlite`, no native modules), `safeStorage` secrets, AI agent loop (`agentGateway.ts` + `application/chat`).
 - **One Electron `utilityProcess` per DB session** (`infrastructure/db/worker/connectionWorker.ts` → `out/main/connectionWorker.js`). It hosts `application/session/sessionService.ts` and the drivers. The main process only brokers a `MessagePort`; the renderer then talks to the worker directly via `RpcEndpoint` (`src/shared/rpc.ts`), typed by `src/shared/workerApi.ts`. A new worker method must be added to `workerApi.ts`, `SessionService`, and the `METHODS` list in `connectionWorker.ts`.
-- Each session holds a **primary connection** (user queries) and a **meta connection** guarded by a mutex (catalog browsing, kills, AI reads), so long queries never block the object tree.
+- Each session holds a **primary connection** (user queries) and a **meta connection** guarded by a mutex (catalog browsing, kills, AI reads), so long queries never block the object tree. Both are opened concurrently in `openDatabase.ts`.
+- **Round trips are the main cost over SSH/WAN links.** Catalog queries go through `metaQuery` with `RunOptions.direct` (no server-side cursor, one round trip); prefer one combined query (e.g. `UNION ALL`) over several sequential ones in inspectors. The SSH tunnel disables Nagle (`setNoDelay`) on both legs. Measure changes with `sshPerf.test.ts`.
 - Query results stream as **columnar chunks** (`infrastructure/db/common/columnar.ts`) into `renderer/lib/resultSet.ts`, which the canvas grid (Glide Data Grid, `renderer/components/grid`) reads on demand. Rows never go into React state; notifications are rAF-coalesced.
 
 ### Database engines
@@ -118,7 +119,7 @@ Each engine in `infrastructure/db/{mysql-family,postgres,firebird}` implements t
 
 Driver quirks the code depends on:
 - mysql2 runs with `rowsAsArray`, `dateStrings`, `jsonStrings`; MariaDB `client_ed25519` and `parsec` auth are implemented in `mysql-family/mariadbAuth.ts` and passed via `authPlugins`.
-- pg uses custom type parsers to keep exact text values and `pg-cursor` for streaming.
+- pg uses custom type parsers to keep exact text values and `pg-cursor` for streaming user queries. PostgreSQL can't switch databases on a live connection, so `PgConnection.useDatabase` parks the current client per database (up to 4 idle, LRU) and reuses it when switching back; the handshake loads server info and `pg_type` in a single multi-statement query.
 - node-firebird uses `sequentially` with array rows, `blobAsText` and string numerics; queries must run inside transactions. Firebird 2.5 lacks boolean select expressions — use `CASE`.
 
 `domain/sql/splitter.ts` splits scripts per dialect (MySQL `DELIMITER`, Firebird `SET TERM` and PSQL blocks, PostgreSQL dollar quoting); `classifier.ts` decides which statements are read-only vs dangerous (used for confirmation dialogs and AI approval).
