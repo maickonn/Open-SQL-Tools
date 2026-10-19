@@ -1,0 +1,786 @@
+import type {
+  BulkTableOperations,
+  CellValue,
+  ColumnMeta,
+  ConnectionProfile,
+  ConnectionSecrets,
+  DbEngine,
+  DbObjectRef,
+  DumpOptions,
+  ExportOptions,
+  MaterializedResult,
+  RowChange,
+  ServerInfo,
+  ServerUser,
+  TableDataRequest,
+  TableStructure
+} from '@shared/model'
+import type { ExecuteParams, ExecuteSummary, ExportSource, StatementSummary, WorkerEvents } from '@shared/workerApi'
+import { toErrorPayload } from '@shared/rpc'
+import type { OpenDatabase, ResultSink, TextWriter } from '@domain/ports/database'
+import { splitSql } from '@domain/sql/splitter'
+import { Mutex } from '../util/mutex'
+import { createFormatter } from '../export/formatters'
+import { parseCsv } from '../import/csv'
+
+export interface Endpoint {
+  host: string
+  port: number
+}
+
+export interface SessionDeps {
+  openDatabase(profile: ConnectionProfile, secrets: ConnectionSecrets, endpoint: Endpoint): Promise<OpenDatabase>
+  openTunnel(profile: ConnectionProfile, secrets: ConnectionSecrets): Promise<{ localPort: number; close(): Promise<void> } | null>
+  createWriter(filePath: string): Promise<TextWriter>
+  readText(filePath: string): Promise<string>
+  emit<K extends keyof WorkerEvents & string>(name: K, payload: WorkerEvents[K]): void
+}
+
+const DEFAULT_CHUNK = 2_000
+const CONNECTION_LOST = /ECONNRESET|EPIPE|PROTOCOL_CONNECTION_LOST|Connection terminated|server closed the connection|Not connected|connection is lost|Connection lost/i
+
+interface Running {
+  cancelled: boolean
+}
+
+/** Converts a columnar chunk into row-major rows. */
+function toRows(columns: CellValue[][], rowCount: number): CellValue[][] {
+  const out = new Array<CellValue[]>(rowCount)
+  for (let r = 0; r < rowCount; r++) {
+    const row = new Array<CellValue>(columns.length)
+    for (let c = 0; c < columns.length; c++) row[c] = columns[c][r]
+    out[r] = row
+  }
+  return out
+}
+
+/**
+ * Application service behind one database session. Runs inside the connection
+ * utility process; every public method maps 1:1 to the WorkerApi.
+ */
+export class SessionService {
+  private db: OpenDatabase | null = null
+  private tunnel: { close(): Promise<void> } | null = null
+  private profile: ConnectionProfile | null = null
+  private secrets: ConnectionSecrets = {}
+  private endpoint: Endpoint | null = null
+  private readonly primaryLock = new Mutex()
+  private readonly running = new Map<string, Running>()
+  private readonly operations = new Map<string, Running>()
+  private keepAlive: NodeJS.Timeout | null = null
+
+  constructor(private readonly deps: SessionDeps) {}
+
+  private require(): OpenDatabase {
+    if (!this.db) throw new Error('Not connected')
+    return this.db
+  }
+
+  get engine(): DbEngine {
+    return this.require().info.engine
+  }
+
+  private log(kind: 'sql' | 'info' | 'error', text: string): void {
+    this.deps.emit('log', { kind, text, at: Date.now() })
+  }
+
+  /* ------------------------------ Connection ------------------------------ */
+
+  async connect(p: { profile: ConnectionProfile; secrets: ConnectionSecrets }): Promise<ServerInfo> {
+    this.profile = p.profile
+    this.secrets = p.secrets
+    const tunnel = await this.deps.openTunnel(p.profile, p.secrets)
+    this.tunnel = tunnel
+    this.endpoint = tunnel ? { host: '127.0.0.1', port: tunnel.localPort } : { host: p.profile.host, port: p.profile.port }
+    try {
+      this.db = await this.deps.openDatabase(p.profile, p.secrets, this.endpoint)
+    } catch (err) {
+      await tunnel?.close()
+      this.tunnel = null
+      throw err
+    }
+    this.log('info', `Connected to ${this.db.info.label}`)
+    const startup = p.profile.options.startupScript?.trim()
+    if (startup) {
+      for (const st of splitSql(startup, this.db.info.engine)) {
+        await this.db.primary.run(st.sql, null, { maxRows: 1_000, chunkSize: 1_000 })
+        this.log('sql', st.sql)
+      }
+    }
+    const every = p.profile.options.keepAliveSec ?? 0
+    if (every > 0) {
+      this.keepAlive = setInterval(() => {
+        void this.primaryLock.run(() => this.require().primary.ping()).catch(() => undefined)
+        void this.require().metaLock.run(() => this.require().meta.ping()).catch(() => undefined)
+      }, every * 1000)
+    }
+    return this.db.info
+  }
+
+  private async reconnect(): Promise<void> {
+    if (!this.profile || !this.endpoint) throw new Error('Not connected')
+    const previous = this.db
+    const database = previous?.primary.currentDatabase()
+    await previous?.close().catch(() => undefined)
+    this.db = await this.deps.openDatabase(this.profile, this.secrets, this.endpoint)
+    if (database) await this.db.primary.useDatabase(database).catch(() => undefined)
+    this.log('info', 'Reconnected')
+  }
+
+  async disconnect(): Promise<void> {
+    if (this.keepAlive) clearInterval(this.keepAlive)
+    this.keepAlive = null
+    await this.db?.close()
+    this.db = null
+    await this.tunnel?.close()
+    this.tunnel = null
+  }
+
+  ping(): number {
+    return Date.now()
+  }
+
+  serverInfo(): ServerInfo {
+    return this.require().info
+  }
+
+  /* ------------------------------- Execution ------------------------------ */
+
+  async execute(p: ExecuteParams): Promise<ExecuteSummary> {
+    const started = performance.now()
+    const ctl: Running = { cancelled: false }
+    this.running.set(p.queryId, ctl)
+    const statements: StatementSummary[] = []
+    try {
+      await this.primaryLock.run(async () => {
+        const db = this.require()
+        if (p.database && p.database !== db.primary.currentDatabase()) await db.primary.useDatabase(p.database)
+        const parts = splitSql(p.sql, db.info.engine)
+        let resultIndex = 0
+        for (let i = 0; i < parts.length; i++) {
+          if (ctl.cancelled) break
+          const st = parts[i]
+          let current = -1
+          const t0 = performance.now()
+          const sink: ResultSink = {
+            start: (columns: ColumnMeta[]) => {
+              current = resultIndex++
+              this.deps.emit('result:start', { queryId: p.queryId, resultIndex: current, statementIndex: i, sql: st.sql, columns })
+            },
+            rows: (columns, rowCount) => this.deps.emit('result:rows', { queryId: p.queryId, resultIndex: current, columns, rowCount }),
+            end: (info) =>
+              this.deps.emit('result:end', {
+                queryId: p.queryId,
+                resultIndex: current,
+                rowCount: info.rowCount,
+                truncated: info.truncated,
+                durationMs: Math.round(performance.now() - t0)
+              })
+          }
+          this.log('sql', st.sql)
+          let summary: StatementSummary
+          try {
+            const outcome = await this.runWithReconnect(() => this.require().primary.run(st.sql, sink, { maxRows: p.maxRows, chunkSize: p.chunkSize ?? DEFAULT_CHUNK }))
+            summary = {
+              index: i,
+              sql: st.sql,
+              start: st.start,
+              durationMs: Math.round(performance.now() - t0),
+              rowCount: outcome.rowCount,
+              affectedRows: outcome.affectedRows,
+              hasResultSet: outcome.hasResultSet,
+              truncated: outcome.truncated
+            }
+          } catch (err) {
+            const e = toErrorPayload(err)
+            if (ctl.cancelled) e.message = `Cancelled: ${e.message}`
+            this.log('error', e.message)
+            summary = { index: i, sql: st.sql, start: st.start, durationMs: Math.round(performance.now() - t0), rowCount: 0, hasResultSet: false, error: e }
+          }
+          statements.push(summary)
+          this.deps.emit('statement:done', { queryId: p.queryId, summary })
+          if (summary.error && p.stopOnError !== false) break
+        }
+      })
+    } finally {
+      this.running.delete(p.queryId)
+    }
+    return { queryId: p.queryId, statements, totalMs: Math.round(performance.now() - started), cancelled: ctl.cancelled }
+  }
+
+  private async runWithReconnect<T>(task: () => Promise<T>): Promise<T> {
+    try {
+      return await task()
+    } catch (err) {
+      const msg = toErrorPayload(err).message
+      if (!CONNECTION_LOST.test(msg) && !CONNECTION_LOST.test(String((err as { code?: string }).code ?? ''))) throw err
+      this.log('error', `Connection lost (${msg}); reconnecting…`)
+      try {
+        await this.reconnect()
+      } catch (reErr) {
+        this.deps.emit('connection:lost', { message: toErrorPayload(reErr).message })
+        throw err
+      }
+      return task()
+    }
+  }
+
+  async cancel(p: { queryId: string }): Promise<void> {
+    const ctl = this.running.get(p.queryId)
+    if (!ctl) return
+    ctl.cancelled = true
+    this.log('info', 'Cancelling query…')
+    await this.require().primary.cancel()
+  }
+
+  /** Small materialized query. Read-only queries use the metadata connection inside a read-only transaction. */
+  async query(p: { sql: string; database?: string; maxRows?: number; readOnly?: boolean }): Promise<MaterializedResult> {
+    const db = this.require()
+    const max = p.maxRows ?? 10_000
+    const run = async (conn: typeof db.primary): Promise<MaterializedResult> => {
+      if (p.database && p.database !== conn.currentDatabase()) await conn.useDatabase(p.database)
+      const rows: CellValue[][] = []
+      let columns: ColumnMeta[] = []
+      let truncated = false
+      const t0 = performance.now()
+      const outcome = await conn.run(
+        p.sql,
+        {
+          start: (c) => {
+            columns = c
+          },
+          rows: (cols, n) => rows.push(...toRows(cols, n)),
+          end: (info) => {
+            truncated = info.truncated
+          }
+        },
+        { maxRows: max, chunkSize: 5_000, readOnly: p.readOnly }
+      )
+      return { columns, rows, truncated, affectedRows: outcome.affectedRows, durationMs: Math.round(performance.now() - t0) }
+    }
+    this.log('sql', p.sql)
+    if (p.readOnly) return db.metaLock.run(() => run(db.meta))
+    return this.primaryLock.run(() => run(db.primary))
+  }
+
+  async useDatabase(p: { database: string }): Promise<void> {
+    await this.primaryLock.run(() => this.require().primary.useDatabase(p.database))
+  }
+
+  async setAutocommit(p: { enabled: boolean }): Promise<void> {
+    await this.primaryLock.run(() => this.require().primary.setAutocommit(p.enabled))
+  }
+
+  async commit(): Promise<void> {
+    await this.primaryLock.run(() => this.require().primary.commit())
+    this.log('sql', 'COMMIT')
+  }
+
+  async rollback(): Promise<void> {
+    await this.primaryLock.run(() => this.require().primary.rollback())
+    this.log('sql', 'ROLLBACK')
+  }
+
+  inTransaction(): boolean {
+    return this.require().primary.inTransaction()
+  }
+
+  /* -------------------------------- Catalog ------------------------------- */
+
+  listDatabases(): Promise<string[]> {
+    return this.require().inspector.listDatabases()
+  }
+
+  listSchemas(p: { database?: string }): Promise<string[]> {
+    return this.require().inspector.listSchemas(p.database)
+  }
+
+  listObjects(p: { database?: string; schema?: string }) {
+    return this.require().inspector.listObjects(p.database, p.schema)
+  }
+
+  getTableStructure(p: { ref: DbObjectRef }): Promise<TableStructure> {
+    return this.require().inspector.getTableStructure(p.ref)
+  }
+
+  getObjectDDL(p: { ref: DbObjectRef }): Promise<string> {
+    return this.require().inspector.getObjectDDL(p.ref)
+  }
+
+  getRoutineSource(p: { ref: DbObjectRef }): Promise<string> {
+    return this.require().inspector.getRoutineSource(p.ref)
+  }
+
+  listCollations() {
+    return this.require().inspector.listCollations()
+  }
+
+  listEngines(): Promise<string[]> {
+    return this.require().inspector.listEngines()
+  }
+
+  dataTypes(): string[] {
+    return this.require().dialect.dataTypes
+  }
+
+  tableDataSql(p: TableDataRequest): string {
+    return this.require().dialect.selectTableData(p)
+  }
+
+  countRows(p: { ref: DbObjectRef; where?: string }): Promise<number> {
+    return this.require().inspector.countRows(p.ref, p.where)
+  }
+
+  /* -------------------------------- Changes ------------------------------- */
+
+  private async runStatements(statements: string[], database?: string, transactional = false): Promise<number> {
+    return this.primaryLock.run(async () => {
+      const conn = this.require().primary
+      if (database && database !== conn.currentDatabase()) await conn.useDatabase(database)
+      const wrap = transactional && !conn.inTransaction()
+      if (wrap) await conn.setAutocommit(false)
+      let affected = 0
+      try {
+        for (const sql of statements) {
+          this.log('sql', sql)
+          const out = await conn.run(sql, null, { maxRows: 1_000, chunkSize: 1_000 })
+          affected += out.affectedRows ?? 0
+        }
+        if (wrap) await conn.commit()
+      } catch (err) {
+        if (wrap) await conn.rollback().catch(() => undefined)
+        this.log('error', toErrorPayload(err).message)
+        throw err
+      } finally {
+        if (wrap) await conn.setAutocommit(true).catch(() => undefined)
+      }
+      return affected
+    })
+  }
+
+  async applyRowChanges(p: { ref: DbObjectRef; changes: RowChange[]; dryRun?: boolean }): Promise<{ statements: string[]; affected: number }> {
+    const statements = this.require().dialect.rowChanges(p.ref, p.changes)
+    if (p.dryRun) return { statements, affected: 0 }
+    const affected = await this.runStatements(statements, p.ref.database, statements.length > 1)
+    return { statements, affected }
+  }
+
+  generateTableDDL(p: { original: TableStructure | null; target: TableStructure }): string[] {
+    const d = this.require().dialect
+    return p.original ? d.alterTable(p.original, p.target) : d.createTable(p.target)
+  }
+
+  async executeStatements(p: { statements: string[]; database?: string; transactional?: boolean }): Promise<{ affected: number }> {
+    return { affected: await this.runStatements(p.statements, p.database, p.transactional) }
+  }
+
+  async objectAction(p: {
+    ref: DbObjectRef
+    action: 'drop' | 'truncate' | 'rename' | 'duplicate' | 'optimize' | 'analyze' | 'check' | 'repair' | 'vacuum'
+    newName?: string
+    withData?: boolean
+  }): Promise<string[]> {
+    const db = this.require()
+    const d = db.dialect
+    let statements: string[]
+    switch (p.action) {
+      case 'drop':
+        statements = [d.dropObject(p.ref)]
+        break
+      case 'truncate':
+        statements = [d.truncateTable(p.ref)]
+        break
+      case 'rename':
+        if (!p.newName) throw new Error('New name is required')
+        statements = d.renameObject(p.ref, p.newName)
+        break
+      case 'duplicate': {
+        if (!p.newName) throw new Error('New name is required')
+        statements = d.duplicateTable(p.ref, p.newName, !!p.withData)
+        if (!statements.length) {
+          const structure = await db.inspector.getTableStructure(p.ref)
+          const copy: TableStructure = {
+            ...structure,
+            ref: { ...structure.ref, name: p.newName },
+            // Constraint names are unique per database in Firebird/PostgreSQL.
+            indexes: structure.indexes.map((i) => ({ ...i, name: `${p.newName}_${i.name}`.slice(0, 63) })),
+            foreignKeys: structure.foreignKeys.map((f) => ({ ...f, name: `${p.newName}_${f.name}`.slice(0, 63) })),
+            checks: structure.checks.map((c) => ({ ...c, name: `${p.newName}_${c.name}`.slice(0, 63) }))
+          }
+          statements = d.createTable(copy)
+          if (p.withData) {
+            const cols = structure.columns.filter((c) => !c.generated).map((c) => d.quoteIdent(c.name)).join(', ')
+            statements.push(`INSERT INTO ${d.qualify(copy.ref)} (${cols}) SELECT ${cols} FROM ${d.qualify(p.ref)}`)
+          }
+        }
+        break
+      }
+      default:
+        statements = d.maintenance(p.ref, p.action)
+        if (!statements.length) throw new Error(`"${p.action}" is not supported for ${db.info.label}`)
+    }
+    // Maintenance statements may return result sets (MySQL CHECK/ANALYZE); errors surface either way.
+    await this.runStatements(statements, p.ref.database)
+    return statements
+  }
+
+  async bulkAlterTables(p: { tables: DbObjectRef[]; ops: BulkTableOperations; dryRun?: boolean }) {
+    const d = this.require().dialect
+    const results: { table: string; statements: string[]; error?: string }[] = []
+    for (const ref of p.tables) {
+      const statements = d.bulkAlter(ref, p.ops)
+      const entry: { table: string; statements: string[]; error?: string } = { table: d.qualify(ref), statements }
+      if (!p.dryRun && statements.length) {
+        try {
+          await this.runStatements(statements, ref.database)
+        } catch (err) {
+          // Keep going: one failing table must not stop the rest.
+          entry.error = toErrorPayload(err).message
+        }
+      }
+      results.push(entry)
+    }
+    return { results }
+  }
+
+  async insertRows(p: { ref: DbObjectRef; columns: string[]; rows: CellValue[][] }): Promise<{ affected: number }> {
+    if (!p.rows.length) return { affected: 0 }
+    const db = this.require()
+    const d = db.dialect
+    const head = `INSERT INTO ${d.qualify(p.ref)} (${p.columns.map((c) => d.quoteIdent(c)).join(', ')}) VALUES`
+    const tuple = (r: CellValue[]): string => `(${r.map((v) => d.literal(v)).join(', ')})`
+    // Firebird has no multi-row VALUES; one statement per row inside a single transaction.
+    const perStatement = db.info.engine === 'firebird' ? 1 : 500
+    const statements: string[] = []
+    for (let i = 0; i < p.rows.length; i += perStatement) statements.push(`${head} ${p.rows.slice(i, i + perStatement).map(tuple).join(', ')}`)
+    return { affected: await this.runStatements(statements, p.ref.database, true) }
+  }
+
+  /* --------------------------------- Host --------------------------------- */
+
+  hostInfo() {
+    return this.require().inspector.hostInfo()
+  }
+
+  killProcess(p: { id: string | number; queryOnly?: boolean }): Promise<void> {
+    return this.require().inspector.killProcess(p.id, !!p.queryOnly)
+  }
+
+  listUsers(): Promise<ServerUser[]> {
+    return this.require().inspector.listUsers()
+  }
+
+  getUserPrivileges(p: { user: ServerUser }) {
+    return this.require().inspector.getUserPrivileges(p.user)
+  }
+
+  userStatements(p: Parameters<OpenDatabase['dialect']['userStatements']>[0]): string[] {
+    return this.require().dialect.userStatements(p)
+  }
+
+  /* ------------------------------ Operations ------------------------------ */
+
+  private startOperation(id: string): Running {
+    const ctl: Running = { cancelled: false }
+    this.operations.set(id, ctl)
+    return ctl
+  }
+
+  private progress(operationId: string, label: string, done: number, total?: number, finished = false, error?: string): void {
+    this.deps.emit('progress', { operationId, label, done, total, finished, error })
+  }
+
+  cancelOperation(p: { operationId: string }): void {
+    const ctl = this.operations.get(p.operationId)
+    if (ctl) ctl.cancelled = true
+  }
+
+  /** Streams a query or a whole table into a file. */
+  async exportQuery(p: { operationId: string; source: ExportSource; options: ExportOptions }): Promise<{ rows: number }> {
+    const db = this.require()
+    const ctl = this.startOperation(p.operationId)
+    const sql = p.source.sql ?? (p.source.ref ? `SELECT * FROM ${db.dialect.qualify(p.source.ref)}` : '')
+    if (!sql) throw new Error('Nothing to export')
+    const writer = await this.deps.createWriter(p.options.filePath)
+    const formatter = createFormatter(writer, { ...p.options, tableName: p.options.tableName ?? p.source.ref?.name }, db.dialect)
+    let chain: Promise<void> = Promise.resolve()
+    let rows = 0
+    try {
+      await this.primaryLock.run(async () => {
+        if (p.source.database && p.source.database !== db.primary.currentDatabase()) await db.primary.useDatabase(p.source.database)
+        let begun = false
+        await db.primary.run(
+          sql,
+          {
+            start: (columns) => {
+              if (begun) return
+              begun = true
+              chain = chain.then(() => formatter.begin(columns))
+            },
+            rows: (columns, n) => {
+              if (ctl.cancelled) throw new Error('Export cancelled')
+              const batch = toRows(columns, n)
+              rows += n
+              chain = chain.then(() => formatter.rows(batch))
+              this.progress(p.operationId, 'export', rows)
+            },
+            end: () => undefined
+          },
+          { maxRows: Number.MAX_SAFE_INTEGER, chunkSize: 5_000 }
+        )
+      })
+      await chain
+      await formatter.end()
+      this.progress(p.operationId, 'export', rows, rows, true)
+      return { rows }
+    } catch (err) {
+      this.progress(p.operationId, 'export', rows, undefined, true, toErrorPayload(err).message)
+      throw err
+    } finally {
+      await writer.close()
+      this.operations.delete(p.operationId)
+    }
+  }
+
+  /** SQL dump of databases (structure and/or data), like HeidiSQL's "Export database as SQL". */
+  async dumpSql(p: { operationId: string; options: DumpOptions }): Promise<{ statements: number }> {
+    const db = this.require()
+    const o = p.options
+    const ctl = this.startOperation(p.operationId)
+    const d = db.dialect
+    const engine = db.info.engine
+    const isMy = engine === 'mysql' || engine === 'mariadb'
+    const writer = await this.deps.createWriter(o.filePath)
+    let count = 0
+    const write = async (s: string): Promise<void> => {
+      await writer.write(s)
+    }
+    try {
+      await write(`-- Open SQL Tool dump\n-- Server: ${db.info.label}\n-- Date: ${new Date().toISOString()}\n\n`)
+      if (isMy) await write('SET NAMES utf8mb4;\nSET FOREIGN_KEY_CHECKS = 0;\n\n')
+      const databases = engine === 'firebird' ? [''] : o.databases
+      for (const database of databases) {
+        if (ctl.cancelled) break
+        if (isMy && database) {
+          if (o.dropDatabase) await write(`DROP DATABASE IF EXISTS ${d.quoteIdent(database)};\n`)
+          if (o.createDatabase) await write(`CREATE DATABASE IF NOT EXISTS ${d.quoteIdent(database)};\n`)
+          await write(`USE ${d.quoteIdent(database)};\n\n`)
+        }
+        let objects
+        if (engine === 'postgres') {
+          const schemas = (await db.inspector.listSchemas(database)).filter((s) => s !== 'pg_catalog' && s !== 'information_schema')
+          objects = (await Promise.all(schemas.map((s) => db.inspector.listObjects(database, s)))).flat()
+        } else objects = await db.inspector.listObjects(database || undefined)
+        const wanted = o.tables?.[database]
+        const tables = objects.filter((x) => x.kind === 'table' && (!wanted?.length || wanted.includes(x.name)))
+        for (const t of tables) {
+          if (ctl.cancelled) break
+          const ref: DbObjectRef = { database: database || undefined, schema: t.schema, name: t.name, kind: 'table' }
+          this.progress(p.operationId, t.name, count)
+          if (o.dropTables) await write(`DROP TABLE ${engine === 'firebird' ? '' : 'IF EXISTS '}${d.qualify(ref)};\n`)
+          if (o.createTables) {
+            const ddl = await db.inspector.getObjectDDL(ref)
+            await write(ddl.replace(/;?\s*$/, ';') + '\n\n')
+            count++
+          }
+          if (o.data !== 'none') count += await this.dumpTableData(ref, o, writer, ctl)
+        }
+        if (o.includeViews) {
+          for (const v of objects.filter((x) => x.kind === 'view')) {
+            const ddl = await db.inspector.getObjectDDL({ database: database || undefined, schema: v.schema, name: v.name, kind: 'view' })
+            await write(ddl.replace(/;?\s*$/, ';') + '\n\n')
+            count++
+          }
+        }
+        const routineKinds = new Set(['procedure', 'function', 'package'])
+        const extra = objects.filter((x) => (o.includeRoutines && routineKinds.has(x.kind)) || (o.includeTriggers && x.kind === 'trigger'))
+        for (const r of extra) {
+          const ddl = await db.inspector.getObjectDDL({ database: database || undefined, schema: r.schema, name: r.name, kind: r.kind, args: r.args, table: r.table })
+          if (isMy) await write(`DELIMITER ;;\n${ddl};;\nDELIMITER ;\n\n`)
+          else await write(engine === 'firebird' ? `${ddl}\n\n` : `${ddl.replace(/;?\s*$/, ';')}\n\n`)
+          count++
+        }
+      }
+      if (isMy) await write('SET FOREIGN_KEY_CHECKS = 1;\n')
+      this.progress(p.operationId, 'dump', count, count, true)
+      return { statements: count }
+    } catch (err) {
+      this.progress(p.operationId, 'dump', count, undefined, true, toErrorPayload(err).message)
+      throw err
+    } finally {
+      await writer.close()
+      this.operations.delete(p.operationId)
+    }
+  }
+
+  private async dumpTableData(ref: DbObjectRef, o: DumpOptions, writer: TextWriter, ctl: Running): Promise<number> {
+    const db = this.require()
+    const d = db.dialect
+    const verb = o.data === 'replace' ? 'REPLACE' : o.data === 'insert_ignore' ? 'INSERT IGNORE' : 'INSERT'
+    if (o.data === 'delete_insert') await writer.write(`DELETE FROM ${d.qualify(ref)};\n`)
+    let head = ''
+    let pending: string[] = []
+    let statements = 0
+    let chain: Promise<void> = Promise.resolve()
+    const flush = (): void => {
+      if (!pending.length) return
+      const text = `${head}\n  ${pending.join(',\n  ')};\n`
+      pending = []
+      statements++
+      chain = chain.then(() => writer.write(text))
+    }
+    // Firebird has no multi-row VALUES: one INSERT per row.
+    const perInsert = db.info.engine === 'firebird' ? 1 : Math.max(1, o.rowsPerInsert)
+    await db.metaLock.run(async () => {
+      if (ref.database && ref.database !== db.meta.currentDatabase()) await db.meta.useDatabase(ref.database)
+      await db.meta.run(
+        `SELECT * FROM ${d.qualify(ref)}`,
+        {
+          start: (columns) => {
+            head = `${verb} INTO ${d.qualify(ref)} (${columns.map((c) => d.quoteIdent(c.name)).join(', ')}) VALUES`
+          },
+          rows: (columns, n) => {
+            if (ctl.cancelled) throw new Error('Dump cancelled')
+            for (const row of toRows(columns, n)) {
+              pending.push(`(${row.map((v) => d.literal(v)).join(', ')})`)
+              if (pending.length >= perInsert) flush()
+            }
+          },
+          end: () => flush()
+        },
+        { maxRows: Number.MAX_SAFE_INTEGER, chunkSize: 5_000 }
+      )
+    })
+    await chain
+    await writer.write('\n')
+    return statements
+  }
+
+  async importSqlFile(p: { operationId: string; filePath: string; database?: string; stopOnError: boolean }): Promise<{ statements: number; errors: number }> {
+    const ctl = this.startOperation(p.operationId)
+    const script = await this.deps.readText(p.filePath)
+    const parts = splitSql(script, this.engine)
+    let done = 0
+    let errors = 0
+    try {
+      await this.primaryLock.run(async () => {
+        const conn = this.require().primary
+        if (p.database && p.database !== conn.currentDatabase()) await conn.useDatabase(p.database)
+        for (const st of parts) {
+          if (ctl.cancelled) break
+          try {
+            await conn.run(st.sql, null, { maxRows: 1_000, chunkSize: 1_000 })
+          } catch (err) {
+            errors++
+            this.log('error', `${toErrorPayload(err).message}\n${st.sql.slice(0, 500)}`)
+            if (p.stopOnError) throw err
+          }
+          done++
+          if (done % 50 === 0) this.progress(p.operationId, 'import', done, parts.length)
+        }
+      })
+      this.progress(p.operationId, 'import', done, parts.length, true)
+      return { statements: done, errors }
+    } catch (err) {
+      this.progress(p.operationId, 'import', done, parts.length, true, toErrorPayload(err).message)
+      throw err
+    } finally {
+      this.operations.delete(p.operationId)
+    }
+  }
+
+  async importCsv(p: {
+    operationId: string
+    filePath: string
+    ref: DbObjectRef
+    columns: string[]
+    delimiter: string
+    quote: string
+    skipLines: number
+    batchSize: number
+  }): Promise<{ rows: number }> {
+    const ctl = this.startOperation(p.operationId)
+    const d = this.require().dialect
+    const text = await this.deps.readText(p.filePath)
+    const records = parseCsv(text, p.delimiter, p.quote).slice(p.skipLines)
+    const head = `INSERT INTO ${d.qualify(p.ref)} (${p.columns.map((c) => d.quoteIdent(c)).join(', ')}) VALUES`
+    const perInsert = this.engine === 'firebird' ? 1 : Math.max(1, p.batchSize)
+    let rows = 0
+    try {
+      await this.primaryLock.run(async () => {
+        const conn = this.require().primary
+        if (p.ref.database && p.ref.database !== conn.currentDatabase()) await conn.useDatabase(p.ref.database)
+        for (let i = 0; i < records.length; i += perInsert) {
+          if (ctl.cancelled) break
+          const batch = records.slice(i, i + perInsert)
+          const values = batch.map((r) => `(${p.columns.map((_, c) => (r[c] === undefined ? 'NULL' : d.literal(r[c]))).join(', ')})`)
+          await conn.run(`${head} ${values.join(', ')}`, null, { maxRows: 1_000, chunkSize: 1_000 })
+          rows += batch.length
+          this.progress(p.operationId, 'csv', rows, records.length)
+        }
+      })
+      this.progress(p.operationId, 'csv', rows, records.length, true)
+      return { rows }
+    } catch (err) {
+      this.progress(p.operationId, 'csv', rows, records.length, true, toErrorPayload(err).message)
+      throw err
+    } finally {
+      this.operations.delete(p.operationId)
+    }
+  }
+
+  /** "Find text on server": counts matching rows per table across text-like columns. */
+  async findText(p: { operationId: string; text: string; databases: string[]; caseSensitive: boolean; matchType: 'like' | 'exact' | 'regexp' }) {
+    const db = this.require()
+    const ctl = this.startOperation(p.operationId)
+    const d = db.dialect
+    const engine = db.info.engine
+    const matches: { database?: string; schema?: string; table: string; column: string; count: number }[] = []
+    const textual = /CHAR|TEXT|CLOB|ENUM|SET|JSON|UUID|BLOB SUB_TYPE TEXT/i
+    try {
+      const databases = engine === 'firebird' ? [''] : p.databases
+      for (const database of databases) {
+        const objects =
+          engine === 'postgres'
+            ? (await Promise.all((await db.inspector.listSchemas(database)).filter((s) => !s.startsWith('pg_') && s !== 'information_schema').map((s) => db.inspector.listObjects(database, s)))).flat()
+            : await db.inspector.listObjects(database || undefined)
+        for (const t of objects.filter((o) => o.kind === 'table')) {
+          if (ctl.cancelled) return { matches }
+          const ref: DbObjectRef = { database: database || undefined, schema: t.schema, name: t.name, kind: 'table' }
+          this.progress(p.operationId, t.name, matches.length)
+          const structure = await db.inspector.getTableStructure(ref)
+          const cols = structure.columns.filter((c) => textual.test(c.fullType) || textual.test(c.dataType))
+          if (!cols.length) continue
+          const conds = cols.map((c) => this.matchCondition(d.quoteIdent(c.name), p.text, p.matchType, p.caseSensitive, engine))
+          const res = await db.metaQuery(`SELECT COUNT(*) FROM ${d.qualify(ref)} WHERE ${conds.join(' OR ')}`)
+          const count = Number(res.rows[0]?.[0] ?? 0)
+          if (count > 0) matches.push({ database: database || undefined, schema: t.schema, table: t.name, column: cols.map((c) => c.name).join(', '), count })
+        }
+      }
+      this.progress(p.operationId, 'find', matches.length, matches.length, true)
+      return { matches }
+    } finally {
+      this.operations.delete(p.operationId)
+    }
+  }
+
+  private matchCondition(col: string, text: string, type: 'like' | 'exact' | 'regexp', caseSensitive: boolean, engine: DbEngine): string {
+    const d = this.require().dialect
+    const lit = (s: string): string => d.literal(s)
+    const castText = engine === 'postgres' ? `${col}::text` : engine === 'firebird' ? `CAST(${col} AS VARCHAR(32000))` : col
+    if (type === 'regexp') {
+      if (engine === 'postgres') return `${castText} ${caseSensitive ? '~' : '~*'} ${lit(text)}`
+      if (engine === 'firebird') return `${castText} SIMILAR TO ${lit(text)}`
+      return `${col} REGEXP ${lit(text)}`
+    }
+    const pattern = type === 'exact' ? text : `%${text.replace(/[\\%_]/g, (m) => '\\' + m)}%`
+    const op = type === 'exact' ? '=' : 'LIKE'
+    const escape = type === 'like' && engine !== 'mysql' && engine !== 'mariadb' ? " ESCAPE '\\'" : ''
+    if (caseSensitive) {
+      if (engine === 'mysql' || engine === 'mariadb') return `${col} ${op} BINARY ${lit(pattern)}`
+      return `${castText} ${op} ${lit(pattern)}${escape}`
+    }
+    if (engine === 'postgres' && type === 'like') return `${castText} ILIKE ${lit(pattern)}${escape}`
+    return `UPPER(${castText}) ${op} UPPER(${lit(pattern)})${escape}`
+  }
+}
