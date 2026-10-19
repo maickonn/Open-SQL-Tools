@@ -12,12 +12,13 @@ import logo from '../../assets/logo.svg'
 // Heavy views (Monaco editor) load on demand.
 const QueryView = lazy(() => import('./QueryView'))
 const ObjectView = lazy(() => import('./ObjectView'))
+const ObjectListView = lazy(() => import('../object/ObjectListView'))
 
 function TabIcon({ tab }: { tab: Tab }) {
   if (tab.kind === 'host') return <Server size={13} />
   if (tab.kind === 'database') return <Database size={13} className="text-warning" />
   if (tab.kind === 'query') return <TerminalSquare size={13} className="text-success" />
-  const Icon = (tab.ref && KIND_ICONS[tab.ref.kind]) || FileCode2
+  const Icon = (tab.ref && KIND_ICONS[tab.ref.kind]) || (tab.listKind && KIND_ICONS[tab.listKind]) || FileCode2
   return <Icon size={13} className="text-accent" />
 }
 
@@ -124,5 +125,7 @@ function TabContent({ tab, active }: { tab: Tab; active: boolean }) {
       return <QueryView tab={tab} active={active} />
     case 'object':
       return <ObjectView tab={tab} active={active} />
+    case 'list':
+      return <ObjectListView tab={tab} active={active} />
   }
 }

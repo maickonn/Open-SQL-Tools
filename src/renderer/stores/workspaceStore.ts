@@ -17,7 +17,9 @@ export interface SessionState {
   lost?: string
 }
 
-export type TabKind = 'host' | 'database' | 'object' | 'query'
+export type TabKind = 'host' | 'database' | 'object' | 'query' | 'list'
+
+export type ObjectSubView = 'structure' | 'data' | 'ddl' | 'dependencies' | 'operations'
 
 export interface Tab {
   id: string
@@ -29,8 +31,10 @@ export interface Tab {
   schema?: string
   /** Preview tabs are replaced by the next tree selection unless pinned. */
   preview?: boolean
-  /** Sub view for object tabs: structure, data or ddl. */
-  view?: 'structure' | 'data' | 'ddl'
+  /** Sub view for object tabs. */
+  view?: ObjectSubView
+  /** List tabs: the grid of generators / sequences or exceptions. */
+  listKind?: 'sequence' | 'exception'
   /** Object tab for a table that does not exist yet. */
   isNew?: boolean
 }
@@ -198,6 +202,8 @@ export const useWorkspace = create<WorkspaceVM>((set, get) => ({
         t.schema === tab.schema &&
         t.ref?.name === tab.ref?.name &&
         t.ref?.kind === tab.ref?.kind &&
+        t.ref?.args === tab.ref?.args &&
+        t.listKind === tab.listKind &&
         !t.isNew &&
         !tab.isNew
     )

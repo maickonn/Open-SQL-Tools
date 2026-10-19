@@ -19,6 +19,8 @@ interface E2ETarget {
   table: string
   /** Tree nodes to expand (double click) before the table is visible. */
   path: string[]
+  /** Trigger + sequence used by the object-utilities scenario (runs after the copy test). */
+  objects?: { sql: string; trigger: string; sequenceGroup: string; sequence: string; operationTable?: string }
 }
 
 const KNOWN: Record<string, Omit<E2ETarget, 'id'>> = {
@@ -35,12 +37,20 @@ const KNOWN: Record<string, Omit<E2ETarget, 'id'>> = {
   postgres18: {
     engine: 'PostgreSQL', port: 35418, user: 'postgres', password: 'test', database: 'testdb',
     setup: "DROP TABLE IF EXISTS public.e2e_items; CREATE TABLE public.e2e_items (id int PRIMARY KEY, name varchar(50)); INSERT INTO public.e2e_items VALUES (1, 'one'), (2, 'two');",
-    table: 'e2e_items', path: ['testdb', 'public']
+    table: 'e2e_items', path: ['testdb', 'public'],
+    objects: {
+      sql: 'CREATE SEQUENCE e2e_seq; CREATE FUNCTION e2e_fn() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END; $$; CREATE TRIGGER e2e_trg BEFORE UPDATE ON public.e2e_items FOR EACH ROW EXECUTE FUNCTION e2e_fn();',
+      trigger: 'e2e_trg', sequenceGroup: 'Sequences', sequence: 'e2e_seq'
+    }
   },
   firebird5: {
     engine: 'Firebird', port: 30500, user: 'SYSDBA', password: 'masterkey', database: '/var/lib/firebird/data/testdb.fdb',
     setup: "RECREATE SEQUENCE E2E_SEQ; CREATE OR ALTER EXCEPTION E2E_ERR 'boom'; RECREATE TABLE E2E_ITEMS (ID INTEGER NOT NULL PRIMARY KEY, NAME VARCHAR(50)); INSERT INTO E2E_ITEMS VALUES (1, 'one'); INSERT INTO E2E_ITEMS VALUES (2, 'two');",
-    table: 'E2E_ITEMS', path: []
+    table: 'E2E_ITEMS', path: [],
+    objects: {
+      sql: 'CREATE TRIGGER E2E_TRG FOR E2E_ITEMS ACTIVE AFTER UPDATE POSITION 0 AS BEGIN IF (NEW.ID < 0) THEN EXCEPTION E2E_ERR; INSERT INTO E2E_ITEMS_COPY (ID, NAME) VALUES (-NEW.ID, NEW.NAME); END',
+      trigger: 'E2E_TRG', sequenceGroup: 'Generators', sequence: 'E2E_SEQ', operationTable: 'E2E_ITEMS_COPY'
+    }
   }
 }
 
@@ -156,6 +166,61 @@ for (const target of targets) {
         await page.screenshot({ path: join(shots, `e2e-${target.id}-bulk.png`) })
         await page.keyboard.press('Escape')
       }
+    })
+
+    test('toggles a trigger, edits a generator and shows dependencies and operations', async () => {
+      const objects = target.objects
+      test.skip(!objects, 'no object fixture for this engine')
+      if (!objects) return
+      const item = (name: string) => page.getByRole('treeitem', { name: new RegExp(`^${name}( |$)`) })
+
+      const editors = await page.locator('.monaco-editor').count()
+      await page.keyboard.press('Control+T')
+      await expect(page.locator('.monaco-editor')).toHaveCount(editors + 1, { timeout: 20_000 })
+      await page.locator('.monaco-editor').last().click()
+      await page.keyboard.insertText(objects.sql)
+      await page.keyboard.press('Control+Enter')
+      const confirm = page.getByRole('dialog').getByRole('button', { name: 'OK' })
+      if (await confirm.isVisible({ timeout: 1500 }).catch(() => false)) await confirm.click()
+      await expect(page.locator('[data-sonner-toast][data-type="error"]')).toHaveCount(0)
+
+      // Triggers start collapsed; deactivate the selected one, then reactivate it.
+      await page.getByRole('treeitem', { name: /^Triggers\s*\(\d+\)/ }).dblclick({ timeout: 15_000 })
+      await item(objects.trigger).click({ button: 'right' })
+      await page.getByRole('menuitem', { name: /^Deactivate/ }).click()
+      await page.screenshot({ path: join(shots, `e2e-${target.id}-trigger-menu.png`) })
+      await page.getByRole('menuitem', { name: /^Selected only/ }).click()
+      await expect(item(objects.trigger).getByLabel('Inactive')).toBeVisible({ timeout: 15_000 })
+      await item(objects.trigger).click({ button: 'right' })
+      await page.getByRole('menuitem', { name: /^Activate/ }).click()
+      await page.getByRole('menuitem', { name: /^Selected only/ }).click()
+      await expect(item(objects.trigger).getByLabel('Inactive')).toHaveCount(0, { timeout: 15_000 })
+
+      // Generator / sequence grid: edit the current value in place.
+      await page.getByRole('treeitem', { name: new RegExp(`^${objects.sequenceGroup}\\s*\\(\\d+\\)`) }).click()
+      const row = page.getByRole('row', { name: new RegExp(objects.sequence) })
+      await expect(row).toBeVisible({ timeout: 15_000 })
+      await row.locator('td').nth(1).dblclick()
+      await page.getByLabel('Value').fill('41')
+      await page.getByLabel('Value').press('Enter')
+      await expect(page.getByText(`Saved ${objects.sequence}`)).toBeVisible({ timeout: 15_000 })
+      await page.getByRole('button', { name: 'Refresh' }).last().click()
+      await expect(row.locator('td').nth(1)).toHaveText('41')
+      await page.screenshot({ path: join(shots, `e2e-${target.id}-generators.png`) })
+
+      // Dependencies of the trigger include its table.
+      await item(objects.trigger).click({ button: 'right' })
+      await page.getByRole('menuitem', { name: /^Dependencies/ }).click()
+      await expect(page.getByText(new RegExp(`Objects ${objects.trigger} depends on`))).toBeVisible({ timeout: 15_000 })
+      await expect(page.getByRole('button', { name: new RegExp(`^(public\\.)?${target.table}( |$)`) }).first()).toBeVisible()
+      await page.screenshot({ path: join(shots, `e2e-${target.id}-dependencies.png`) })
+
+      if (objects.operationTable) {
+        await page.getByRole('button', { name: /^Operations \/ plan$/ }).click()
+        await expect(page.getByRole('cell', { name: objects.operationTable }).last()).toBeVisible({ timeout: 15_000 })
+        await page.screenshot({ path: join(shots, `e2e-${target.id}-operations.png`) })
+      }
+      await expect(page.locator('[data-sonner-toast][data-type="error"]')).toHaveCount(0)
     })
   })
 }

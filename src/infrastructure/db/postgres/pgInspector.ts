@@ -3,7 +3,10 @@ import type {
   ColumnDef,
   DbObjectInfo,
   DbObjectRef,
+  ExceptionInfo,
   FkAction,
+  ObjectDependency,
+  SequenceInfo,
   ForeignKeyDef,
   IndexDef,
   ObjectKind,
@@ -23,6 +26,23 @@ const FK_ACTIONS: Record<string, FkAction> = { a: 'NO ACTION', r: 'RESTRICT', c:
 const SEP = '\u001f'
 
 const SYSTEM_SCHEMAS = new Set(['pg_catalog', 'information_schema', 'pg_toast'])
+
+/** Splits "a integer, b numeric(10, 2)" at top-level commas. */
+function splitArgs(args: string): string[] {
+  const out: string[] = []
+  let depth = 0
+  let cur = ''
+  for (const ch of args) {
+    if (ch === '(') depth++
+    else if (ch === ')') depth--
+    if (ch === ',' && depth === 0) {
+      out.push(cur.trim())
+      cur = ''
+    } else cur += ch
+  }
+  if (cur.trim()) out.push(cur.trim())
+  return out
+}
 
 export class PgInspector implements SchemaInspector {
   constructor(
@@ -67,20 +87,20 @@ export class PgInspector implements SchemaInspector {
       this.query,
       `SELECT * FROM (
          SELECT 0 AS grp, 'rel_' || c.relkind::text AS kind, c.relname::text AS name, NULL::text AS args, NULL::text AS tbl,
-                c.reltuples::bigint AS rows, pg_total_relation_size(c.oid) AS size, obj_description(c.oid, 'pg_class') AS comment
+                c.reltuples::bigint AS rows, pg_total_relation_size(c.oid) AS size, obj_description(c.oid, 'pg_class') AS comment, NULL::boolean AS off
            FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
           WHERE n.nspname = ${ns} AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
          UNION ALL
-         SELECT 1, 'proc_' || p.prokind::text, p.proname::text, pg_get_function_identity_arguments(p.oid), NULL, NULL, NULL, obj_description(p.oid, 'pg_proc')
+         SELECT 1, 'proc_' || p.prokind::text, p.proname::text, pg_get_function_identity_arguments(p.oid), NULL, NULL, NULL, obj_description(p.oid, 'pg_proc'), NULL
            FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
           WHERE n.nspname = ${ns} AND p.prokind IN ('f', 'p')
             AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.objid = p.oid AND d.deptype = 'e')
          UNION ALL
-         SELECT 2, 'trigger', t.tgname::text, NULL, c.relname::text, NULL, NULL, NULL
+         SELECT 2, 'trigger', t.tgname::text, NULL, c.relname::text, NULL, NULL, NULL, t.tgenabled = 'D'
            FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace
           WHERE n.nspname = ${ns} AND NOT t.tgisinternal
          UNION ALL
-         SELECT 3, 'type_' || t.typtype::text, t.typname::text, NULL, NULL, NULL, NULL, NULL
+         SELECT 3, 'type_' || t.typtype::text, t.typname::text, NULL, NULL, NULL, NULL, NULL, NULL
            FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
           WHERE n.nspname = ${ns} AND (t.typtype IN ('d', 'e', 'r', 'm')
                 OR (t.typtype = 'c' AND (SELECT relkind FROM pg_class WHERE oid = t.typrelid) = 'c'))
@@ -109,7 +129,7 @@ export class PgInspector implements SchemaInspector {
       } else if (tag.startsWith('proc_')) {
         out.push({ database, schema, name, args: str(r.args), kind: tag === 'proc_p' ? 'procedure' : 'function', comment: optStr(r.comment), system })
       } else if (tag === 'trigger') {
-        out.push({ database, schema, name, kind: 'trigger', table: str(r.tbl), system })
+        out.push({ database, schema, name, kind: 'trigger', table: str(r.tbl), system, inactive: bool(r.off) || undefined })
       } else {
         out.push({ database, schema, name, kind: tag === 'type_d' ? 'domain' : 'type', system })
       }
@@ -340,6 +360,119 @@ export class PgInspector implements SchemaInspector {
 
   getRoutineSource(ref: DbObjectRef): Promise<string> {
     return this.getObjectDDL(ref)
+  }
+
+  async listSequences(database?: string, schema?: string): Promise<SequenceInfo[]> {
+    await this.ensureDatabase(database)
+    const rows = await queryObjects(
+      this.query,
+      `SELECT s.sequencename, s.last_value, s.increment_by, obj_description(c.oid, 'pg_class') AS comment
+         FROM pg_sequences s
+         JOIN pg_namespace n ON n.nspname = s.schemaname
+         JOIN pg_class c ON c.relnamespace = n.oid AND c.relname = s.sequencename
+        WHERE s.schemaname = ${this.lit(schema ?? 'public')}
+        ORDER BY 1`
+    )
+    // last_value is NULL until nextval is called (or when the sequence is not readable).
+    return rows.map((r) => ({ name: str(r.sequencename), schema, value: r.last_value === null ? '' : str(r.last_value), increment: num(r.increment_by), comment: optStr(r.comment) }))
+  }
+
+  async listExceptions(): Promise<ExceptionInfo[]> {
+    return []
+  }
+
+  /**
+   * pg_depend in both directions. Rows recorded on helper objects are attributed to their owner:
+   * view rules (pg_rewrite) to the view, constraints and column defaults to their table.
+   */
+  async getDependencies(ref: DbObjectRef): Promise<ObjectDependency[]> {
+    await this.ensureDatabase(ref.database)
+    let self: string
+    switch (ref.kind) {
+      case 'table': case 'view': case 'materialized_view': case 'sequence':
+        self = `SELECT 'pg_class'::regclass AS cls, ${this.regclass(ref)}::oid AS oid`
+        break
+      case 'function': case 'procedure':
+        self = `SELECT 'pg_proc'::regclass AS cls, ${this.lit(this.dialect.qualify(ref))}::regprocedure::oid AS oid`
+        break
+      case 'type': case 'domain':
+        self = `SELECT 'pg_type'::regclass AS cls, ${this.lit(this.dialect.qualify(ref))}::regtype::oid AS oid`
+        break
+      case 'trigger':
+        self = `SELECT 'pg_trigger'::regclass AS cls, t.oid AS oid FROM pg_trigger t WHERE t.tgname = ${this.lit(ref.name)}
+                  AND t.tgrelid = ${this.regclass({ ...ref, name: ref.table ?? '', kind: 'table' })}`
+        break
+      default:
+        return []
+    }
+    const rows = await queryObjects(
+      this.query,
+      `WITH self AS (${self}),
+       sources AS (
+         SELECT cls, oid FROM self
+         UNION ALL SELECT 'pg_rewrite'::regclass, r.oid FROM pg_rewrite r JOIN self ON self.cls = 'pg_class'::regclass AND r.ev_class = self.oid
+         UNION ALL SELECT 'pg_constraint'::regclass, c.oid FROM pg_constraint c JOIN self ON self.cls = 'pg_class'::regclass AND c.conrelid = self.oid
+         UNION ALL SELECT 'pg_attrdef'::regclass, a.oid FROM pg_attrdef a JOIN self ON self.cls = 'pg_class'::regclass AND a.adrelid = self.oid
+       ),
+       edges AS (
+         SELECT 'uses' AS dir, d.refclassid AS cls, d.refobjid AS oid, d.refobjsubid AS sub
+           FROM pg_depend d JOIN sources s ON d.classid = s.cls AND d.objid = s.oid
+          WHERE d.deptype IN ('n', 'a')
+         UNION ALL
+         SELECT 'usedBy', d.classid, d.objid, 0
+           FROM pg_depend d JOIN self s ON d.refclassid = s.cls AND d.refobjid = s.oid
+          WHERE d.deptype IN ('n', 'a')
+       ),
+       owners AS (
+         SELECT e.dir, e.sub, e.oid AS raw_oid,
+                CASE WHEN e.cls IN ('pg_rewrite'::regclass, 'pg_constraint'::regclass, 'pg_attrdef'::regclass) THEN 'pg_class'::regclass ELSE e.cls END AS cls,
+                CASE e.cls
+                  WHEN 'pg_rewrite'::regclass THEN (SELECT ev_class FROM pg_rewrite WHERE oid = e.oid)
+                  WHEN 'pg_constraint'::regclass THEN (SELECT NULLIF(conrelid, 0) FROM pg_constraint WHERE oid = e.oid)
+                  WHEN 'pg_attrdef'::regclass THEN (SELECT adrelid FROM pg_attrdef WHERE oid = e.oid)
+                  ELSE e.oid END AS oid
+           FROM edges e
+       )
+       SELECT o.dir, i.type, i.schema,
+              CASE o.cls
+                WHEN 'pg_class'::regclass THEN (SELECT relname::text FROM pg_class WHERE oid = o.oid)
+                WHEN 'pg_proc'::regclass THEN (SELECT proname::text FROM pg_proc WHERE oid = o.oid)
+                WHEN 'pg_type'::regclass THEN (SELECT typname::text FROM pg_type WHERE oid = o.oid)
+                WHEN 'pg_trigger'::regclass THEN (SELECT tgname::text FROM pg_trigger WHERE oid = o.oid)
+              END AS name,
+              CASE WHEN o.cls = 'pg_proc'::regclass THEN pg_get_function_identity_arguments(o.oid) END AS args,
+              CASE WHEN o.cls = 'pg_trigger'::regclass THEN (SELECT c.relname::text FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid WHERE t.oid = o.oid) END AS tbl,
+              CASE WHEN o.dir = 'uses' AND o.sub > 0 AND o.cls = 'pg_class'::regclass
+                   THEN (SELECT attname::text FROM pg_attribute WHERE attrelid = o.oid AND attnum = o.sub) END AS field
+         FROM owners o
+         CROSS JOIN LATERAL pg_identify_object(o.cls, o.oid, 0) i
+        WHERE o.oid IS NOT NULL AND NOT EXISTS (SELECT 1 FROM self s WHERE s.cls = o.cls AND s.oid = o.oid)`
+    )
+    const kinds: Record<string, ObjectKind> = {
+      table: 'table', view: 'view', 'materialized view': 'materialized_view', sequence: 'sequence', function: 'function',
+      procedure: 'procedure', trigger: 'trigger', type: 'type', domain: 'domain', 'composite type': 'type'
+    }
+    const out = new Map<string, ObjectDependency>()
+    for (const r of rows) {
+      const kind = kinds[str(r.type)]
+      const name = optStr(r.name)
+      if (!kind || !name || SYSTEM_SCHEMAS.has(str(r.schema))) continue
+      const direction = str(r.dir) as ObjectDependency['direction']
+      const key = `${direction}|${kind}|${str(r.schema)}|${name}|${str(r.args)}`
+      const entry = out.get(key) ?? { direction, kind, name, schema: optStr(r.schema), args: optStr(r.args) ?? (kind === 'function' || kind === 'procedure' ? '' : undefined), table: optStr(r.tbl), fields: [] }
+      const field = optStr(r.field)
+      if (field && !entry.fields!.includes(field)) entry.fields!.push(field)
+      out.set(key, entry)
+    }
+    return [...out.values()].map((d) => (d.fields?.length ? d : { ...d, fields: undefined }))
+  }
+
+  /** CALL for procedures, SELECT * FROM for functions; arguments come from the identity signature. */
+  async getRoutineCall(ref: DbObjectRef): Promise<string> {
+    if (ref.kind !== 'function' && ref.kind !== 'procedure') throw new Error(`${ref.kind} objects cannot be executed`)
+    const name = this.dialect.qualify({ ...ref, args: undefined })
+    const args = splitArgs(ref.args ?? '').map((a) => `NULL /* ${a} */`)
+    return ref.kind === 'procedure' ? `CALL ${name}(${args.join(', ')});` : `SELECT * FROM ${name}(${args.join(', ')});`
   }
 
   async listCollations(): Promise<{ charset: string; collation: string; isDefault: boolean }[]> {

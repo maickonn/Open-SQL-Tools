@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Code2, Columns3, Play, RefreshCw, Rows3, Save } from 'lucide-react'
+import { Code2, Columns3, ListTree, Network, Play, RefreshCw, Rows3, Save } from 'lucide-react'
 import type { DbObjectRef, TableStructure } from '@shared/model'
-import { useWorkspace, type SessionState, type Tab } from '../../stores/workspaceStore'
+import { hasOperations } from '@domain/objectCapabilities'
+import { useWorkspace, type ObjectSubView, type SessionState, type Tab } from '../../stores/workspaceStore'
 import { Button, Empty, IconButton, SegmentedTabs, Spinner } from '../../components/ui'
 import { SqlEditor, type SqlEditorHandle } from '../../components/editor/SqlEditor'
 import { StructureEditor } from '../object/StructureEditor'
 import { DataView } from '../object/DataView'
+import { DependenciesView, OperationsView } from '../object/ObjectInsights'
 import { notify } from '../../stores/toast'
 import { errorMessage } from '../../gateways/api'
 
-type View = 'structure' | 'data' | 'ddl'
+type View = ObjectSubView
 
 const emptyTable = (ref: DbObjectRef): TableStructure => ({ ref, columns: [], indexes: [], foreignKeys: [], checks: [], options: {} })
 
@@ -47,7 +49,9 @@ export default function ObjectView({ tab, active }: { tab: Tab; active: boolean 
   const views = [
     ...(ref.kind === 'table' ? [{ value: 'structure' as const, label: t('tabs.structure'), icon: <Columns3 size={14} /> }] : []),
     ...(tableLike && !tab.isNew ? [{ value: 'data' as const, label: t('tabs.data'), icon: <Rows3 size={14} /> }] : []),
-    ...(!tab.isNew ? [{ value: 'ddl' as const, label: tableLike ? t('tabs.ddl') : t('tabs.source'), icon: <Code2 size={14} /> }] : [])
+    ...(!tab.isNew ? [{ value: 'ddl' as const, label: tableLike ? t('tabs.ddl') : t('tabs.source'), icon: <Code2 size={14} /> }] : []),
+    ...(!tab.isNew ? [{ value: 'dependencies' as const, label: t('tabs.dependencies'), icon: <Network size={14} /> }] : []),
+    ...(!tab.isNew && hasOperations(session.info.engine, ref.kind) ? [{ value: 'operations' as const, label: t('tabs.operations'), icon: <ListTree size={14} /> }] : [])
   ]
 
   return (
@@ -79,7 +83,9 @@ export default function ObjectView({ tab, active }: { tab: Tab; active: boolean 
             <DataView session={session} refObj={ref} tabId={tab.id} active={active && view === 'data'} structure={structure} />
           </div>
         )}
-        {view === 'ddl' && <SourceView session={session} refObj={ref} editable={!tableLike} />}
+        {view === 'ddl' && <SourceView session={session} refObj={ref} editable={ref.kind !== 'table' && ref.kind !== 'materialized_view'} />}
+        {view === 'dependencies' && <DependenciesView session={session} refObj={ref} />}
+        {view === 'operations' && <OperationsView session={session} refObj={ref} />}
       </div>
     </div>
   )

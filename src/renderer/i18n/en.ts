@@ -36,6 +36,10 @@ export const en = {
   tree: {
     filter: 'Filter objects', databases: 'Databases', tables: 'Tables', views: 'Views', routines: 'Routines', triggers: 'Triggers',
     materializedViews: 'Materialized views', procedures: 'Procedures', functions: 'Functions', generators: 'Generators',
+    newMenu: 'New', newObject: 'New {{kind}}…', editObject: 'Edit {{kind}}', dropObject: 'Drop {{kind}}…', runObject: 'Run {{kind}}…',
+    activate: 'Activate', deactivate: 'Deactivate', selectedOnly: 'Selected only', allOfKind: 'All {{kinds}}', activateAll: 'Activate all', deactivateAll: 'Deactivate all',
+    activated: '{{count}} object(s) activated', deactivated: '{{count}} object(s) deactivated', inactive: 'Inactive', setValue: 'Set value…',
+    setValuePrompt: 'Current value of {{name}}', valueSet: '{{name}} set to {{value}}', dependencies: 'Dependencies', operations: 'Operations / plan', openList: 'Open list',
     events: 'Events', sequences: 'Sequences', domains: 'Domains', exceptions: 'Exceptions', packages: 'Packages', types: 'Types',
     empty: 'No objects', newQuery: 'New query tab', createTable: 'Create table…', createView: 'Create view…', createRoutine: 'Create routine…',
     createDatabase: 'Create database…', drop: 'Drop…', truncate: 'Empty table…', copyName: 'Copy name', showData: 'Show data',
@@ -48,7 +52,16 @@ export const en = {
     function: 'function', trigger: 'trigger', event: 'event', sequence: 'sequence', domain: 'domain', exception: 'exception',
     package: 'package', type: 'type'
   },
-  tabs: { closeOthers: 'Close other tabs', pin: 'Keep open', nextPrev: 'Next / previous tab', host: 'Host', database: 'Database', table: 'Table', data: 'Data', query: 'Query', structure: 'Structure', ddl: 'CREATE code', source: 'Source' },
+  tabs: { closeOthers: 'Close other tabs', pin: 'Keep open', nextPrev: 'Next / previous tab', host: 'Host', database: 'Database', table: 'Table', data: 'Data', query: 'Query', structure: 'Structure', ddl: 'CREATE code', source: 'Source', dependencies: 'Dependencies', operations: 'Operations / plan' },
+  deps: {
+    uses: 'Objects {{name}} depends on', usedBy: 'Objects that depend on {{name}}', none: 'None recorded',
+    limited: 'This server only records foreign keys, trigger tables and view tables.'
+  },
+  ops: { operation: 'Operation', table: 'Table', statement: 'Statement', plan: 'Plan', none: 'No DML statements found.', noPlan: 'No plan (the statement does not read rows).', error: 'Could not prepare' },
+  list: {
+    name: 'Name', value: 'Value', increment: 'Increment', description: 'Description', number: 'Number', message: 'Message', filter: 'Filter',
+    saved: 'Saved {{name}}', editHint: 'Double-click a value to edit it; Enter saves, Esc cancels.', empty: 'Nothing here yet.'
+  },
   host: {
     variables: 'Variables', status: 'Status', processes: 'Processes', commandStats: 'Command statistics', kill: 'Kill process',
     killQuery: 'Kill query', killConfirm: 'Kill process {{id}}?', autoRefresh: 'Auto-refresh'

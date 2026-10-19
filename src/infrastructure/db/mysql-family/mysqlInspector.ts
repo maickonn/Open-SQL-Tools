@@ -3,7 +3,10 @@ import type {
   ColumnDef,
   DbObjectInfo,
   DbObjectRef,
+  ExceptionInfo,
   FkAction,
+  ObjectDependency,
+  SequenceInfo,
   ForeignKeyDef,
   IndexDef,
   IndexType,
@@ -91,10 +94,99 @@ export class MySqlInspector implements SchemaInspector {
     for (const t of triggers) out.push({ database, name: str(t.trigger_name), kind: 'trigger', table: str(t.event_object_table), createdAt: optStr(t.created) })
     const events = await queryObjects(
       this.query,
-      `SELECT EVENT_NAME, EVENT_COMMENT, CREATED, LAST_ALTERED FROM information_schema.EVENTS WHERE EVENT_SCHEMA = ${db} ORDER BY EVENT_NAME`
+      `SELECT EVENT_NAME, EVENT_COMMENT, CREATED, LAST_ALTERED, STATUS FROM information_schema.EVENTS WHERE EVENT_SCHEMA = ${db} ORDER BY EVENT_NAME`
     ).catch(() => [])
-    for (const e of events) out.push({ database, name: str(e.event_name), kind: 'event', comment: optStr(e.event_comment), createdAt: optStr(e.created), updatedAt: optStr(e.last_altered) })
+    for (const e of events) {
+      out.push({
+        database,
+        name: str(e.event_name),
+        kind: 'event',
+        comment: optStr(e.event_comment),
+        createdAt: optStr(e.created),
+        updatedAt: optStr(e.last_altered),
+        inactive: str(e.status).toUpperCase() !== 'ENABLED' || undefined
+      })
+    }
     return out
+  }
+
+  /** MariaDB sequences; the value shown is the last one handed out (next value minus the increment). */
+  async listSequences(database?: string): Promise<SequenceInfo[]> {
+    if (!this.isMaria || !database) return []
+    const names = await queryObjects(
+      this.query,
+      `SELECT TABLE_NAME, TABLE_COMMENT FROM information_schema.TABLES WHERE TABLE_SCHEMA = ${this.lit(database)} AND TABLE_TYPE = 'SEQUENCE' ORDER BY 1`
+    )
+    if (!names.length) return []
+    const sql = names
+      .map((n) => `SELECT ${this.lit(str(n.table_name))} AS name, next_not_cached_value - increment AS value, increment FROM ${this.dialect.qualify({ database, name: str(n.table_name), kind: 'sequence' })}`)
+      .join('\nUNION ALL\n')
+    const values = new Map((await queryObjects(this.query, sql)).map((r) => [str(r.name), r]))
+    return names.map((n) => {
+      const v = values.get(str(n.table_name))
+      return { name: str(n.table_name), value: v ? str(v.value) : '', increment: v ? num(v.increment) : undefined, comment: optStr(n.table_comment) }
+    })
+  }
+
+  async listExceptions(): Promise<ExceptionInfo[]> {
+    return []
+  }
+
+  /** What information_schema records: foreign keys, trigger tables and (MySQL 8.0.13+) view table usage. */
+  async getDependencies(ref: DbObjectRef): Promise<ObjectDependency[]> {
+    const db = this.lit(ref.database ?? '')
+    const name = this.lit(ref.name)
+    const out: ObjectDependency[] = []
+    const viewUsage = (where: string): ReturnType<typeof queryObjects> =>
+      this.isMaria || this.version < 80013
+        ? Promise.resolve([])
+        : queryObjects(this.query, `SELECT VIEW_NAME, TABLE_NAME FROM information_schema.VIEW_TABLE_USAGE WHERE ${where}`).catch(() => [])
+    if (ref.kind === 'table' || ref.kind === 'view') {
+      const fks = await queryObjects(
+        this.query,
+        `SELECT TABLE_NAME, REFERENCED_TABLE_NAME, COLUMN_NAME, REFERENCED_COLUMN_NAME
+           FROM information_schema.KEY_COLUMN_USAGE
+          WHERE REFERENCED_TABLE_NAME IS NOT NULL AND TABLE_SCHEMA = ${db} AND (TABLE_NAME = ${name} OR (REFERENCED_TABLE_SCHEMA = ${db} AND REFERENCED_TABLE_NAME = ${name}))`
+      )
+      const add = (dep: ObjectDependency, field?: string): void => {
+        const existing = out.find((d) => d.direction === dep.direction && d.kind === dep.kind && d.name === dep.name)
+        const target = existing ?? (out.push({ ...dep, fields: [] }), out[out.length - 1])
+        if (field && !target.fields!.includes(field)) target.fields!.push(field)
+      }
+      for (const fk of fks) {
+        if (str(fk.table_name) === ref.name) add({ direction: 'uses', kind: 'table', name: str(fk.referenced_table_name) }, str(fk.referenced_column_name))
+        if (str(fk.referenced_table_name) === ref.name) add({ direction: 'usedBy', kind: 'table', name: str(fk.table_name) }, str(fk.column_name))
+      }
+      for (const v of await viewUsage(`VIEW_SCHEMA = ${db} AND VIEW_NAME = ${name}`)) add({ direction: 'uses', kind: 'table', name: str(v.table_name) })
+      for (const v of await viewUsage(`TABLE_SCHEMA = ${db} AND TABLE_NAME = ${name}`)) add({ direction: 'usedBy', kind: 'view', name: str(v.view_name) })
+      const triggers = await queryObjects(
+        this.query,
+        `SELECT TRIGGER_NAME FROM information_schema.TRIGGERS WHERE EVENT_OBJECT_SCHEMA = ${db} AND EVENT_OBJECT_TABLE = ${name}`
+      )
+      for (const t of triggers) add({ direction: 'usedBy', kind: 'trigger', name: str(t.trigger_name), table: ref.name })
+    } else if (ref.kind === 'trigger' && ref.table) {
+      out.push({ direction: 'uses', kind: 'table', name: ref.table })
+    }
+    return out.map((d) => (d.fields?.length ? d : { ...d, fields: undefined }))
+  }
+
+  /** CALL for procedures, SELECT f(…) for functions, with the declared parameters as placeholders. */
+  async getRoutineCall(ref: DbObjectRef): Promise<string> {
+    if (ref.kind !== 'function' && ref.kind !== 'procedure') throw new Error(`${ref.kind} objects cannot be executed`)
+    const params = await queryObjects(
+      this.query,
+      `SELECT PARAMETER_MODE, PARAMETER_NAME, DTD_IDENTIFIER FROM information_schema.PARAMETERS
+        WHERE SPECIFIC_SCHEMA = ${this.lit(ref.database ?? '')} AND SPECIFIC_NAME = ${this.lit(ref.name)}
+          AND ROUTINE_TYPE = ${this.lit(ref.kind.toUpperCase())} AND ORDINAL_POSITION > 0
+        ORDER BY ORDINAL_POSITION`
+    )
+    const args = params.map((p) => {
+      const mode = optStr(p.parameter_mode)
+      const label = `${mode && mode !== 'IN' ? `${mode} ` : ''}${str(p.parameter_name)} ${str(p.dtd_identifier)}`
+      return mode === 'OUT' || mode === 'INOUT' ? `@${str(p.parameter_name)} /* ${label} */` : `NULL /* ${label} */`
+    })
+    const name = this.dialect.qualify(ref)
+    return ref.kind === 'procedure' ? `CALL ${name}(${args.join(', ')});` : `SELECT ${name}(${args.join(', ')});`
   }
 
   /** Normalizes information_schema COLUMN_DEFAULT into an SQL expression. */

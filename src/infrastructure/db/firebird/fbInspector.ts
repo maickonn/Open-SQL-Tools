@@ -4,9 +4,13 @@ import type {
   ColumnDef,
   DbObjectInfo,
   DbObjectRef,
+  ExceptionInfo,
   FkAction,
   ForeignKeyDef,
   IndexDef,
+  ObjectDependency,
+  ObjectKind,
+  SequenceInfo,
   ServerUser,
   TableStructure,
   UserPrivileges
@@ -62,7 +66,15 @@ export function fbTypeName(r: Row): { base: string; full: string } {
   }
 }
 
-const stripDefault = (src: string | undefined): string | null => (src ? src.replace(/^\s*DEFAULT\s+/i, '').trim() : null)
+/** RDB$DEPENDENCIES object type codes. */
+const FB_DEPENDENCY_TYPES: Partial<Record<ObjectKind, number>> = {
+  table: 0, view: 1, trigger: 2, procedure: 5, exception: 7, domain: 9, sequence: 14, function: 15, package: 18
+}
+const FB_DEPENDENCY_KINDS: Record<number, ObjectKind> = {
+  0: 'table', 1: 'view', 2: 'trigger', 5: 'procedure', 7: 'exception', 9: 'domain', 14: 'sequence', 15: 'function', 18: 'package', 19: 'package'
+}
+
+const stripDefault =(src: string | undefined): string | null => (src ? src.replace(/^\s*DEFAULT\s+/i, '').trim() : null)
 
 const fkRule = (v: CellValue): FkAction => {
   const s = str(v).toUpperCase()
@@ -91,59 +103,128 @@ export class FbInspector implements SchemaInspector {
   }
 
   async listObjects(): Promise<DbObjectInfo[]> {
-    const out: DbObjectInfo[] = []
-    const rels = await queryObjects(
-      this.query,
-      `SELECT TRIM(RDB$RELATION_NAME) AS NAME, CASE WHEN RDB$VIEW_BLR IS NULL THEN 0 ELSE 1 END AS IS_VIEW, RDB$DESCRIPTION AS DESCR, RDB$RELATION_TYPE AS RTYPE
-         FROM RDB$RELATIONS WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0 ORDER BY 1`
-    )
-    for (const r of rels) {
-      const isView = num(r.is_view) === 1
-      out.push({ name: str(r.name), kind: isView ? 'view' : 'table', comment: optStr(r.descr) })
-    }
     const pkgFilter = this.version >= V3 ? ' AND RDB$PACKAGE_NAME IS NULL' : ''
-    const procs = await queryObjects(
-      this.query,
-      `SELECT TRIM(RDB$PROCEDURE_NAME) AS NAME, RDB$DESCRIPTION AS DESCR FROM RDB$PROCEDURES
-        WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0${pkgFilter} ORDER BY 1`
-    )
-    for (const p of procs) out.push({ name: str(p.name), kind: 'procedure', comment: optStr(p.descr) })
-    const funcs = await queryObjects(
-      this.query,
-      `SELECT TRIM(RDB$FUNCTION_NAME) AS NAME, RDB$DESCRIPTION AS DESCR FROM RDB$FUNCTIONS
-        WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0${pkgFilter} ORDER BY 1`
-    )
-    for (const f of funcs) out.push({ name: str(f.name), kind: 'function', comment: optStr(f.descr) })
-    if (this.version >= V3) {
-      const pkgs = await queryObjects(
-        this.query,
-        'SELECT TRIM(RDB$PACKAGE_NAME) AS NAME, RDB$DESCRIPTION AS DESCR FROM RDB$PACKAGES WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0 ORDER BY 1'
-      )
-      for (const p of pkgs) out.push({ name: str(p.name), kind: 'package', comment: optStr(p.descr) })
-    }
-    const triggers = await queryObjects(
-      this.query,
-      `SELECT TRIM(RDB$TRIGGER_NAME) AS NAME, TRIM(RDB$RELATION_NAME) AS REL, RDB$DESCRIPTION AS DESCR FROM RDB$TRIGGERS
-        WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0 ORDER BY 1`
-    )
-    for (const t of triggers) out.push({ name: str(t.name), kind: 'trigger', table: optStr(t.rel), comment: optStr(t.descr) })
+    const user = 'COALESCE(RDB$SYSTEM_FLAG, 0) = 0'
+    // Every kind in one round trip (catalog browsing is latency-bound over SSH/WAN).
+    const parts = [
+      `SELECT CAST(CASE WHEN RDB$VIEW_BLR IS NULL THEN 'table' ELSE 'view' END AS VARCHAR(16)) AS OBJ_KIND, TRIM(RDB$RELATION_NAME) AS NAME,
+              CAST(NULL AS VARCHAR(63)) AS REL, RDB$DESCRIPTION AS DESCR, 0 AS INACTIVE FROM RDB$RELATIONS WHERE ${user}`,
+      `SELECT 'procedure', TRIM(RDB$PROCEDURE_NAME), NULL, RDB$DESCRIPTION, 0 FROM RDB$PROCEDURES WHERE ${user}${pkgFilter}`,
+      `SELECT 'function', TRIM(RDB$FUNCTION_NAME), NULL, RDB$DESCRIPTION, 0 FROM RDB$FUNCTIONS WHERE ${user}${pkgFilter}`,
+      `SELECT 'trigger', TRIM(RDB$TRIGGER_NAME), TRIM(RDB$RELATION_NAME), RDB$DESCRIPTION, COALESCE(RDB$TRIGGER_INACTIVE, 0) FROM RDB$TRIGGERS WHERE ${user}`,
+      `SELECT 'sequence', TRIM(RDB$GENERATOR_NAME), NULL, RDB$DESCRIPTION, 0 FROM RDB$GENERATORS WHERE ${user}`,
+      `SELECT 'domain', TRIM(RDB$FIELD_NAME), NULL, RDB$DESCRIPTION, 0 FROM RDB$FIELDS WHERE ${user} AND RDB$FIELD_NAME NOT STARTING WITH 'RDB$'`,
+      `SELECT 'exception', TRIM(RDB$EXCEPTION_NAME), NULL, RDB$DESCRIPTION, 0 FROM RDB$EXCEPTIONS WHERE ${user}`
+    ]
+    if (this.version >= V3) parts.push(`SELECT 'package', TRIM(RDB$PACKAGE_NAME), NULL, RDB$DESCRIPTION, 0 FROM RDB$PACKAGES WHERE ${user}`)
+    const rows = await queryObjects(this.query, `${parts.join('\nUNION ALL\n')}\nORDER BY 2`)
+    return rows.map((r) => {
+      const kind = str(r.obj_kind) as DbObjectInfo['kind']
+      return {
+        name: str(r.name),
+        kind,
+        table: kind === 'trigger' ? optStr(r.rel) : undefined,
+        comment: optStr(r.descr),
+        inactive: kind === 'trigger' && num(r.inactive) === 1 ? true : undefined
+      }
+    })
+  }
+
+  async listSequences(): Promise<SequenceInfo[]> {
+    const increment = this.version >= V3 ? 'RDB$GENERATOR_INCREMENT' : '1'
     const gens = await queryObjects(
       this.query,
-      'SELECT TRIM(RDB$GENERATOR_NAME) AS NAME, RDB$DESCRIPTION AS DESCR FROM RDB$GENERATORS WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0 ORDER BY 1'
+      `SELECT TRIM(RDB$GENERATOR_NAME) AS NAME, ${increment} AS INC, RDB$DESCRIPTION AS DESCR
+         FROM RDB$GENERATORS WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0 ORDER BY 1`
     )
-    for (const g of gens) out.push({ name: str(g.name), kind: 'sequence', comment: optStr(g.descr) })
-    const domains = await queryObjects(
+    // Current values: one GEN_ID per generator, batched into a few UNION ALL queries.
+    const values = new Map<string, string>()
+    for (let i = 0; i < gens.length; i += 200) {
+      const batch = gens.slice(i, i + 200)
+      const sql = batch
+        .map((g) => `SELECT CAST(${this.lit(str(g.name))} AS VARCHAR(63)) AS NAME, GEN_ID(${this.dialect.quoteIdent(str(g.name))}, 0) AS VAL FROM RDB$DATABASE`)
+        .join('\nUNION ALL\n')
+      for (const r of await queryObjects(this.query, sql)) values.set(str(r.name), str(r.val))
+    }
+    return gens.map((g) => ({ name: str(g.name), value: values.get(str(g.name)) ?? '', increment: num(g.inc), comment: optStr(g.descr) }))
+  }
+
+  async listExceptions(): Promise<ExceptionInfo[]> {
+    const rows = await queryObjects(
       this.query,
-      `SELECT TRIM(RDB$FIELD_NAME) AS NAME, RDB$DESCRIPTION AS DESCR FROM RDB$FIELDS
-        WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0 AND RDB$FIELD_NAME NOT STARTING WITH 'RDB$' ORDER BY 1`
+      `SELECT RDB$EXCEPTION_NUMBER AS NUM, TRIM(RDB$EXCEPTION_NAME) AS NAME, RDB$MESSAGE AS MSG, RDB$DESCRIPTION AS DESCR
+         FROM RDB$EXCEPTIONS WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0 ORDER BY 2`
     )
-    for (const d of domains) out.push({ name: str(d.name), kind: 'domain', comment: optStr(d.descr) })
-    const exceptions = await queryObjects(
+    return rows.map((r) => ({ number: num(r.num) ?? 0, name: str(r.name), message: str(r.msg), comment: optStr(r.descr) }))
+  }
+
+  /** RDB$DEPENDENCIES in both directions; check-constraint triggers are reported under their table. */
+  async getDependencies(ref: DbObjectRef): Promise<ObjectDependency[]> {
+    const own = FB_DEPENDENCY_TYPES[ref.kind]
+    if (own === undefined) return []
+    const name = this.lit(ref.name)
+    // Relations are recorded as type 0 when depended on, views as type 1 when depending.
+    const asDependent = ref.kind === 'view' ? '1' : ref.kind === 'table' ? '0' : String(own)
+    const asDependedOn = ref.kind === 'view' || ref.kind === 'table' ? '0' : String(own)
+    const notCheck = (col: string): string => `NOT EXISTS (SELECT 1 FROM RDB$CHECK_CONSTRAINTS C WHERE C.RDB$TRIGGER_NAME = ${col})`
+    const kindOf = (nameCol: string, typeCol: string): string =>
+      `CASE WHEN ${typeCol} = 0 AND EXISTS (SELECT 1 FROM RDB$RELATIONS R WHERE R.RDB$RELATION_NAME = ${nameCol} AND R.RDB$VIEW_BLR IS NOT NULL) THEN 1 ELSE ${typeCol} END`
+    const rows = await queryObjects(
       this.query,
-      'SELECT TRIM(RDB$EXCEPTION_NAME) AS NAME, RDB$DESCRIPTION AS DESCR FROM RDB$EXCEPTIONS WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0 ORDER BY 1'
+      `SELECT CAST('uses' AS VARCHAR(8)) AS DIR, TRIM(D.RDB$DEPENDED_ON_NAME) AS NAME, ${kindOf('D.RDB$DEPENDED_ON_NAME', 'D.RDB$DEPENDED_ON_TYPE')} AS DTYPE,
+              TRIM(D.RDB$FIELD_NAME) AS FIELD
+         FROM RDB$DEPENDENCIES D
+        WHERE D.RDB$DEPENDENT_NAME = ${name} AND D.RDB$DEPENDENT_TYPE = ${asDependent}
+       UNION ALL
+       SELECT 'usedBy', TRIM(D.RDB$DEPENDENT_NAME), ${kindOf('D.RDB$DEPENDENT_NAME', 'D.RDB$DEPENDENT_TYPE')}, TRIM(D.RDB$FIELD_NAME)
+         FROM RDB$DEPENDENCIES D
+        WHERE D.RDB$DEPENDED_ON_NAME = ${name} AND D.RDB$DEPENDED_ON_TYPE = ${asDependedOn} AND ${notCheck('D.RDB$DEPENDENT_NAME')}`
     )
-    for (const e of exceptions) out.push({ name: str(e.name), kind: 'exception', comment: optStr(e.descr) })
-    return out
+    const out = new Map<string, ObjectDependency>()
+    for (const r of rows) {
+      const kind = FB_DEPENDENCY_KINDS[num(r.dtype) ?? -1]
+      const depName = str(r.name)
+      if (!kind || depName.startsWith('RDB$') || (depName === ref.name && kind === ref.kind)) continue
+      const direction = str(r.dir) as ObjectDependency['direction']
+      const key = `${direction}|${kind}|${depName}`
+      const entry = out.get(key) ?? { direction, kind, name: depName, fields: [] }
+      const field = optStr(r.field)
+      if (field && !entry.fields!.includes(field)) entry.fields!.push(field)
+      out.set(key, entry)
+    }
+    return [...out.values()].map((d) => (d.fields?.length ? d : { ...d, fields: undefined }))
+  }
+
+  /** EXECUTE PROCEDURE / SELECT … FROM for procedures, SELECT f(…) FROM RDB$DATABASE for functions. */
+  async getRoutineCall(ref: DbObjectRef): Promise<string> {
+    const q = this.dialect.quoteIdent(ref.name)
+    const arg = (p: Row): string => `NULL /* ${str(p.pname) || 'ARG'} ${this.paramType(p)} */`
+    if (ref.kind === 'procedure') {
+      const params = await this.parameters('RDB$PROCEDURE_PARAMETERS', 'RDB$PROCEDURE_NAME', ref.name)
+      const inputs = params.filter((p) => num(p.ptype) === 0)
+      const outputs = params.filter((p) => num(p.ptype) === 1)
+      const typeRow = await queryObjects(
+        this.query,
+        `SELECT RDB$PROCEDURE_TYPE AS PTYPE FROM RDB$PROCEDURES WHERE RDB$PROCEDURE_NAME = ${this.lit(ref.name)}${this.version >= V3 ? ' AND RDB$PACKAGE_NAME IS NULL' : ''}`
+      )
+      // 1 = selectable (uses SUSPEND), 2 = executable; older databases leave it NULL.
+      const selectable = (num(typeRow[0]?.ptype) ?? (outputs.length ? 1 : 2)) === 1
+      const args = inputs.length ? `(${inputs.map(arg).join(', ')})` : ''
+      return selectable ? `SELECT * FROM ${q}${args};` : `EXECUTE PROCEDURE ${q}${args};`
+    }
+    if (ref.kind === 'function') {
+      if (this.version < V3) return `SELECT ${q}() FROM RDB$DATABASE;`
+      const r = await queryObjects(this.query, `SELECT RDB$RETURN_ARGUMENT AS RETARG FROM RDB$FUNCTIONS WHERE RDB$FUNCTION_NAME = ${this.lit(ref.name)} AND RDB$PACKAGE_NAME IS NULL`)
+      const retPos = num(r[0]?.retarg) ?? 0
+      const args = await queryObjects(
+        this.query,
+        `SELECT TRIM(A.RDB$ARGUMENT_NAME) AS PNAME, A.RDB$ARGUMENT_POSITION AS POS, TRIM(A.RDB$FIELD_SOURCE) AS SRC, ${this.fieldColumns('F')}
+           FROM RDB$FUNCTION_ARGUMENTS A JOIN RDB$FIELDS F ON F.RDB$FIELD_NAME = A.RDB$FIELD_SOURCE
+          WHERE A.RDB$FUNCTION_NAME = ${this.lit(ref.name)} AND A.RDB$PACKAGE_NAME IS NULL ORDER BY A.RDB$ARGUMENT_POSITION`
+      )
+      return `SELECT ${q}(${args.filter((a) => num(a.pos) !== retPos).map(arg).join(', ')}) FROM RDB$DATABASE;`
+    }
+    throw new Error(`${ref.kind} objects cannot be executed`)
   }
 
   private fieldColumns(prefix: string): string {

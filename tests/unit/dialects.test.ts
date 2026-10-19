@@ -159,3 +159,45 @@ describe('partitioning and bulk operations', () => {
     expect(new FbDialect(50000).bulkAlter()).toEqual([])
   })
 })
+
+describe('object utilities', () => {
+  const fb25 = new FbDialect(20509)
+  const fb5 = new FbDialect(50004)
+  const pg = new PgDialect(180000)
+  const my = new MySqlDialect(90700)
+  const maria = new MariaDbDialect(110800)
+
+  it('activates and deactivates triggers and events', () => {
+    expect(fb5.setEnabled({ name: 'CLIENTES_AU0', kind: 'trigger' }, false)).toEqual(['ALTER TRIGGER CLIENTES_AU0 INACTIVE'])
+    expect(fb5.setEnabled({ name: 'trg', kind: 'trigger' }, true)).toEqual(['ALTER TRIGGER "trg" ACTIVE'])
+    expect(pg.setEnabled({ schema: 'public', name: 'audit', kind: 'trigger', table: 'Orders' }, false)).toEqual(['ALTER TABLE public."Orders" DISABLE TRIGGER audit'])
+    expect(() => pg.setEnabled({ name: 'audit', kind: 'trigger' }, true)).toThrow()
+    expect(my.setEnabled({ database: 'app', name: 'nightly', kind: 'event' }, false)).toEqual(['ALTER EVENT `app`.`nightly` DISABLE'])
+    expect(my.setEnabled({ database: 'app', name: 'trg', kind: 'trigger' }, false)).toEqual([])
+  })
+
+  it('sets generator / sequence values and rejects anything but integers', () => {
+    expect(fb25.setSequenceValue({ name: 'GEN_ID_CLIENTE', kind: 'sequence' }, '54')).toEqual(['SET GENERATOR GEN_ID_CLIENTE TO 54'])
+    expect(pg.setSequenceValue({ schema: 'public', name: 'orders_id_seq', kind: 'sequence' }, '-1')).toEqual(["SELECT setval('public.orders_id_seq', -1)"])
+    expect(maria.setSequenceValue({ database: 'app', name: 's', kind: 'sequence' }, '7')).toEqual(['SELECT SETVAL(`app`.`s`, 7)'])
+    expect(() => fb5.setSequenceValue({ name: 'G', kind: 'sequence' }, '1; DROP TABLE X')).toThrow()
+    expect(my.setSequenceValue({ name: 's', kind: 'sequence' }, '1')).toEqual([])
+  })
+
+  it('changes exception messages (Firebird only)', () => {
+    expect(fb5.setExceptionMessage({ name: 'A001', kind: 'exception' }, "Retorno já importado!")).toEqual(["ALTER EXCEPTION A001 'Retorno já importado!'"])
+    expect(fb5.setExceptionMessage({ name: 'A001', kind: 'exception' }, "it's")).toEqual(["ALTER EXCEPTION A001 'it''s'"])
+    expect(pg.setExceptionMessage({ name: 'x', kind: 'exception' }, 'm')).toEqual([])
+  })
+
+  it('builds templates for new objects', () => {
+    expect(fb5.createTemplate('trigger', { table: 'CLIENTES' })).toContain('CREATE OR ALTER TRIGGER CLIENTES_BI0 FOR CLIENTES')
+    expect(fb25.createTemplate('sequence', {})).toContain('CREATE GENERATOR')
+    expect(fb5.createTemplate('sequence', {})).toContain('CREATE SEQUENCE')
+    expect(() => fb25.createTemplate('function', {})).toThrow()
+    expect(pg.createTemplate('trigger', { schema: 'sales', table: 'orders' })).toContain('BEFORE INSERT OR UPDATE ON sales.orders')
+    expect(my.createTemplate('trigger', { database: 'app', table: 'orders' })).toContain('BEFORE INSERT ON `app`.`orders`')
+    expect(maria.createTemplate('sequence', { database: 'app' })).toContain('CREATE SEQUENCE `app`.`new_sequence`')
+    expect(() => my.createTemplate('sequence', {})).toThrow()
+  })
+})

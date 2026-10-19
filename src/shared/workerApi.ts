@@ -7,10 +7,15 @@ import type {
   DbObjectInfo,
   DbObjectRef,
   DumpOptions,
+  ExceptionInfo,
   ExportOptions,
   MaterializedResult,
+  ObjectDependency,
+  ObjectKind,
   ProgressInfo,
+  RoutineOperation,
   RowChange,
+  SequenceInfo,
   ServerInfo,
   ServerUser,
   TableDataRequest,
@@ -104,6 +109,16 @@ export interface WorkerApi {
     newName?: string
     withData?: boolean
   }): string[]
+
+  setEnabled(p: { refs: DbObjectRef[]; enabled: boolean }): string[]
+  setSequenceValue(p: { ref: DbObjectRef; value: string }): string[]
+  setExceptionMessage(p: { ref: DbObjectRef; message: string }): string[]
+  listSequences(p: { database?: string; schema?: string }): SequenceInfo[]
+  listExceptions(p: void): ExceptionInfo[]
+  getDependencies(p: { ref: DbObjectRef }): ObjectDependency[]
+  getRoutineCall(p: { ref: DbObjectRef }): string
+  getRoutineOperations(p: { ref: DbObjectRef }): RoutineOperation[]
+  createTemplate(p: { kind: ObjectKind; database?: string; schema?: string; table?: string }): string
 
   bulkAlterTables(p: { tables: DbObjectRef[]; ops: BulkTableOperations; dryRun?: boolean }): {
     results: { table: string; statements: string[]; error?: string }[]

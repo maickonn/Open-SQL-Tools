@@ -246,6 +246,21 @@ export class FbConnection implements DbConnection {
     await this.requireDb().cancelAsync()
   }
 
+  /** Prepares the statement with isc_info_sql_get_plan in a read-only transaction; nothing is executed. */
+  async explainPlan(sql: string): Promise<string> {
+    const tx = await this.startTransaction(true)
+    try {
+      type Prepared = { plan?: string; releaseAsync(): Promise<void> }
+      const cnx = (tx as unknown as { connection: { prepare(tx: Transaction, sql: string, plan: boolean, cb: (err: unknown, stmt: Prepared) => void): void } }).connection
+      const stmt = await new Promise<Prepared>((resolve, reject) => cnx.prepare(tx, sql, true, (err, s) => (err ? reject(err) : resolve(s))))
+      const plan = (stmt.plan ?? '').trim()
+      await stmt.releaseAsync().catch(() => undefined)
+      return plan
+    } finally {
+      await tx.rollbackAsync().catch(() => undefined)
+    }
+  }
+
   async useDatabase(): Promise<void> {
     // A Firebird attachment is bound to a single database file.
   }

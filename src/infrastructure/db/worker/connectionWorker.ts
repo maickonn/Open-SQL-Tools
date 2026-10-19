@@ -34,7 +34,8 @@ const METHODS: (keyof WorkerApi & string)[] = [
   'connect', 'disconnect', 'ping', 'serverInfo', 'execute', 'cancel', 'query', 'useDatabase', 'setAutocommit', 'commit',
   'rollback', 'inTransaction', 'listDatabases', 'listSchemas', 'listObjects', 'getTableStructure', 'getObjectDDL',
   'getRoutineSource', 'listCollations', 'listEngines', 'dataTypes', 'tableDataSql', 'countRows', 'applyRowChanges',
-  'generateTableDDL', 'executeStatements', 'objectAction', 'bulkAlterTables', 'insertRows', 'hostInfo', 'killProcess', 'listUsers', 'getUserPrivileges',
+  'generateTableDDL', 'executeStatements', 'objectAction', 'setEnabled', 'setSequenceValue', 'setExceptionMessage', 'listSequences',
+  'listExceptions', 'getDependencies', 'getRoutineCall', 'getRoutineOperations', 'createTemplate', 'bulkAlterTables', 'insertRows', 'hostInfo', 'killProcess', 'listUsers', 'getUserPrivileges',
   'userStatements', 'exportQuery', 'dumpSql', 'importSqlFile', 'importCsv', 'findText', 'cancelOperation'
 ]
 

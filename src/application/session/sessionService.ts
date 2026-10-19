@@ -7,9 +7,14 @@ import type {
   DbEngine,
   DbObjectRef,
   DumpOptions,
+  ExceptionInfo,
   ExportOptions,
   MaterializedResult,
+  ObjectDependency,
+  ObjectKind,
+  RoutineOperation,
   RowChange,
+  SequenceInfo,
   ServerInfo,
   ServerUser,
   TableDataRequest,
@@ -19,6 +24,7 @@ import type { ExecuteParams, ExecuteSummary, ExportSource, StatementSummary, Wor
 import { toErrorPayload } from '@shared/rpc'
 import type { OpenDatabase, ResultSink, TextWriter } from '@domain/ports/database'
 import { splitSql } from '@domain/sql/splitter'
+import { extractDmlStatements } from '@domain/sql/psqlStatements'
 import { Mutex } from '../util/mutex'
 import { createFormatter } from '../export/formatters'
 import { parseCsv } from '../import/csv'
@@ -422,6 +428,71 @@ export class SessionService {
     // Maintenance statements may return result sets (MySQL CHECK/ANALYZE); errors surface either way.
     await this.runStatements(statements, p.ref.database)
     return statements
+  }
+
+  /* ---------------------------- Object utilities --------------------------- */
+
+  /** Activates / deactivates triggers or events in one go ("selected only" or "all"). */
+  async setEnabled(p: { refs: DbObjectRef[]; enabled: boolean }): Promise<string[]> {
+    const d = this.require().dialect
+    const statements = p.refs.flatMap((ref) => d.setEnabled(ref, p.enabled))
+    if (!statements.length) throw new Error(`${this.require().info.label} cannot activate or deactivate these objects`)
+    await this.runStatements(statements, p.refs[0]?.database, true)
+    return statements
+  }
+
+  async setSequenceValue(p: { ref: DbObjectRef; value: string }): Promise<string[]> {
+    const statements = this.require().dialect.setSequenceValue(p.ref, p.value)
+    if (!statements.length) throw new Error(`${this.require().info.label} cannot change sequence values`)
+    await this.runStatements(statements, p.ref.database)
+    return statements
+  }
+
+  async setExceptionMessage(p: { ref: DbObjectRef; message: string }): Promise<string[]> {
+    const statements = this.require().dialect.setExceptionMessage(p.ref, p.message)
+    if (!statements.length) throw new Error(`${this.require().info.label} has no exceptions`)
+    await this.runStatements(statements, p.ref.database)
+    return statements
+  }
+
+  listSequences(p: { database?: string; schema?: string }): Promise<SequenceInfo[]> {
+    return this.require().inspector.listSequences(p.database, p.schema)
+  }
+
+  listExceptions(): Promise<ExceptionInfo[]> {
+    return this.require().inspector.listExceptions()
+  }
+
+  getDependencies(p: { ref: DbObjectRef }): Promise<ObjectDependency[]> {
+    return this.require().inspector.getDependencies(p.ref)
+  }
+
+  getRoutineCall(p: { ref: DbObjectRef }): Promise<string> {
+    return this.require().inspector.getRoutineCall(p.ref)
+  }
+
+  createTemplate(p: { kind: ObjectKind; database?: string; schema?: string; table?: string }): string {
+    return this.require().dialect.createTemplate(p.kind, p)
+  }
+
+  /** DML statements of a trigger / routine with their execution plans (prepared on the metadata connection, never executed). */
+  async getRoutineOperations(p: { ref: DbObjectRef }): Promise<RoutineOperation[]> {
+    const db = this.require()
+    const explain = db.meta.explainPlan?.bind(db.meta)
+    const source = await db.inspector.getObjectDDL(p.ref)
+    const out: RoutineOperation[] = []
+    for (const s of extractDmlStatements(source)) {
+      const op: RoutineOperation = { operation: s.operation, table: s.table, statement: s.statement }
+      if (explain) {
+        try {
+          op.plan = await db.metaLock.run(() => explain(s.sql))
+        } catch (err) {
+          op.error = toErrorPayload(err).message
+        }
+      }
+      out.push(op)
+    }
+    return out
   }
 
   async bulkAlterTables(p: { tables: DbObjectRef[]; ops: BulkTableOperations; dryRun?: boolean }) {

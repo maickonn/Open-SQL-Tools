@@ -4,8 +4,12 @@ import type {
   ColumnMeta,
   DbObjectInfo,
   DbObjectRef,
+  ExceptionInfo,
   MaterializedResult,
+  ObjectDependency,
+  ObjectKind,
   RowChange,
+  SequenceInfo,
   ServerInfo,
   ServerUser,
   TableDataRequest,
@@ -52,6 +56,8 @@ export interface DbConnection {
   commit(): Promise<void>
   rollback(): Promise<void>
   inTransaction(): boolean
+  /** Execution plan of a statement, prepared but not executed (engines that expose it at prepare time). */
+  explainPlan?(sql: string): Promise<string>
 }
 
 /** Reads catalog metadata. Implementations isolate per-version catalog queries. */
@@ -69,6 +75,21 @@ export interface SchemaInspector {
   killProcess(id: string | number, queryOnly: boolean): Promise<void>
   listUsers(): Promise<ServerUser[]>
   getUserPrivileges(user: ServerUser): Promise<UserPrivileges>
+  /** Generators / sequences with their current values. */
+  listSequences(database?: string, schema?: string): Promise<SequenceInfo[]>
+  /** Firebird exceptions ([] elsewhere). */
+  listExceptions(): Promise<ExceptionInfo[]>
+  /** Objects this one uses and objects that use it, as far as the catalog records it. */
+  getDependencies(ref: DbObjectRef): Promise<ObjectDependency[]>
+  /** SQL that runs the routine, with input parameters as placeholders. */
+  getRoutineCall(ref: DbObjectRef): Promise<string>
+}
+
+export interface TemplateContext {
+  database?: string
+  schema?: string
+  /** Table a new trigger is created for. */
+  table?: string
 }
 
 /** Pure SQL generation for one engine/version. */
@@ -88,6 +109,12 @@ export interface SqlDialect {
   maintenance(ref: DbObjectRef, action: 'optimize' | 'analyze' | 'check' | 'repair' | 'vacuum'): string[]
   /** Statements applying bulk-editor operations to one table ([] = nothing to do). */
   bulkAlter(ref: DbObjectRef, ops: BulkTableOperations): string[]
+  /** Activates / deactivates a trigger or event ([] = not supported). */
+  setEnabled(ref: DbObjectRef, enabled: boolean): string[]
+  setSequenceValue(ref: DbObjectRef, value: string): string[]
+  setExceptionMessage(ref: DbObjectRef, message: string): string[]
+  /** Script creating a new object of this kind, ready to edit in a query tab. */
+  createTemplate(kind: ObjectKind, ctx: TemplateContext): string
   useDatabase(database: string): string | null
   limitQuery(sql: string, limit: number): string
   userStatements(p: {

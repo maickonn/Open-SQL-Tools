@@ -6,12 +6,13 @@ import type {
   DbObjectRef,
   ForeignKeyDef,
   IndexDef,
+  ObjectKind,
   RowChange,
   ServerUser,
   TableDataRequest,
   TableStructure
 } from '@shared/model'
-import type { SqlDialect } from '@domain/ports/database'
+import type { SqlDialect, TemplateContext } from '@domain/ports/database'
 import { toHex } from '@shared/bytes'
 
 export type RawSql = { sql: string }
@@ -33,6 +34,27 @@ export abstract class BaseDialect implements SqlDialect {
   abstract maintenance(ref: DbObjectRef, action: 'optimize' | 'analyze' | 'check' | 'repair' | 'vacuum'): string[]
   abstract useDatabase(database: string): string | null
   abstract bulkAlter(ref: DbObjectRef, ops: BulkTableOperations): string[]
+  abstract createTemplate(kind: ObjectKind, ctx: TemplateContext): string
+
+  setEnabled(_ref: DbObjectRef, _enabled: boolean): string[] {
+    return []
+  }
+
+  setSequenceValue(_ref: DbObjectRef, _value: string): string[] {
+    return []
+  }
+
+  setExceptionMessage(_ref: DbObjectRef, _message: string): string[] {
+    return []
+  }
+
+  /** Validates a value typed by the user for a sequence (integers only). */
+  protected sequenceValue(value: string): string {
+    const v = value.trim()
+    if (!/^-?\d+$/.test(v)) throw new Error(`Invalid sequence value: ${value}`)
+    return v
+  }
+
   abstract userStatements(p: {
     action: 'create' | 'drop' | 'grant' | 'revoke' | 'password'
     user: ServerUser

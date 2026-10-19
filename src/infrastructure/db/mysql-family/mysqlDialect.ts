@@ -1,4 +1,5 @@
-import type { BulkTableOperations, ColumnDef, DbObjectRef, IndexDef, Partitioning, ServerUser, TableStructure } from '@shared/model'
+import type { BulkTableOperations, ColumnDef, DbObjectRef, IndexDef, ObjectKind, Partitioning, ServerUser, TableStructure } from '@shared/model'
+import type { TemplateContext } from '@domain/ports/database'
 import { BaseDialect } from '../common/baseDialect'
 
 const MYSQL_TYPES = [
@@ -264,6 +265,33 @@ export class MySqlDialect extends BaseDialect {
     return `USE ${this.quoteIdent(database)}`
   }
 
+  override setEnabled(ref: DbObjectRef, enabled: boolean): string[] {
+    if (ref.kind !== 'event') return []
+    return [`ALTER EVENT ${this.qualify(ref)} ${enabled ? 'ENABLE' : 'DISABLE'}`]
+  }
+
+  createTemplate(kind: ObjectKind, ctx: TemplateContext): string {
+    const q = (name: string): string => this.qualify({ database: ctx.database, name, kind })
+    const routine = (body: string): string => `DELIMITER $$\n${body}$$\nDELIMITER ;\n`
+    switch (kind) {
+      case 'view':
+        return `CREATE VIEW ${q('new_view')} AS\nSELECT 1 AS id;\n`
+      case 'procedure':
+        return routine(`CREATE PROCEDURE ${q('new_procedure')}(IN p_id INT)\nBEGIN\n  SELECT p_id;\nEND`)
+      case 'function':
+        return routine(`CREATE FUNCTION ${q('new_function')}(p_id INT)\nRETURNS INT\nDETERMINISTIC\nBEGIN\n  RETURN p_id;\nEND`)
+      case 'trigger': {
+        const table = ctx.table ?? 'table_name'
+        const name = `${table.toLowerCase().replace(/[^a-z0-9_]/g, '_')}_bi`
+        return routine(`CREATE TRIGGER ${q(name)}\nBEFORE INSERT ON ${this.qualify({ database: ctx.database, name: table, kind: 'table' })}\nFOR EACH ROW\nBEGIN\n  -- SET NEW.created_at = NOW();\nEND`)
+      }
+      case 'event':
+        return routine(`CREATE EVENT ${q('new_event')}\nON SCHEDULE EVERY 1 DAY\nDO\nBEGIN\n  -- DELETE FROM log WHERE created_at < NOW() - INTERVAL 30 DAY;\nEND`)
+      default:
+        throw new Error(`MySQL has no ${kind} objects`)
+    }
+  }
+
   protected account(user: ServerUser): string {
     return `${this.quoteString(user.name)}@${this.quoteString(user.host ?? '%')}`
   }
@@ -320,5 +348,15 @@ export class MariaDbDialect extends MySqlDialect {
   override dropObject(ref: DbObjectRef): string {
     if (ref.kind === 'package') return `DROP PACKAGE ${this.qualify(ref)}`
     return super.dropObject(ref)
+  }
+
+  /** SETVAL makes `value` the last value returned (the next one is value + increment). */
+  override setSequenceValue(ref: DbObjectRef, value: string): string[] {
+    return [`SELECT SETVAL(${this.qualify(ref)}, ${this.sequenceValue(value)})`]
+  }
+
+  override createTemplate(kind: ObjectKind, ctx: TemplateContext): string {
+    if (kind === 'sequence') return `CREATE SEQUENCE ${this.qualify({ database: ctx.database, name: 'new_sequence', kind })} START WITH 1 INCREMENT BY 1;\n`
+    return super.createTemplate(kind, ctx)
   }
 }

@@ -1,4 +1,5 @@
-import type { ColumnDef, DbObjectRef, IndexDef, ServerUser, TableDataRequest, TableStructure } from '@shared/model'
+import type { ColumnDef, DbObjectRef, IndexDef, ObjectKind, ServerUser, TableDataRequest, TableStructure } from '@shared/model'
+import type { TemplateContext } from '@domain/ports/database'
 import { BaseDialect } from '../common/baseDialect'
 
 const FB_TYPES_25 = [
@@ -194,6 +195,46 @@ export class FbDialect extends BaseDialect {
   /** Firebird has no engines, per-table charsets, schemas (before 6) or owners to change in bulk. */
   bulkAlter(): string[] {
     return []
+  }
+
+  override setEnabled(ref: DbObjectRef, enabled: boolean): string[] {
+    if (ref.kind !== 'trigger') return []
+    return [`ALTER TRIGGER ${this.qualify(ref)} ${enabled ? 'ACTIVE' : 'INACTIVE'}`]
+  }
+
+  /** SET GENERATOR sets the current value on every version (2.5 to 5), unlike RESTART WITH whose semantics changed in 4.0. */
+  override setSequenceValue(ref: DbObjectRef, value: string): string[] {
+    return [`SET GENERATOR ${this.qualify(ref)} TO ${this.sequenceValue(value)}`]
+  }
+
+  override setExceptionMessage(ref: DbObjectRef, message: string): string[] {
+    return [`ALTER EXCEPTION ${this.qualify(ref)} ${this.quoteString(message)}`]
+  }
+
+  createTemplate(kind: ObjectKind, ctx: TemplateContext): string {
+    const psql = (body: string): string => `SET TERM ^ ;\n${body}^\nSET TERM ; ^\n`
+    const table = ctx.table ? this.quoteIdent(ctx.table) : 'TABLE_NAME'
+    switch (kind) {
+      case 'view':
+        return 'CREATE VIEW NEW_VIEW (ID) AS\nSELECT 1 FROM RDB$DATABASE;\n'
+      case 'procedure':
+        return psql('CREATE OR ALTER PROCEDURE NEW_PROCEDURE (P_ID INTEGER)\nRETURNS (RESULT INTEGER)\nAS\nBEGIN\n  RESULT = P_ID;\n  SUSPEND;\nEND')
+      case 'function':
+        if (this.version < encode(3)) throw new Error('PSQL functions need Firebird 3.0 or later')
+        return psql('CREATE OR ALTER FUNCTION NEW_FUNCTION (P_ID INTEGER)\nRETURNS INTEGER\nAS\nBEGIN\n  RETURN P_ID;\nEND')
+      case 'trigger': {
+        const name = this.quoteIdent(`${(ctx.table ?? 'TABLE').toUpperCase().replace(/[^A-Z0-9_$]/g, '_')}_BI0`)
+        return psql(`CREATE OR ALTER TRIGGER ${name} FOR ${table}\nACTIVE BEFORE INSERT POSITION 0\nAS\nBEGIN\n  /* NEW.ID = ...; */\nEND`)
+      }
+      case 'sequence':
+        return this.version < encode(3) ? 'CREATE GENERATOR NEW_GENERATOR;\nSET GENERATOR NEW_GENERATOR TO 0;\n' : 'CREATE SEQUENCE NEW_SEQUENCE START WITH 0;\n'
+      case 'exception':
+        return "CREATE EXCEPTION NEW_EXCEPTION 'Message text';\n"
+      case 'domain':
+        return 'CREATE DOMAIN NEW_DOMAIN AS VARCHAR(100)\n  DEFAULT NULL\n  CHECK (VALUE IS NULL OR VALUE <> \'\');\n'
+      default:
+        throw new Error(`Firebird has no ${kind} objects`)
+    }
   }
 
   userStatements(p: {

@@ -1,4 +1,5 @@
-import type { BulkTableOperations, ColumnDef, DbObjectRef, IndexDef, Partitioning, ServerUser, TableStructure } from '@shared/model'
+import type { BulkTableOperations, ColumnDef, DbObjectRef, IndexDef, ObjectKind, Partitioning, ServerUser, TableStructure } from '@shared/model'
+import type { TemplateContext } from '@domain/ports/database'
 import { BaseDialect, toHex } from '../common/baseDialect'
 
 /** Keywords that must be quoted when used as identifiers (reserved in PostgreSQL). */
@@ -269,6 +270,48 @@ export class PgDialect extends BaseDialect {
 
   useDatabase(): string | null {
     return null
+  }
+
+  override setEnabled(ref: DbObjectRef, enabled: boolean): string[] {
+    if (ref.kind !== 'trigger') return []
+    if (!ref.table) throw new Error('The owning table is required to change a PostgreSQL trigger')
+    return [`ALTER TABLE ${this.qualify({ ...ref, name: ref.table, kind: 'table' })} ${enabled ? 'ENABLE' : 'DISABLE'} TRIGGER ${this.quoteIdent(ref.name)}`]
+  }
+
+  /** setval makes `value` the last value returned, like a generator's current value. */
+  override setSequenceValue(ref: DbObjectRef, value: string): string[] {
+    return [`SELECT setval(${this.quoteString(this.qualify(ref))}, ${this.sequenceValue(value)})`]
+  }
+
+  createTemplate(kind: ObjectKind, ctx: TemplateContext): string {
+    const q = (name: string): string => this.qualify({ schema: ctx.schema, name, kind })
+    switch (kind) {
+      case 'view':
+        return `CREATE VIEW ${q('new_view')} AS\nSELECT 1 AS id;\n`
+      case 'materialized_view':
+        return `CREATE MATERIALIZED VIEW ${q('new_materialized_view')} AS\nSELECT 1 AS id\nWITH DATA;\n`
+      case 'function':
+        return `CREATE OR REPLACE FUNCTION ${q('new_function')}(p_id integer)\nRETURNS integer\nLANGUAGE plpgsql\nAS $$\nBEGIN\n  RETURN p_id;\nEND;\n$$;\n`
+      case 'procedure':
+        return `CREATE OR REPLACE PROCEDURE ${q('new_procedure')}(p_id integer)\nLANGUAGE plpgsql\nAS $$\nBEGIN\n  RAISE NOTICE 'id: %', p_id;\nEND;\n$$;\n`
+      case 'trigger': {
+        const table = ctx.table ?? 'table_name'
+        const base = table.toLowerCase().replace(/[^a-z0-9_]/g, '_')
+        const fn = q(`${base}_trigger_fn`)
+        return (
+          `CREATE OR REPLACE FUNCTION ${fn}()\nRETURNS trigger\nLANGUAGE plpgsql\nAS $$\nBEGIN\n  -- NEW.updated_at := now();\n  RETURN NEW;\nEND;\n$$;\n\n` +
+          `CREATE TRIGGER ${this.quoteIdent(`${base}_biu`)}\nBEFORE INSERT OR UPDATE ON ${this.qualify({ schema: ctx.schema, name: table, kind: 'table' })}\nFOR EACH ROW EXECUTE FUNCTION ${fn}();\n`
+        )
+      }
+      case 'sequence':
+        return `CREATE SEQUENCE ${q('new_sequence')} START WITH 1 INCREMENT BY 1;\n`
+      case 'domain':
+        return `CREATE DOMAIN ${q('new_domain')} AS varchar(100)\n  CHECK (VALUE <> '');\n`
+      case 'type':
+        return `CREATE TYPE ${q('new_type')} AS ENUM ('a', 'b');\n`
+      default:
+        throw new Error(`PostgreSQL has no ${kind} objects`)
+    }
   }
 
   override truncateTable(ref: DbObjectRef): string {

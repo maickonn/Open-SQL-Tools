@@ -28,17 +28,24 @@ import {
   Eraser,
   FileDown,
   Server,
-  Search
+  Search,
+  ListTree,
+  Network,
+  PauseCircle,
+  Play,
+  Power,
+  PowerOff,
+  TerminalSquare
 } from 'lucide-react'
 import type { DbObjectInfo, DbObjectRef, ObjectKind } from '@shared/model'
 import { ContextMenu, Input, Spinner, cx, type MenuItem } from '../../components/ui'
-import { useWorkspace, objectsKey, type SessionState } from '../../stores/workspaceStore'
+import { canRename, canToggle, creatableKinds, hasListView, hasOperations } from '@domain/objectCapabilities'
+import { useWorkspace, objectsKey, type ObjectSubView, type SessionState } from '../../stores/workspaceStore'
 import { useUi } from '../../stores/uiStore'
 import { notify } from '../../stores/toast'
 import { confirmDialog, promptDialog } from '../../components/ui/prompts'
 import { formatBytes } from '../../lib/format'
 import { EngineBadge } from '../common/EngineBadge'
-import { routineTemplate, viewTemplate } from './templates'
 
 const KIND_ORDER: ObjectKind[] = ['table', 'view', 'materialized_view', 'procedure', 'function', 'package', 'trigger', 'event', 'sequence', 'domain', 'type', 'exception']
 
@@ -221,6 +228,7 @@ const TreeRow = memo(function TreeRow({ row, selected, expanded }: { row: Row; s
     if (row.type === 'schema') void ws().loadObjects(row.session.id, row.database, row.schema)
   }
 
+  const inactive = row.type === 'object' && !!row.object.inactive
   const activate = (pin: boolean): void => {
     ws().selectNode(row.key)
     if (row.type === 'session') {
@@ -231,6 +239,9 @@ const TreeRow = memo(function TreeRow({ row, selected, expanded }: { row: Row; s
         { preview: !pin }
       )
       if (row.type === 'database' && row.session.info.engine !== 'postgres') void ws().loadObjects(row.session.id, row.database)
+    } else if (row.type === 'group') {
+      // Generators / sequences and exceptions open as an editable grid, like IBExpert.
+      if (hasListView(row.session.info.engine, row.kind)) openList(row.session, row.kind, row.database, row.schema, t, !pin)
     } else if (row.type === 'object') {
       const ref = refOf(row)
       ws().openTab(
@@ -280,7 +291,7 @@ const TreeRow = memo(function TreeRow({ row, selected, expanded }: { row: Row; s
           selected ? 'bg-accent-soft text-fg' : 'hover:bg-hover'
         )}
         style={{ paddingLeft: pad }}
-        title={row.type === 'object' && row.object.comment ? row.object.comment : undefined}
+        title={row.type === 'object' ? [inactive ? t('tree.inactive') : '', row.object.comment ?? ''].filter(Boolean).join(' · ') || undefined : undefined}
       >
         <span
           className={cx('flex h-4 w-4 shrink-0 items-center justify-center text-subtle', !expandable && 'invisible')}
@@ -291,10 +302,14 @@ const TreeRow = memo(function TreeRow({ row, selected, expanded }: { row: Row; s
         >
           <ChevronRight size={13} className={cx('transition-transform', expanded && 'rotate-90')} />
         </span>
-        <span className="flex shrink-0 items-center">{icon}</span>
-        <span className={cx('truncate', (row.type === 'session' || row.type === 'group') && 'font-medium')} style={row.type === 'session' && row.session.profile.color ? { color: row.session.profile.color } : undefined}>
+        <span className={cx('flex shrink-0 items-center', inactive && 'opacity-50')}>{icon}</span>
+        <span
+          className={cx('truncate', (row.type === 'session' || row.type === 'group') && 'font-medium', inactive && 'text-subtle')}
+          style={row.type === 'session' && row.session.profile.color ? { color: row.session.profile.color } : undefined}
+        >
           {label}
         </span>
+        {inactive && <PauseCircle size={12} className="shrink-0 text-warning" aria-label={t('tree.inactive')} />}
         {count !== undefined && <span className="shrink-0 text-[11px] tabular-nums text-accent">({count})</span>}
         {row.type === 'session' && row.session.lost && <AlertTriangle size={12} className="shrink-0 text-danger" />}
         {detail && <span className="ml-auto shrink-0 pl-2 text-[11px] text-subtle">{detail}</span>}
@@ -311,93 +326,153 @@ function contextItems(row: Row, t: (k: string, o?: Record<string, unknown>) => s
   const ws = useWorkspace.getState()
   const ui = useUi.getState()
   if (row.type === 'status') return []
-  const sid = row.session.id
+  const session = row.session
+  const sid = session.id
+  const engine = session.info.engine
   const items: MenuItem[] = []
   const refresh = (): void => {
     if (row.type === 'session') {
-      if (row.session.info.engine === 'firebird') void ws.loadObjects(sid, undefined, undefined, true)
+      if (engine === 'firebird') void ws.loadObjects(sid, undefined, undefined, true)
       else void ws.refreshDatabases(sid)
     } else if (row.type === 'database') {
-      if (row.session.info.engine === 'postgres') void ws.loadSchemas(sid, row.database, true)
+      if (engine === 'postgres') void ws.loadSchemas(sid, row.database, true)
       else void ws.loadObjects(sid, row.database, undefined, true)
     } else void ws.loadObjects(sid, row.database, row.schema, true)
   }
   const database = row.type === 'session' ? undefined : row.database
   const schema = row.type === 'schema' || row.type === 'object' || row.type === 'group' ? row.schema : undefined
+  const kindLabel = (kind: ObjectKind): string => t(`kinds.${kind}`)
+  // Object containers: Firebird sessions, MySQL databases, PostgreSQL schemas.
+  const isContainer = row.type === 'schema' || (row.type === 'database' && engine !== 'postgres') || (row.type === 'session' && engine === 'firebird')
+  const newItem = (kind: ObjectKind, table?: string): MenuItem => ({
+    label: t('tree.newObject', { kind: kindLabel(kind) }),
+    icon: <Plus size={14} />,
+    onSelect: () => void newObject(session, kind, database, schema ?? (engine === 'postgres' ? 'public' : undefined), table, t)
+  })
 
-  items.push({ label: t('tree.newQuery'), icon: <Plus size={14} />, onSelect: () => ws.newQueryTab(sid, undefined, database) })
-  if (row.type !== 'object') {
+  items.push({ label: t('tree.newQuery'), icon: <TerminalSquare size={14} />, onSelect: () => ws.newQueryTab(sid, undefined, database) })
+
+  if (isContainer) {
     items.push({
-      label: t('tree.createTable'),
-      icon: <Table2 size={14} />,
-      disabled: row.type === 'session' && row.session.info.engine !== 'firebird',
-      onSelect: () =>
-        ws.openTab({ sessionId: sid, kind: 'object', title: t('structure.newTable'), ref: { database, schema: schema ?? (row.session.info.engine === 'postgres' ? 'public' : undefined), name: '', kind: 'table' }, database, schema, isNew: true, view: 'structure' })
+      label: t('tree.newMenu'),
+      icon: <Plus size={14} />,
+      items: creatableKinds(engine).map((kind) => {
+        const Icon = KIND_ICONS[kind] ?? FileCode2
+        return { label: t(groupLabel(kind, session)), icon: <Icon size={14} />, onSelect: () => void newObject(session, kind, database, schema ?? (engine === 'postgres' ? 'public' : undefined), undefined, t) }
+      })
     })
   }
-  if (row.type !== 'object' && (row.type !== 'session' || row.session.info.engine === 'firebird')) {
-    const engine = row.session.info.engine
-    const qualifier = engine === 'postgres' ? `${schema ?? 'public'}.` : engine === 'firebird' || !database ? '' : `\`${database}\`.`
-    items.push({ label: t('tree.createView'), icon: <Eye size={14} />, onSelect: () => ws.newQueryTab(sid, viewTemplate(engine, qualifier), database) })
-    items.push({ label: t('tree.createRoutine'), icon: <Workflow size={14} />, onSelect: () => ws.newQueryTab(sid, routineTemplate(engine, qualifier), database) })
+
+  if (row.type === 'group') {
+    if (creatableKinds(engine).includes(row.kind)) items.push(newItem(row.kind))
+    if (hasListView(engine, row.kind)) {
+      items.push({ label: t('tree.openList'), icon: <ListOrdered size={14} />, onSelect: () => openList(session, row.kind as 'sequence' | 'exception', database, schema, t) })
+    }
+    if (canToggle(engine, row.kind)) {
+      const all = loadedObjects(sid, database, schema).filter((o) => o.kind === row.kind).map(toRef)
+      items.push({ label: t('tree.activateAll'), icon: <Power size={14} />, disabled: !all.length, onSelect: () => void setEnabled(session, all, true, t) })
+      items.push({ label: t('tree.deactivateAll'), icon: <PowerOff size={14} />, disabled: !all.length, onSelect: () => void setEnabled(session, all, false, t) })
+    }
   }
+
   if (row.type === 'object') {
     const ref = refOf(row)
-    const isTableLike = ref.kind === 'table' || ref.kind === 'view' || ref.kind === 'materialized_view'
-    if (isTableLike) {
-      items.push({ label: t('tree.showData'), icon: <Table2 size={14} />, onSelect: () => ws.openTab({ sessionId: sid, kind: 'object', title: ref.name, ref, database, schema, view: 'data' }) })
+    const kind = ref.kind
+    const isTableLike = kind === 'table' || kind === 'view' || kind === 'materialized_view'
+    const open = (view: ObjectSubView): void => {
+      ws.openTab({ sessionId: sid, kind: 'object', title: ref.name, ref, database, schema, view })
     }
-    if (ref.kind === 'table') items.push({ label: t('tree.editStructure'), icon: <Pencil size={14} />, onSelect: () => ws.openTab({ sessionId: sid, kind: 'object', title: ref.name, ref, database, schema, view: 'structure' }) })
-    items.push({ label: t('tree.showDdl'), icon: <FileCode2 size={14} />, onSelect: () => ws.openTab({ sessionId: sid, kind: 'object', title: ref.name, ref, database, schema, view: 'ddl' }) })
-    items.push({ label: t('tree.copyName'), icon: <Copy size={14} />, onSelect: () => void navigator.clipboard.writeText(ref.name) })
-    if (ref.kind === 'table') items.push({ label: t('copy.menu'), icon: <CopyPlus size={14} />, onSelect: () => ui.openDialog({ kind: 'copyTable', sessionId: sid, ref }) })
-    if (isTableLike) items.push({ label: t('tree.exportData'), icon: <FileDown size={14} />, onSelect: () => ui.openDialog({ kind: 'export', sessionId: sid, source: { ref, database }, title: ref.name }) })
     items.push({ separator: true })
-    if (ref.kind === 'table') {
+    if (creatableKinds(engine).includes(kind)) items.push(newItem(kind, kind === 'trigger' ? ref.table : undefined))
+    if (kind === 'table' && creatableKinds(engine).includes('trigger')) items.push({ ...newItem('trigger', ref.name), icon: <Zap size={14} /> })
+    if (kind === 'table') items.push({ label: t('tree.editStructure'), icon: <Pencil size={14} />, onSelect: () => open('structure') })
+    else if (hasListView(engine, kind)) items.push({ label: t('tree.editObject', { kind: kindLabel(kind) }), icon: <Pencil size={14} />, onSelect: () => openList(session, kind, database, schema, t) })
+    else items.push({ label: t('tree.editObject', { kind: kindLabel(kind) }), icon: <Pencil size={14} />, onSelect: () => open('ddl') })
+    items.push({
+      label: t('tree.dropObject', { kind: kindLabel(kind) }),
+      icon: <Trash2 size={14} />,
+      danger: true,
+      onSelect: async () => {
+        if (await confirmDialog(t('tree.drop'), t('tree.dropConfirm', { kind: kindLabel(kind), name: ref.name }), true)) await objectAction(session, ref, 'drop')
+      }
+    })
+
+    if (canToggle(engine, kind)) {
+      const all = loadedObjects(sid, database, schema).filter((o) => o.kind === kind).map(toRef)
+      const plural = t(groupLabel(kind, session)).toLowerCase()
+      items.push({ separator: true })
       items.push({
+        label: t('tree.deactivate'),
+        icon: <PowerOff size={14} />,
+        items: [
+          { label: t('tree.selectedOnly'), disabled: row.object.inactive, onSelect: () => void setEnabled(session, [ref], false, t) },
+          { label: t('tree.allOfKind', { kinds: plural }), onSelect: () => void setEnabled(session, all, false, t) }
+        ]
+      })
+      items.push({
+        label: t('tree.activate'),
+        icon: <Power size={14} />,
+        items: [
+          { label: t('tree.selectedOnly'), disabled: !row.object.inactive, onSelect: () => void setEnabled(session, [ref], true, t) },
+          { label: t('tree.allOfKind', { kinds: plural }), onSelect: () => void setEnabled(session, all, true, t) }
+        ]
+      })
+    }
+    if (kind === 'procedure' || kind === 'function') {
+      items.push({ label: t('tree.runObject', { kind: kindLabel(kind) }), icon: <Play size={14} />, onSelect: () => void runRoutine(session, ref) })
+    }
+    if (kind === 'sequence') items.push({ label: t('tree.setValue'), icon: <ListOrdered size={14} />, onSelect: () => void setSequenceValue(session, ref, t) })
+
+    items.push({ separator: true })
+    if (isTableLike) items.push({ label: t('tree.showData'), icon: <Table2 size={14} />, onSelect: () => open('data') })
+    items.push({ label: t('tree.showDdl'), icon: <FileCode2 size={14} />, onSelect: () => open('ddl') })
+    items.push({ label: t('tree.dependencies'), icon: <Network size={14} />, onSelect: () => open('dependencies') })
+    if (hasOperations(engine, kind)) items.push({ label: t('tree.operations'), icon: <ListTree size={14} />, onSelect: () => open('operations') })
+    items.push({ label: t('tree.copyName'), icon: <Copy size={14} />, onSelect: () => void navigator.clipboard.writeText(ref.name) })
+    if (kind === 'table') items.push({ label: t('copy.menu'), icon: <CopyPlus size={14} />, onSelect: () => ui.openDialog({ kind: 'copyTable', sessionId: sid, ref }) })
+    if (isTableLike) items.push({ label: t('tree.exportData'), icon: <FileDown size={14} />, onSelect: () => ui.openDialog({ kind: 'export', sessionId: sid, source: { ref, database }, title: ref.name }) })
+
+    const extra: MenuItem[] = []
+    if (kind === 'table') {
+      extra.push({
         label: t('common.duplicate'),
         icon: <CopyPlus size={14} />,
         onSelect: async () => {
           const r = await promptDialog(t('common.duplicate'), t('tree.duplicatePrompt'), `${ref.name}_copy`, t('tree.withData'))
           if (!r) return
-          await objectAction(row.session, ref, 'duplicate', r.value, r.checked)
+          await objectAction(session, ref, 'duplicate', r.value, r.checked)
         }
       })
     }
-    items.push({
-      label: t('common.rename'),
-      icon: <Pencil size={14} />,
-      onSelect: async () => {
-        const r = await promptDialog(t('common.rename'), t('tree.renamePrompt', { name: ref.name }), ref.name)
-        if (r && r.value !== ref.name) await objectAction(row.session, ref, 'rename', r.value)
-      }
-    })
-    if (ref.kind === 'table') {
-      items.push({
-        label: t('menu.maintenance'),
-        items: (['analyze', 'optimize', 'check', 'repair', 'vacuum'] as const).map((a) => ({ label: a.toUpperCase(), onSelect: () => void objectAction(row.session, ref, a) }))
+    if (canRename(engine, kind)) {
+      extra.push({
+        label: t('common.rename'),
+        icon: <Pencil size={14} />,
+        onSelect: async () => {
+          const r = await promptDialog(t('common.rename'), t('tree.renamePrompt', { name: ref.name }), ref.name)
+          if (r && r.value !== ref.name) await objectAction(session, ref, 'rename', r.value)
+        }
       })
-      items.push({
+    }
+    if (kind === 'table') {
+      extra.push({
+        label: t('menu.maintenance'),
+        items: (['analyze', 'optimize', 'check', 'repair', 'vacuum'] as const).map((a) => ({ label: a.toUpperCase(), onSelect: () => void objectAction(session, ref, a) }))
+      })
+      extra.push({
         label: t('tree.truncate'),
         icon: <Eraser size={14} />,
         danger: true,
         onSelect: async () => {
-          if (await confirmDialog(t('tree.truncate'), t('tree.truncateConfirm', { name: ref.name }), true)) await objectAction(row.session, ref, 'truncate')
+          if (await confirmDialog(t('tree.truncate'), t('tree.truncateConfirm', { name: ref.name }), true)) await objectAction(session, ref, 'truncate')
         }
       })
     }
-    items.push({
-      label: t('tree.drop'),
-      icon: <Trash2 size={14} />,
-      danger: true,
-      onSelect: async () => {
-        if (await confirmDialog(t('tree.drop'), t('tree.dropConfirm', { kind: t(`kinds.${ref.kind}`), name: ref.name }), true)) await objectAction(row.session, ref, 'drop')
-      }
-    })
+    if (extra.length) items.push({ separator: true }, ...extra)
   }
   if (row.type === 'database') {
     items.push({ separator: true })
-    if (row.session.info.engine !== 'postgres') items.push({ label: t('bulk.menu'), icon: <Pencil size={14} />, onSelect: () => ui.openDialog({ kind: 'bulkEdit', sessionId: sid, database: row.database }) })
+    if (engine !== 'postgres') items.push({ label: t('bulk.menu'), icon: <Pencil size={14} />, onSelect: () => ui.openDialog({ kind: 'bulkEdit', sessionId: sid, database: row.database }) })
     items.push({ label: t('menu.dumpSql'), icon: <FileDown size={14} />, onSelect: () => ui.openDialog({ kind: 'dump', sessionId: sid, database: row.database }) })
     items.push({ label: t('menu.importSql'), onSelect: () => ui.openDialog({ kind: 'importSql', sessionId: sid, database: row.database }) })
     items.push({
@@ -406,7 +481,7 @@ function contextItems(row: Row, t: (k: string, o?: Record<string, unknown>) => s
       danger: true,
       onSelect: async () => {
         if (await confirmDialog(t('tree.drop'), t('tree.dropConfirm', { kind: t('kinds.database'), name: row.database }), true)) {
-          await objectAction(row.session, { name: row.database, kind: 'database' }, 'drop')
+          await objectAction(session, { name: row.database, kind: 'database' }, 'drop')
           void ws.refreshDatabases(sid)
         }
       }
@@ -420,26 +495,86 @@ function contextItems(row: Row, t: (k: string, o?: Record<string, unknown>) => s
     items.push({
       label: t('tree.createDatabase'),
       icon: <Database size={14} />,
-      disabled: row.session.info.engine === 'firebird',
+      disabled: engine === 'firebird',
       onSelect: async () => {
         const r = await promptDialog(t('tree.createDatabase'), t('common.name'))
         if (!r) return
-        const q = row.session.info.engine === 'postgres' ? `"${r.value.replace(/"/g, '""')}"` : `\`${r.value.replace(/`/g, '``')}\``
+        const q = engine === 'postgres' ? `"${r.value.replace(/"/g, '""')}"` : `\`${r.value.replace(/`/g, '``')}\``
         try {
-          await row.session.client.call('executeStatements', { statements: [`CREATE DATABASE ${q}`] })
+          await session.client.call('executeStatements', { statements: [`CREATE DATABASE ${q}`] })
           void ws.refreshDatabases(sid)
         } catch (err) {
           notify.error(err)
         }
       }
     })
-    items.push({ label: t('tabs.host'), icon: <Server size={14} />, onSelect: () => ws.openTab({ sessionId: sid, kind: 'host', title: row.session.profile.name }) })
+    items.push({ label: t('tabs.host'), icon: <Server size={14} />, onSelect: () => ws.openTab({ sessionId: sid, kind: 'host', title: session.profile.name }) })
     items.push({ separator: true })
     items.push({ label: t('menu.disconnect'), icon: <X size={14} />, onSelect: () => void ws.closeSession(sid) })
   }
   items.push({ separator: true })
   items.push({ label: t('common.refresh'), icon: <RefreshCw size={14} />, shortcut: 'F5', onSelect: refresh })
   return items
+}
+
+const toRef = (o: DbObjectInfo): DbObjectRef => ({ database: o.database, schema: o.schema, name: o.name, kind: o.kind, args: o.args, table: o.table })
+
+/** Objects already loaded for a container (the "all triggers" scope). */
+function loadedObjects(sessionId: string, database?: string, schema?: string): DbObjectInfo[] {
+  const entry = useWorkspace.getState().objects[objectsKey(sessionId, database, schema)]
+  return entry?.status === 'ok' ? entry.items.map((o) => ({ ...o, database: o.database ?? database, schema: o.schema ?? schema })) : []
+}
+
+/** Opens a query tab with the engine's starter script for a new object. */
+async function newObject(session: SessionState, kind: ObjectKind, database: string | undefined, schema: string | undefined, table: string | undefined, t: (k: string, o?: Record<string, unknown>) => string): Promise<void> {
+  const ws = useWorkspace.getState()
+  if (kind === 'table') {
+    ws.openTab({ sessionId: session.id, kind: 'object', title: t('structure.newTable'), ref: { database, schema, name: '', kind: 'table' }, database, schema, isNew: true, view: 'structure' })
+    return
+  }
+  try {
+    const sql = await session.client.call('createTemplate', { kind, database, schema, table })
+    ws.newQueryTab(session.id, sql, database)
+  } catch (err) {
+    notify.error(err)
+  }
+}
+
+export function openList(session: SessionState, listKind: 'sequence' | 'exception', database: string | undefined, schema: string | undefined, t: (k: string, o?: Record<string, unknown>) => string, preview = false): void {
+  const title = schema && session.info.engine === 'postgres' ? `${schema} · ${t(groupLabel(listKind, session))}` : t(groupLabel(listKind, session))
+  useWorkspace.getState().openTab({ sessionId: session.id, kind: 'list', listKind, title, database, schema }, { preview })
+}
+
+async function setEnabled(session: SessionState, refs: DbObjectRef[], enabled: boolean, t: (k: string, o?: Record<string, unknown>) => string): Promise<void> {
+  if (!refs.length) return
+  try {
+    await session.client.call('setEnabled', { refs, enabled })
+    notify.success(t(enabled ? 'tree.activated' : 'tree.deactivated', { count: refs.length }))
+    void useWorkspace.getState().loadObjects(session.id, refs[0].database, refs[0].schema, true)
+  } catch (err) {
+    notify.error(err)
+  }
+}
+
+async function runRoutine(session: SessionState, ref: DbObjectRef): Promise<void> {
+  try {
+    const sql = await session.client.call('getRoutineCall', { ref })
+    useWorkspace.getState().newQueryTab(session.id, sql, ref.database)
+  } catch (err) {
+    notify.error(err)
+  }
+}
+
+async function setSequenceValue(session: SessionState, ref: DbObjectRef, t: (k: string, o?: Record<string, unknown>) => string): Promise<void> {
+  try {
+    const current = (await session.client.call('listSequences', { database: ref.database, schema: ref.schema })).find((s) => s.name === ref.name)
+    const r = await promptDialog(t('tree.setValue'), t('tree.setValuePrompt', { name: ref.name }), current?.value ?? '0')
+    if (!r) return
+    await session.client.call('setSequenceValue', { ref, value: r.value })
+    notify.success(t('tree.valueSet', { name: ref.name, value: r.value }))
+  } catch (err) {
+    notify.error(err)
+  }
 }
 
 async function objectAction(

@@ -176,6 +176,48 @@ export interface DbObjectInfo extends DbObjectRef {
   createdAt?: string
   updatedAt?: string
   system?: boolean
+  /** Triggers and events that are disabled on the server. */
+  inactive?: boolean
+}
+
+/** Generator / sequence with its current value. */
+export interface SequenceInfo {
+  name: string
+  schema?: string
+  value: string
+  increment?: number
+  comment?: string
+}
+
+/** Firebird exception. */
+export interface ExceptionInfo {
+  number: number
+  name: string
+  message: string
+  comment?: string
+}
+
+export interface ObjectDependency {
+  /** "uses": the inspected object depends on this one; "usedBy": this one depends on the inspected object. */
+  direction: 'uses' | 'usedBy'
+  kind: ObjectKind | 'column' | 'other'
+  name: string
+  schema?: string
+  /** PostgreSQL routines: identity arguments (to open the right overload). */
+  args?: string
+  /** Owning table of a trigger. */
+  table?: string
+  /** Columns involved, when the catalog records them. */
+  fields?: string[]
+}
+
+/** A DML statement found in a routine or trigger body, with its execution plan when available. */
+export interface RoutineOperation {
+  operation: 'select' | 'insert' | 'update' | 'delete' | 'merge' | 'upsert'
+  table?: string
+  statement: string
+  plan?: string
+  error?: string
 }
 
 export interface ColumnDef {
