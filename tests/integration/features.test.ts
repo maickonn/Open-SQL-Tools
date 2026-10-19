@@ -68,6 +68,15 @@ describe.skipIf(!targets.length)('partitioning, bulk editor and table copy', () 
 
     const ref = (name: string, ns?: string) => ({ database: isMy(engine) ? (ns ?? db) : db, schema: isMy(engine) ? undefined : (ns ?? 'public'), name, kind: 'table' as const })
 
+    it.skipIf(engine !== 'postgres')('switches databases back and forth on the same connections', async () => {
+      for (const database of ['postgres', 'testdb', 'postgres', 'testdb']) {
+        const r = await a.svc.query({ sql: 'SELECT current_database()', database })
+        expect(r.rows[0][0]).toBe(database)
+        const objects = await a.svc.listObjects({ database, schema: 'public' })
+        expect(objects.some((o) => o.name === 'f_src')).toBe(database === 'testdb')
+      }
+    })
+
     it('creates, reads back and extends a partitioned table', async () => {
       const partitioning = isMy(engine)
         ? { method: 'RANGE' as const, expression: 'id', partitions: [{ name: 'p0', bound: 'LESS THAN (100)' }, { name: 'p1', bound: 'LESS THAN (200)' }] }

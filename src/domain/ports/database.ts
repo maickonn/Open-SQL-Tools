@@ -26,6 +26,8 @@ export interface RunOptions {
   chunkSize: number
   /** Run inside a read-only transaction when the engine supports it. */
   readOnly?: boolean
+  /** Small internal query (catalog, kill): skip server-side cursors so it costs a single round trip. */
+  direct?: boolean
 }
 
 export interface RunOutcome {

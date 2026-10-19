@@ -54,12 +54,23 @@ function categorize(t: PgTypeInfo | undefined): TypeCategory {
   }
 }
 
+/** Idle per-database connections kept after switching away, so going back costs nothing. */
+const MAX_IDLE_DATABASES = 4
+
+interface ParkedClient {
+  client: pg.Client
+  types: Map<number, PgTypeInfo>
+  broken: boolean
+}
+
 export class PgConnection implements DbConnection {
   private client: pg.Client | null = null
   private database: string
   private autocommit = true
   private inTx = false
   private types = new Map<number, PgTypeInfo>()
+  private readonly idle = new Map<string, ParkedClient>()
+  private broken = false
   private killer: ((pid: number) => Promise<void>) | null = null
   info: ServerInfo | null = null
 
@@ -105,19 +116,26 @@ export class PgConnection implements DbConnection {
 
   async connect(): Promise<ServerInfo> {
     const client = new pg.Client(this.config(this.database))
-    client.on('error', () => {
-      // Surfaces on the next query; avoid crashing on unhandled 'error'.
-    })
+    this.broken = false
+    const markBroken = (): void => {
+      if (client === this.client) this.broken = true
+      else for (const parked of this.idle.values()) if (parked.client === client) parked.broken = true
+    }
+    // Errors surface on the next query; listening avoids crashing on an unhandled 'error'.
+    client.on('error', markBroken)
+    client.on('end', markBroken)
     await client.connect()
     this.client = client
-    const r = await client.query({
-      text: "SELECT current_setting('server_version_num')::int, version(), current_user, current_database()",
+    // Server info and the type catalog in one round trip (simple protocol, two statements).
+    const [info, types] = (await client.query({
+      text: "SELECT current_setting('server_version_num')::int, version(), current_user, current_database(); SELECT oid::int, typname, typcategory FROM pg_type",
       rowMode: 'array'
-    })
-    const [num, versionString, user, db] = r.rows[0] as [number, string, string, string]
+    })) as unknown as pg.QueryArrayResult[]
+    const [num, versionString, user, db] = info.rows[0] as [number, string, string, string]
     const version = fromPgVersionNum(Number(num))
     this.database = db
-    await this.loadTypes()
+    this.types = new Map()
+    for (const [oid, name, category] of types.rows as [number, string, string][]) this.types.set(Number(oid), { name, category })
     this.info = {
       engine: 'postgres',
       versionString,
@@ -130,21 +148,16 @@ export class PgConnection implements DbConnection {
     return this.info
   }
 
-  private async loadTypes(): Promise<void> {
-    const r = await this.requireClient().query({ text: 'SELECT oid::int, typname, typcategory FROM pg_type', rowMode: 'array' })
-    this.types.clear()
-    for (const [oid, name, category] of r.rows as [number, string, string][]) this.types.set(Number(oid), { name, category })
-  }
-
   private requireClient(): pg.Client {
     if (!this.client) throw new Error('Not connected')
     return this.client
   }
 
   async close(): Promise<void> {
-    const c = this.client
+    const clients = [this.client, ...[...this.idle.values()].map((p) => p.client)]
     this.client = null
-    await c?.end().catch(() => undefined)
+    this.idle.clear()
+    await Promise.allSettled(clients.map((c) => c?.end()))
   }
 
   async ping(): Promise<void> {
@@ -167,11 +180,28 @@ export class PgConnection implements DbConnection {
       this.inTx = true
     }
     try {
-      return await this.stream(client, sql, sink, options)
+      return options.direct ? await this.runDirect(client, sql, sink, options) : await this.stream(client, sql, sink, options)
     } finally {
       if (wrapReadOnly) await client.query('ROLLBACK').catch(() => undefined)
       else this.trackTransaction(sql)
     }
+  }
+
+  /** Whole result in one round trip (no portal); only for small internal queries. */
+  private async runDirect(client: pg.Client, sql: string, sink: ResultSink | null, options: RunOptions): Promise<RunOutcome> {
+    const res = (await client.query({ text: sql, rowMode: 'array' })) as unknown as pg.QueryArrayResult | pg.QueryArrayResult[]
+    const r = Array.isArray(res) ? res[res.length - 1] : res
+    if (!r.fields?.length) return { hasResultSet: false, rowCount: 0, affectedRows: r.rowCount ?? undefined, truncated: false }
+    const truncated = r.rows.length > options.maxRows
+    const rows = truncated ? r.rows.slice(0, options.maxRows) : r.rows
+    if (sink) {
+      sink.start(this.columnMeta(r.fields))
+      const buffer = new ColumnarBuffer(r.fields.length, options.chunkSize, sink)
+      for (const row of rows) buffer.pushRow(row)
+      buffer.flush()
+      sink.end({ rowCount: rows.length, truncated })
+    }
+    return { hasResultSet: true, rowCount: rows.length, truncated }
   }
 
   private async stream(client: pg.Client, sql: string, sink: ResultSink | null, options: RunOptions): Promise<RunOutcome> {
@@ -235,19 +265,52 @@ export class PgConnection implements DbConnection {
     if (this.killer && this.pid) await this.killer(this.pid)
   }
 
-  /** PostgreSQL cannot switch databases on a live connection: reconnect. */
+  /**
+   * PostgreSQL cannot switch databases on a live connection. The current connection is parked
+   * and reused when coming back, so browsing several databases only pays each handshake once.
+   */
   async useDatabase(database: string): Promise<void> {
     if (database === this.database && this.client) return
     if (this.inTx) throw new Error('Commit or roll back the current transaction before switching databases')
     const previous = this.database
-    await this.close()
+    if (this.client) this.park(previous, { client: this.client, types: this.types, broken: this.broken })
+    this.client = null
+    const parked = this.idle.get(database)
+    if (parked) {
+      this.idle.delete(database)
+      if (!parked.broken) {
+        this.client = parked.client
+        this.types = parked.types
+        this.broken = false
+        this.database = database
+        return
+      }
+      void parked.client.end().catch(() => undefined)
+    }
     this.database = database
     try {
       await this.connect()
     } catch (err) {
+      // Stay on the previous database.
+      const back = this.idle.get(previous)
+      this.idle.delete(previous)
       this.database = previous
-      await this.connect()
+      if (back && !back.broken) {
+        this.client = back.client
+        this.types = back.types
+        this.broken = false
+      } else await this.connect()
       throw err
+    }
+  }
+
+  private park(database: string, entry: ParkedClient): void {
+    this.idle.delete(database)
+    this.idle.set(database, entry)
+    while (this.idle.size > MAX_IDLE_DATABASES) {
+      const [oldest, evicted] = this.idle.entries().next().value as [string, ParkedClient]
+      this.idle.delete(oldest)
+      void evicted.client.end().catch(() => undefined)
     }
   }
 

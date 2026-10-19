@@ -62,57 +62,58 @@ export class PgInspector implements SchemaInspector {
     if (!schema) return []
     const ns = this.lit(schema)
     const system = SYSTEM_SCHEMAS.has(schema)
-    const out: DbObjectInfo[] = []
-    const rels = await queryObjects(
+    // Relations, routines, triggers and types in a single round trip.
+    const rows = await queryObjects(
       this.query,
-      `SELECT c.relname, c.relkind, c.reltuples::bigint AS rows, pg_total_relation_size(c.oid) AS size,
-              obj_description(c.oid, 'pg_class') AS comment
-         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = ${ns} AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
-        ORDER BY c.relname`
+      `SELECT * FROM (
+         SELECT 0 AS grp, 'rel_' || c.relkind::text AS kind, c.relname::text AS name, NULL::text AS args, NULL::text AS tbl,
+                c.reltuples::bigint AS rows, pg_total_relation_size(c.oid) AS size, obj_description(c.oid, 'pg_class') AS comment
+           FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = ${ns} AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
+         UNION ALL
+         SELECT 1, 'proc_' || p.prokind::text, p.proname::text, pg_get_function_identity_arguments(p.oid), NULL, NULL, NULL, obj_description(p.oid, 'pg_proc')
+           FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+          WHERE n.nspname = ${ns} AND p.prokind IN ('f', 'p')
+            AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.objid = p.oid AND d.deptype = 'e')
+         UNION ALL
+         SELECT 2, 'trigger', t.tgname::text, NULL, c.relname::text, NULL, NULL, NULL
+           FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = ${ns} AND NOT t.tgisinternal
+         UNION ALL
+         SELECT 3, 'type_' || t.typtype::text, t.typname::text, NULL, NULL, NULL, NULL, NULL
+           FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+          WHERE n.nspname = ${ns} AND (t.typtype IN ('d', 'e', 'r', 'm')
+                OR (t.typtype = 'c' AND (SELECT relkind FROM pg_class WHERE oid = t.typrelid) = 'c'))
+            AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.objid = t.oid AND d.deptype = 'e')
+       ) o
+       ORDER BY grp, name COLLATE "C", args`
     )
     const relKinds: Record<string, ObjectKind> = { r: 'table', p: 'table', f: 'table', v: 'view', m: 'materialized_view', S: 'sequence' }
-    for (const r of rels) {
-      const kind = relKinds[str(r.relkind)] ?? 'table'
-      const rows = num(r.rows)
-      out.push({
-        database,
-        schema,
-        name: str(r.relname),
-        kind,
-        rows: kind === 'table' || kind === 'materialized_view' ? (rows !== undefined && rows >= 0 ? rows : undefined) : undefined,
-        sizeBytes: num(r.size),
-        comment: optStr(r.comment),
-        system
-      })
+    const out: DbObjectInfo[] = []
+    for (const r of rows) {
+      const tag = str(r.kind)
+      const name = str(r.name)
+      if (tag.startsWith('rel_')) {
+        const kind = relKinds[tag.slice(4)] ?? 'table'
+        const count = num(r.rows)
+        out.push({
+          database,
+          schema,
+          name,
+          kind,
+          rows: kind === 'table' || kind === 'materialized_view' ? (count !== undefined && count >= 0 ? count : undefined) : undefined,
+          sizeBytes: num(r.size),
+          comment: optStr(r.comment),
+          system
+        })
+      } else if (tag.startsWith('proc_')) {
+        out.push({ database, schema, name, args: str(r.args), kind: tag === 'proc_p' ? 'procedure' : 'function', comment: optStr(r.comment), system })
+      } else if (tag === 'trigger') {
+        out.push({ database, schema, name, kind: 'trigger', table: str(r.tbl), system })
+      } else {
+        out.push({ database, schema, name, kind: tag === 'type_d' ? 'domain' : 'type', system })
+      }
     }
-    const procs = await queryObjects(
-      this.query,
-      `SELECT p.proname, p.prokind, pg_get_function_identity_arguments(p.oid) AS args, obj_description(p.oid, 'pg_proc') AS comment
-         FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-        WHERE n.nspname = ${ns} AND p.prokind IN ('f', 'p')
-          AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.objid = p.oid AND d.deptype = 'e')
-        ORDER BY p.proname, args`
-    )
-    for (const p of procs) {
-      out.push({ database, schema, name: str(p.proname), args: str(p.args), kind: str(p.prokind) === 'p' ? 'procedure' : 'function', comment: optStr(p.comment), system })
-    }
-    const triggers = await queryObjects(
-      this.query,
-      `SELECT t.tgname, c.relname FROM pg_trigger t
-         JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = ${ns} AND NOT t.tgisinternal ORDER BY t.tgname`
-    )
-    for (const t of triggers) out.push({ database, schema, name: str(t.tgname), kind: 'trigger', table: str(t.relname), system })
-    const types = await queryObjects(
-      this.query,
-      `SELECT t.typname, t.typtype FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
-        WHERE n.nspname = ${ns} AND (t.typtype IN ('d', 'e', 'r', 'm')
-              OR (t.typtype = 'c' AND (SELECT relkind FROM pg_class WHERE oid = t.typrelid) = 'c'))
-          AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.objid = t.oid AND d.deptype = 'e')
-        ORDER BY t.typname`
-    )
-    for (const t of types) out.push({ database, schema, name: str(t.typname), kind: str(t.typtype) === 'd' ? 'domain' : 'type', system })
     return out
   }
 

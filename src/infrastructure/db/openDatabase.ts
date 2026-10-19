@@ -15,10 +15,10 @@ import { FbInspector } from './firebird/fbInspector'
 
 export type { OpenDatabase }
 
-export async function runMaterialized(conn: DbConnection, sql: string, maxRows = 100_000, readOnly = false): Promise<MaterializedResult> {
+export async function runMaterialized(conn: DbConnection, sql: string, maxRows = 100_000, readOnly = false, direct = false): Promise<MaterializedResult> {
   const sink = new MaterializingSink()
   const started = performance.now()
-  const outcome = await conn.run(sql, sink, { maxRows, chunkSize: 10_000, readOnly })
+  const outcome = await conn.run(sql, sink, { maxRows, chunkSize: 10_000, readOnly, direct })
   return sink.toResult(Math.round(performance.now() - started), outcome.affectedRows)
 }
 
@@ -37,19 +37,19 @@ function createConnection(profile: ConnectionProfile, secrets: ConnectionSecrets
 export async function openDatabase(profile: ConnectionProfile, secrets: ConnectionSecrets, endpoint: Endpoint): Promise<OpenDatabase> {
   const primary = createConnection(profile, secrets, endpoint)
   const meta = createConnection(profile, secrets, endpoint)
-  // Primary first: authentication errors surface once, with a clear message.
-  const info = await primary.connect()
-  try {
-    await meta.connect()
-  } catch (err) {
-    await primary.close()
-    throw err
+  // Both handshakes run concurrently (they cost several round trips over SSH or WAN links);
+  // the primary's error wins so authentication failures surface once, with a clear message.
+  const [p, m] = await Promise.allSettled([primary.connect(), meta.connect()])
+  if (p.status === 'rejected' || m.status === 'rejected') {
+    await Promise.allSettled([primary.close(), meta.close()])
+    throw p.status === 'rejected' ? p.reason : (m as PromiseRejectedResult).reason
   }
+  const info = p.value
 
   const metaLock = new Mutex()
-  const metaQuery: QueryFn = (sql, maxRows) => metaLock.run(() => runMaterialized(meta, sql, maxRows))
+  const metaQuery: QueryFn = (sql, maxRows) => metaLock.run(() => runMaterialized(meta, sql, maxRows, false, true))
   // Kills must not wait for the lock: drivers queue commands per connection anyway.
-  const directMeta = (sql: string): Promise<MaterializedResult> => runMaterialized(meta, sql, 10)
+  const directMeta = (sql: string): Promise<MaterializedResult> => runMaterialized(meta, sql, 10, false, true)
 
   let dialect: SqlDialect
   let inspector: SchemaInspector

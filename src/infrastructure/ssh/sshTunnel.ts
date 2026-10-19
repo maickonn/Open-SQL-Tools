@@ -32,8 +32,11 @@ export async function openSshTunnel(cfg: SshConfig, secrets: ConnectionSecrets, 
     client.once('error', reject)
     client.connect(connectCfg)
   })
+  // Database protocols are chatty with small packets: Nagle's algorithm would add a delay to most round trips.
+  client.setNoDelay(true)
 
   const server: Server = createServer((socket) => {
+    socket.setNoDelay(true)
     client.forwardOut(socket.remoteAddress ?? '127.0.0.1', socket.remotePort ?? 0, dstHost, dstPort, (err, stream) => {
       if (err) {
         socket.destroy(err)
