@@ -1,0 +1,175 @@
+import { useTranslation } from 'react-i18next'
+import {
+  Bot,
+  Database,
+  FileDown,
+  FileUp,
+  FolderOpen,
+  Moon,
+  PanelBottom,
+  PanelLeft,
+  Play,
+  Plus,
+  RotateCcw,
+  Save,
+  Search,
+  Settings,
+  Square,
+  Sun,
+  Users,
+  Check
+} from 'lucide-react'
+import { DropdownMenu, IconButton, cx, type MenuItem } from '../components/ui'
+import { useConnections } from '../stores/connectionsStore'
+import { useWorkspace } from '../stores/workspaceStore'
+import { useUi } from '../stores/uiStore'
+import { useChat } from '../stores/chatStore'
+import { useSettings, resolveTheme } from '../stores/settingsStore'
+import { commands } from './commands'
+import { resolveShortcut } from '../lib/shortcuts'
+import { api } from '../gateways/api'
+import logo from '../assets/logo.svg'
+
+function MenuButton({ label, items }: { label: string; items: MenuItem[] }) {
+  return (
+    <DropdownMenu
+      items={items}
+      trigger={
+        <button type="button" className="no-drag h-7 rounded-md px-2.5 text-[13px] text-muted hover:bg-hover hover:text-fg data-[state=open]:bg-hover data-[state=open]:text-fg">
+          {label}
+        </button>
+      }
+    />
+  )
+}
+
+export function TitleBar() {
+  const { t } = useTranslation()
+  const activeSession = useWorkspace((s) => (s.activeSessionId ? s.sessions[s.activeSessionId] : null))
+  const activeTab = useWorkspace((s) => s.tabs.find((x) => x.id === s.activeTabId))
+  const settings = useSettings((s) => s.settings)
+  const ui = useUi()
+  const chatOpen = useChat((s) => s.open)
+  const isMac = api.platform === 'darwin'
+  const theme = resolveTheme(settings.theme)
+  const sid = activeSession?.id
+  const sc = (id: string): string => resolveShortcut(id, settings.shortcuts)
+
+  const fileMenu: MenuItem[] = [
+    { label: t('menu.sessionManager'), icon: <Database size={14} />, shortcut: sc('sessionManager'), onSelect: () => useConnections.getState().openDialog() },
+    { label: t('menu.newQueryTab'), icon: <Plus size={14} />, shortcut: sc('newQuery'), disabled: !sid, onSelect: () => commands.newQuery() },
+    { separator: true },
+    { label: t('menu.openSqlFile'), icon: <FolderOpen size={14} />, shortcut: sc('openFile'), disabled: !sid, onSelect: () => commands.openSqlFile() },
+    { label: t('menu.saveSqlFile'), icon: <Save size={14} />, shortcut: sc('save'), disabled: activeTab?.kind !== 'query', onSelect: () => commands.saveSqlFile(false) },
+    { label: t('menu.saveSqlFileAs'), disabled: activeTab?.kind !== 'query', onSelect: () => commands.saveSqlFile(true) },
+    { separator: true },
+    { label: t('menu.closeTab'), shortcut: sc('closeTab'), disabled: !activeTab, onSelect: () => activeTab && useWorkspace.getState().closeTab(activeTab.id) },
+    { label: t('menu.disconnect'), disabled: !sid, onSelect: () => sid && void useWorkspace.getState().closeSession(sid) },
+    { separator: true },
+    { label: t('menu.exit'), onSelect: () => window.close() }
+  ]
+
+  const queryMenu: MenuItem[] = [
+    { label: t('menu.runAll'), icon: <Play size={14} />, shortcut: sc('run'), disabled: activeTab?.kind !== 'query', onSelect: () => commands.run('all') },
+    { label: t('menu.runCurrent'), shortcut: sc('runCurrent'), disabled: activeTab?.kind !== 'query', onSelect: () => commands.run('current') },
+    { label: t('menu.runSelection'), disabled: activeTab?.kind !== 'query', onSelect: () => commands.run('selection') },
+    { label: t('menu.stop'), icon: <Square size={14} />, disabled: activeTab?.kind !== 'query', onSelect: () => commands.stop() },
+    { label: t('menu.explain'), disabled: activeTab?.kind !== 'query', onSelect: () => commands.explain() },
+    { label: t('menu.format'), shortcut: sc('format'), disabled: activeTab?.kind !== 'query', onSelect: () => commands.format() },
+    { separator: true },
+    { label: t('menu.autocommit'), checked: activeSession?.autocommit ?? true, disabled: !sid, onSelect: () => commands.toggleAutocommit() },
+    { label: t('menu.commit'), icon: <Check size={14} />, disabled: !sid, onSelect: () => commands.commit() },
+    { label: t('menu.rollback'), icon: <RotateCcw size={14} />, disabled: !sid, onSelect: () => commands.rollback() }
+  ]
+
+  const toolsMenu: MenuItem[] = [
+    { label: t('menu.exportGrid'), icon: <FileDown size={14} />, disabled: !sid, onSelect: () => commands.exportActive() },
+    { label: t('menu.dumpSql'), disabled: !sid, onSelect: () => sid && ui.openDialog({ kind: 'dump', sessionId: sid }) },
+    { label: t('menu.importSql'), icon: <FileUp size={14} />, disabled: !sid, onSelect: () => sid && ui.openDialog({ kind: 'importSql', sessionId: sid }) },
+    { label: t('menu.importCsv'), disabled: !sid, onSelect: () => sid && ui.openDialog({ kind: 'importCsv', sessionId: sid }) },
+    { separator: true },
+    { label: t('menu.findText'), icon: <Search size={14} />, shortcut: sc('findText'), disabled: !sid, onSelect: () => sid && ui.openDialog({ kind: 'findText', sessionId: sid }) },
+    { label: t('menu.userManager'), icon: <Users size={14} />, disabled: !sid, onSelect: () => sid && ui.openDialog({ kind: 'users', sessionId: sid }) },
+    { separator: true },
+    { label: t('menu.settings'), icon: <Settings size={14} />, shortcut: sc('settings'), onSelect: () => ui.openDialog({ kind: 'settings' }) }
+  ]
+
+  const viewMenu: MenuItem[] = [
+    { label: t('menu.toggleSidebar'), checked: ui.sidebar, shortcut: sc('toggleSidebar'), onSelect: ui.toggleSidebar },
+    { label: t('menu.toggleLog'), checked: ui.logPanel, shortcut: sc('toggleLog'), onSelect: ui.toggleLog },
+    { label: t('menu.toggleChat'), checked: chatOpen, shortcut: sc('toggleChat'), onSelect: () => useChat.getState().toggle() },
+    { separator: true },
+    {
+      label: t('menu.theme'),
+      items: [
+        { label: t('menu.themeDark'), checked: settings.theme === 'dark', onSelect: () => void useSettings.getState().update({ theme: 'dark' }) },
+        { label: t('menu.themeLight'), checked: settings.theme === 'light', onSelect: () => void useSettings.getState().update({ theme: 'light' }) },
+        { label: t('menu.themeSystem'), checked: settings.theme === 'system', onSelect: () => void useSettings.getState().update({ theme: 'system' }) }
+      ]
+    }
+  ]
+
+  const helpMenu: MenuItem[] = [
+    { label: t('menu.shortcuts'), onSelect: () => ui.openDialog({ kind: 'shortcuts' }) },
+    { label: t('menu.about'), onSelect: () => ui.openDialog({ kind: 'about' }) }
+  ]
+
+  return (
+    <header className={cx('drag flex h-9 shrink-0 items-center gap-1 border-b border-border bg-bg pr-[140px]', isMac ? 'pl-20' : 'pl-2')}>
+      <img src={logo} alt="" className="mr-1 h-5 w-5" draggable={false} />
+      <MenuButton label={t('menu.file')} items={fileMenu} />
+      <MenuButton label={t('menu.query')} items={queryMenu} />
+      <MenuButton label={t('menu.tools')} items={toolsMenu} />
+      <MenuButton label={t('menu.view')} items={viewMenu} />
+      <MenuButton label={t('menu.help')} items={helpMenu} />
+
+      <div className="no-drag ml-3 flex items-center gap-0.5 border-l border-border pl-2">
+        <IconButton label={t('menu.sessionManager')} onClick={() => useConnections.getState().openDialog()}>
+          <Database size={16} />
+        </IconButton>
+        <IconButton label={t('menu.newQueryTab')} disabled={!sid} onClick={() => commands.newQuery()}>
+          <Plus size={16} />
+        </IconButton>
+        <IconButton label={`${t('menu.runAll')} (${sc('run')})`} disabled={activeTab?.kind !== 'query'} onClick={() => commands.run('all')}>
+          <Play size={16} className="text-success" />
+        </IconButton>
+        <IconButton label={t('menu.stop')} disabled={activeTab?.kind !== 'query'} onClick={() => commands.stop()}>
+          <Square size={14} className="text-danger" />
+        </IconButton>
+        {activeSession && !activeSession.autocommit && (
+          <>
+            <IconButton label={t('menu.commit')} onClick={() => commands.commit()}>
+              <Check size={16} />
+            </IconButton>
+            <IconButton label={t('menu.rollback')} onClick={() => commands.rollback()}>
+              <RotateCcw size={15} />
+            </IconButton>
+          </>
+        )}
+      </div>
+
+      <div className="flex-1" />
+
+      <div className="no-drag flex items-center gap-0.5">
+        <IconButton label={t('menu.toggleSidebar')} active={ui.sidebar} onClick={ui.toggleSidebar}>
+          <PanelLeft size={16} />
+        </IconButton>
+        <IconButton label={t('menu.toggleLog')} active={ui.logPanel} onClick={ui.toggleLog}>
+          <PanelBottom size={16} />
+        </IconButton>
+        <IconButton label={t('menu.toggleChat')} active={chatOpen} onClick={() => useChat.getState().toggle()}>
+          <Bot size={16} />
+        </IconButton>
+        <IconButton
+          label={t('menu.theme')}
+          onClick={() => void useSettings.getState().update({ theme: theme === 'dark' ? 'light' : 'dark' })}
+        >
+          {theme === 'dark' ? <Moon size={16} /> : <Sun size={16} />}
+        </IconButton>
+        <IconButton label={t('menu.settings')} onClick={() => ui.openDialog({ kind: 'settings' })}>
+          <Settings size={16} />
+        </IconButton>
+      </div>
+    </header>
+  )
+}

@@ -1,0 +1,212 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/inter';
+@import '@fontsource-variable/jetbrains-mono';
+
+/* Theme tokens. Dark is the default; light applies via [data-theme='light']. */
+:root,
+[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #16171b;
+  --panel: #1c1d22;
+  --panel-2: #222329;
+  --sunken: #121316;
+  --hover: #2a2c33;
+  --active: #31343c;
+  --border: #2b2d34;
+  --border-strong: #3a3d46;
+  --text: #e6e7ea;
+  --muted: #9ca0aa;
+  --subtle: #6b707b;
+  --accent: #5b8def;
+  --accent-hover: #6f9bf2;
+  --accent-fg: #ffffff;
+  --accent-soft: rgba(91, 141, 239, 0.16);
+  --danger: #ef6b6b;
+  --danger-soft: rgba(239, 107, 107, 0.14);
+  --warning: #e5b85c;
+  --success: #5cc48a;
+  --selection: rgba(91, 141, 239, 0.28);
+  --null: #6b707b;
+  --kw-number: #b5cea8;
+  --kw-date: #d7ba7d;
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+
+[data-theme='light'] {
+  color-scheme: light;
+  --bg: #f7f7f8;
+  --panel: #ffffff;
+  --panel-2: #f2f3f5;
+  --sunken: #eeeff2;
+  --hover: #e9eaee;
+  --active: #dfe1e6;
+  --border: #e1e2e6;
+  --border-strong: #cdd0d6;
+  --text: #1f2328;
+  --muted: #5f6670;
+  --subtle: #8a909a;
+  --accent: #2f6bdc;
+  --accent-hover: #255ac0;
+  --accent-fg: #ffffff;
+  --accent-soft: rgba(47, 107, 220, 0.12);
+  --danger: #d43c3c;
+  --danger-soft: rgba(212, 60, 60, 0.1);
+  --warning: #b7861c;
+  --success: #23955a;
+  --selection: rgba(47, 107, 220, 0.18);
+  --null: #9aa0aa;
+  --kw-number: #098658;
+  --kw-date: #795e26;
+  --shadow: 0 10px 30px rgba(15, 20, 30, 0.14);
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-panel-2: var(--panel-2);
+  --color-sunken: var(--sunken);
+  --color-hover: var(--hover);
+  --color-active: var(--active);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-fg: var(--text);
+  --color-muted: var(--muted);
+  --color-subtle: var(--subtle);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-warning: var(--warning);
+  --color-success: var(--success);
+  --font-sans: 'Inter Variable', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', 'Cascadia Code', Consolas, monospace;
+  --shadow-pop: var(--shadow);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+input,
+textarea,
+[contenteditable='true'],
+.selectable {
+  user-select: text;
+}
+
+::selection {
+  background: var(--selection);
+}
+
+/* Compact, theme-aware scrollbars */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--subtle);
+}
+::-webkit-scrollbar-corner,
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.drag {
+  -webkit-app-region: drag;
+}
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+/* Resizable panel handles */
+[data-separator] {
+  background: var(--border);
+  transition: background 120ms;
+}
+[data-separator]:hover,
+[data-separator][data-separator-state='drag'] {
+  background: var(--accent);
+}
+
+/* SQL editor error marker */
+.ost-error-squiggle {
+  text-decoration: wavy underline var(--danger);
+  text-underline-offset: 3px;
+}
+.ost-error-line {
+  background: var(--danger-soft);
+}
+
+/* Assistant markdown */
+.prose-chat p {
+  margin: 0.35em 0;
+}
+.prose-chat ul,
+.prose-chat ol {
+  margin: 0.35em 0;
+  padding-left: 1.3em;
+}
+.prose-chat ul {
+  list-style: disc;
+}
+.prose-chat ol {
+  list-style: decimal;
+}
+.prose-chat h1,
+.prose-chat h2,
+.prose-chat h3 {
+  font-weight: 600;
+  margin: 0.6em 0 0.3em;
+}
+.prose-chat table {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  font-size: 12px;
+}
+.prose-chat th,
+.prose-chat td {
+  border: 1px solid var(--border);
+  padding: 2px 6px;
+}
+.prose-chat blockquote {
+  border-left: 3px solid var(--border-strong);
+  padding-left: 0.6em;
+  color: var(--muted);
+}
+
+/* Glide overlay editor follows the theme */
+.gdg-style {
+  --gdg-bg-cell: var(--panel);
+}
+
+.theme-switching *,
+.theme-switching *::before,
+.theme-switching *::after {
+  transition: none !important;
+}
