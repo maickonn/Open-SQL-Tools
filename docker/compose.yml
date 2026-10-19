@@ -1,0 +1,222 @@
+# Disposable test databases for Open SQL Tool. No volumes: every start is clean.
+# Start only the servers you are testing (the whole matrix overwhelms Docker Desktop):
+#
+#   npm run test:db -- mysql97 postgres18      # start, run integration tests, stop
+#   npm run db:up -- mariadb118                # just start one
+#   npm run db:stop -- mariadb118
+#
+# Credentials: MySQL/MariaDB root/test, PostgreSQL postgres/test, Firebird SYSDBA/masterkey.
+# Each server has a `testdb` database (Firebird: /var/lib/firebird/data/testdb.fdb).
+name: open-sql-tool
+
+x-mysql: &mysql
+  environment:
+    MYSQL_ROOT_PASSWORD: test
+    MYSQL_DATABASE: testdb
+  healthcheck:
+    test: ['CMD-SHELL', 'mysqladmin ping -h 127.0.0.1 -uroot -ptest --silent']
+    interval: 3s
+    timeout: 5s
+    retries: 60
+  restart: 'no'
+
+x-mariadb: &mariadb
+  environment:
+    MARIADB_ROOT_PASSWORD: test
+    MARIADB_DATABASE: testdb
+    MYSQL_ROOT_PASSWORD: test
+    MYSQL_DATABASE: testdb
+  healthcheck:
+    test: ['CMD', 'healthcheck.sh', '--connect', '--innodb_initialized']
+    interval: 3s
+    timeout: 5s
+    retries: 60
+  restart: 'no'
+
+x-mariadb-legacy: &mariadb-legacy
+  <<: *mariadb
+  healthcheck:
+    test: ['CMD-SHELL', 'mysqladmin ping -h 127.0.0.1 -uroot -ptest --silent']
+    interval: 3s
+    timeout: 5s
+    retries: 60
+
+x-postgres: &postgres
+  environment:
+    POSTGRES_PASSWORD: test
+    POSTGRES_DB: testdb
+  healthcheck:
+    test: ['CMD-SHELL', 'pg_isready -U postgres -d testdb']
+    interval: 3s
+    timeout: 5s
+    retries: 60
+  restart: 'no'
+
+x-firebird: &firebird
+  environment:
+    FIREBIRD_ROOT_PASSWORD: masterkey
+    FIREBIRD_DATABASE: testdb.fdb
+    FIREBIRD_DATABASE_DEFAULT_CHARSET: UTF8
+  healthcheck:
+    test: ['CMD-SHELL', "bash -c '</dev/tcp/127.0.0.1/3050'"]
+    interval: 3s
+    timeout: 5s
+    retries: 60
+  restart: 'no'
+
+services:
+  # ------------------------------- Firebird -------------------------------
+  firebird25:
+    <<: *firebird
+    build: ./firebird25
+    image: open-sql-tool/firebird:2.5.9
+    platform: linux/amd64
+    ports: ['30250:3050']
+    profiles: [all, firebird]
+  firebird3:
+    <<: *firebird
+    image: firebirdsql/firebird:3.0.14
+    ports: ['30300:3050']
+    profiles: [all, firebird]
+  firebird4:
+    <<: *firebird
+    image: firebirdsql/firebird:4.0.7
+    ports: ['30400:3050']
+    profiles: [all, firebird]
+  firebird5:
+    <<: *firebird
+    image: firebirdsql/firebird:5.0.4
+    ports: ['30500:3050']
+    profiles: [all, firebird, latest]
+  firebird6:
+    <<: *firebird
+    image: firebirdsql/firebird:6-snapshot
+    ports: ['30600:3050']
+    profiles: [preview]
+
+  # -------------------------------- MySQL ---------------------------------
+  mysql57:
+    <<: *mysql
+    image: mysql:5.7
+    platform: linux/amd64
+    ports: ['33057:3306']
+    profiles: [all, mysql]
+  mysql80:
+    <<: *mysql
+    image: mysql:8.0
+    ports: ['33080:3306']
+    profiles: [all, mysql]
+  mysql84:
+    <<: *mysql
+    image: mysql:8.4
+    ports: ['33084:3306']
+    profiles: [all, mysql]
+  mysql97:
+    <<: *mysql
+    image: mysql:9.7
+    ports: ['33097:3306']
+    profiles: [all, mysql, latest]
+  mysql267:
+    <<: *mysql
+    image: mysql:26.7
+    ports: ['33267:3306']
+    profiles: [all, mysql]
+
+  # ------------------------------- MariaDB --------------------------------
+  mariadb102:
+    <<: *mariadb-legacy
+    image: mariadb:10.2
+    ports: ['34102:3306']
+    profiles: [all, mariadb]
+  mariadb103:
+    <<: *mariadb-legacy
+    image: mariadb:10.3
+    ports: ['34103:3306']
+    profiles: [all, mariadb]
+  mariadb104:
+    <<: *mariadb
+    image: mariadb:10.4
+    ports: ['34104:3306']
+    profiles: [all, mariadb]
+  mariadb105:
+    <<: *mariadb
+    image: mariadb:10.5
+    ports: ['34105:3306']
+    profiles: [all, mariadb]
+  mariadb106:
+    <<: *mariadb
+    image: mariadb:10.6
+    ports: ['34106:3306']
+    profiles: [all, mariadb]
+  mariadb1011:
+    <<: *mariadb
+    image: mariadb:10.11
+    ports: ['34111:3306']
+    profiles: [all, mariadb]
+  mariadb114:
+    <<: *mariadb
+    image: mariadb:11.4
+    ports: ['34114:3306']
+    profiles: [all, mariadb]
+  mariadb118:
+    <<: *mariadb
+    image: mariadb:11.8
+    ports: ['34118:3306']
+    profiles: [all, mariadb]
+  mariadb123:
+    <<: *mariadb
+    image: mariadb:12.3
+    ports: ['34123:3306']
+    profiles: [all, mariadb, latest]
+  mariadb130:
+    <<: *mariadb
+    image: mariadb:13.0
+    ports: ['34130:3306']
+    profiles: [all, mariadb]
+
+  # ------------------------------ PostgreSQL ------------------------------
+  postgres15:
+    <<: *postgres
+    image: postgres:15
+    ports: ['35415:5432']
+    profiles: [all, postgres]
+  postgres16:
+    <<: *postgres
+    image: postgres:16
+    ports: ['35416:5432']
+    profiles: [all, postgres]
+  postgres17:
+    <<: *postgres
+    image: postgres:17
+    ports: ['35417:5432']
+    profiles: [all, postgres]
+  postgres18:
+    <<: *postgres
+    image: postgres:18
+    ports: ['35418:5432']
+    profiles: [all, postgres, latest]
+  postgres19:
+    <<: *postgres
+    image: postgres:19rc1
+    ports: ['35419:5432']
+    profiles: [preview]
+
+  # ------------------------------ Connectivity -----------------------------
+  # SSH bastion: tunnel to other services by their service name (e.g. mysql97:3306).
+  sshd:
+    build: ./sshd
+    image: open-sql-tool/sshd:test
+    ports: ['2222:22']
+    healthcheck:
+      test: ['CMD-SHELL', "nc -z 127.0.0.1 22"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    profiles: [tools]
+  # PostgreSQL with TLS enabled (Debian snakeoil certificate).
+  postgres18ssl:
+    <<: *postgres
+    image: postgres:18
+    command: ['postgres', '-c', 'ssl=on', '-c', 'ssl_cert_file=/etc/ssl/certs/ssl-cert-snakeoil.pem', '-c', 'ssl_key_file=/etc/ssl/private/ssl-cert-snakeoil.key']
+    ports: ['35428:5432']
+    profiles: [tools]
