@@ -7,6 +7,8 @@ import type {
   FkAction,
   ObjectDependency,
   SequenceInfo,
+  TriggerDef,
+  TriggerEvent,
   ForeignKeyDef,
   IndexDef,
   IndexType,
@@ -168,6 +170,27 @@ export class MySqlInspector implements SchemaInspector {
       out.push({ direction: 'uses', kind: 'table', name: ref.table })
     }
     return out.map((d) => (d.fields?.length ? d : { ...d, fields: undefined }))
+  }
+
+  async getTrigger(ref: DbObjectRef): Promise<TriggerDef> {
+    const rows = await queryObjects(
+      this.query,
+      `SELECT EVENT_MANIPULATION, EVENT_OBJECT_TABLE, ACTION_ORDER, ACTION_STATEMENT, ACTION_TIMING
+         FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA = ${this.lit(ref.database ?? '')} AND TRIGGER_NAME = ${this.lit(ref.name)}`
+    )
+    const r = rows[0]
+    if (!r) throw new Error(`Trigger not found: ${ref.name}`)
+    return {
+      name: ref.name,
+      database: ref.database,
+      table: str(r.event_object_table),
+      timing: str(r.action_timing).toUpperCase() === 'AFTER' ? 'AFTER' : 'BEFORE',
+      events: str(r.event_manipulation).toUpperCase().split(/\s*,\s*/).filter(Boolean) as TriggerEvent[],
+      position: num(r.action_order),
+      active: true,
+      body: str(r.action_statement).trim(),
+      editable: true
+    }
   }
 
   /** CALL for procedures, SELECT f(…) for functions, with the declared parameters as placeholders. */

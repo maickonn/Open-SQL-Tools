@@ -1,4 +1,4 @@
-import { forwardRef, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react'
+import { forwardRef, useId, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react'
 import { clsx } from 'clsx'
 import { ContextMenu as RCM, Dialog as RDialog, DropdownMenu as RDM, Tooltip as RTooltip } from 'radix-ui'
 import { Check, ChevronRight, Loader2, X } from 'lucide-react'
@@ -103,11 +103,14 @@ export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSel
 const CHEVRON = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`
 
 export function Checkbox({ checked, onChange, label, disabled, className, block }: { checked: boolean; onChange(v: boolean): void; label?: ReactNode; disabled?: boolean; className?: string; block?: boolean }) {
+  const labelId = useId()
   return (
     <label className={cx(block ? 'flex' : 'inline-flex', 'items-center gap-2 cursor-pointer select-none text-[13px]', disabled && 'opacity-50 pointer-events-none', className)}>
       <span
         role="checkbox"
         aria-checked={checked}
+        aria-disabled={disabled || undefined}
+        aria-labelledby={label ? labelId : undefined}
         tabIndex={0}
         onKeyDown={(e) => {
           if (e.key === ' ' || e.key === 'Enter') {
@@ -126,7 +129,7 @@ export function Checkbox({ checked, onChange, label, disabled, className, block 
       >
         {checked && <Check size={12} strokeWidth={3} />}
       </span>
-      {label && <span onClick={() => onChange(!checked)}>{label}</span>}
+      {label && <span id={labelId} onClick={() => onChange(!checked)}>{label}</span>}
     </label>
   )
 }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Code2, Columns3, ListTree, Network, Play, RefreshCw, Rows3, Save } from 'lucide-react'
+import { Code2, Columns3, ListTree, Network, Play, RefreshCw, Rows3, Save, Zap } from 'lucide-react'
 import type { DbObjectRef, TableStructure } from '@shared/model'
 import { hasOperations } from '@domain/objectCapabilities'
 import { useWorkspace, type ObjectSubView, type SessionState, type Tab } from '../../stores/workspaceStore'
@@ -9,6 +9,7 @@ import { SqlEditor, type SqlEditorHandle } from '../../components/editor/SqlEdit
 import { StructureEditor } from '../object/StructureEditor'
 import { DataView } from '../object/DataView'
 import { DependenciesView, OperationsView } from '../object/ObjectInsights'
+import { TriggerEditor } from '../object/TriggerEditor'
 import { notify } from '../../stores/toast'
 import { errorMessage } from '../../gateways/api'
 
@@ -21,7 +22,7 @@ export default function ObjectView({ tab, active }: { tab: Tab; active: boolean 
   const session = useWorkspace((s) => s.sessions[tab.sessionId])
   const ref = tab.ref!
   const tableLike = ref.kind === 'table' || ref.kind === 'view' || ref.kind === 'materialized_view'
-  const defaultView: View = tab.view ?? (ref.kind === 'table' ? 'structure' : tableLike ? 'data' : 'ddl')
+  const defaultView: View = tab.view ?? (ref.kind === 'table' ? 'structure' : tableLike ? 'data' : ref.kind === 'trigger' ? 'trigger' : 'ddl')
   const [view, setView] = useState<View>(defaultView)
   const [structure, setStructure] = useState<TableStructure | null>(tab.isNew ? emptyTable(ref) : null)
   const [error, setError] = useState<string | null>(null)
@@ -49,6 +50,7 @@ export default function ObjectView({ tab, active }: { tab: Tab; active: boolean 
   const views = [
     ...(ref.kind === 'table' ? [{ value: 'structure' as const, label: t('tabs.structure'), icon: <Columns3 size={14} /> }] : []),
     ...(tableLike && !tab.isNew ? [{ value: 'data' as const, label: t('tabs.data'), icon: <Rows3 size={14} /> }] : []),
+    ...(ref.kind === 'trigger' ? [{ value: 'trigger' as const, label: t('tabs.trigger'), icon: <Zap size={14} /> }] : []),
     ...(!tab.isNew ? [{ value: 'ddl' as const, label: tableLike ? t('tabs.ddl') : t('tabs.source'), icon: <Code2 size={14} /> }] : []),
     ...(!tab.isNew ? [{ value: 'dependencies' as const, label: t('tabs.dependencies'), icon: <Network size={14} /> }] : []),
     ...(!tab.isNew && hasOperations(session.info.engine, ref.kind) ? [{ value: 'operations' as const, label: t('tabs.operations'), icon: <ListTree size={14} /> }] : [])
@@ -82,6 +84,15 @@ export default function ObjectView({ tab, active }: { tab: Tab; active: boolean 
           <div className={view === 'data' ? 'h-full' : 'hidden'}>
             <DataView session={session} refObj={ref} tabId={tab.id} active={active && view === 'data'} structure={structure} />
           </div>
+        )}
+        {view === 'trigger' && (
+          <TriggerEditor
+            session={session}
+            refObj={tab.isNew ? undefined : ref}
+            isNew={!!tab.isNew}
+            context={{ database: tab.database ?? ref.database, schema: tab.schema ?? ref.schema, table: ref.table }}
+            onSaved={(saved) => useWorkspace.getState().updateTab(tab.id, { isNew: false, ref: saved, title: saved.name, preview: false })}
+          />
         )}
         {view === 'ddl' && <SourceView session={session} refObj={ref} editable={ref.kind !== 'table' && ref.kind !== 'materialized_view'} />}
         {view === 'dependencies' && <DependenciesView session={session} refObj={ref} />}

@@ -201,3 +201,53 @@ describe('object utilities', () => {
     expect(() => my.createTemplate('sequence', {})).toThrow()
   })
 })
+
+describe('trigger form statements', () => {
+  const base = { name: 'ORDERS_BI', table: 'ORDERS', timing: 'BEFORE' as const, events: ['INSERT', 'UPDATE'] as ('INSERT' | 'UPDATE' | 'DELETE')[], position: 0, active: true, editable: true }
+  const fbBody = 'AS\nBEGIN\n  IF (NEW.ID IS NULL) THEN NEW.ID = GEN_ID(GEN_ORDERS_ID, 1);\nEND'
+
+  it('Firebird: CREATE OR ALTER, inactive, position, database triggers and renames', () => {
+    const fb = new FbDialect(50004)
+    expect(fb.triggerStatements(null, { ...base, body: fbBody })).toEqual([
+      `CREATE OR ALTER TRIGGER ORDERS_BI FOR ORDERS\nACTIVE BEFORE INSERT OR UPDATE POSITION 0\n${fbBody}`
+    ])
+    const original = { ...base, body: fbBody }
+    expect(fb.triggerStatements(original, { ...original, active: false, position: 3, events: ['DELETE', 'INSERT'], body: 'BEGIN END' })[0]).toBe(
+      'CREATE OR ALTER TRIGGER ORDERS_BI FOR ORDERS\nINACTIVE BEFORE INSERT OR DELETE POSITION 3\nAS\nBEGIN END'
+    )
+    expect(fb.triggerStatements(original, { ...original, name: 'ORDERS_BI2' })).toEqual([
+      'DROP TRIGGER ORDERS_BI',
+      expect.stringContaining('CREATE OR ALTER TRIGGER ORDERS_BI2 FOR ORDERS')
+    ])
+    expect(fb.triggerStatements(null, { ...base, table: undefined, events: [], databaseEvent: 'CONNECT', body: 'AS BEGIN END' })[0]).toBe(
+      'CREATE OR ALTER TRIGGER ORDERS_BI\nACTIVE ON CONNECT POSITION 0\nAS BEGIN END'
+    )
+    expect(() => fb.triggerStatements(null, { ...base, events: [], body: fbBody })).toThrow()
+    expect(() => fb.triggerStatements(null, { ...base, name: ' ', body: fbBody })).toThrow()
+  })
+
+  it('PostgreSQL: function + CREATE OR REPLACE TRIGGER, rename, move and enable state', () => {
+    const pg = new PgDialect(180000)
+    const original = { ...base, name: 'audit', schema: 'public', table: 'orders', forEach: 'ROW' as const, functionName: 'audit_fn', body: 'BEGIN RETURN NEW; END;' }
+    expect(pg.triggerStatements(null, { ...original, when: 'NEW.total > 0' })).toEqual([
+      'CREATE OR REPLACE FUNCTION public.audit_fn()\nRETURNS trigger\nLANGUAGE plpgsql\nAS $body$\nBEGIN RETURN NEW; END;\n$body$',
+      'CREATE OR REPLACE TRIGGER audit\nBEFORE INSERT OR UPDATE ON public.orders\nFOR EACH ROW\nWHEN (NEW.total > 0)\nEXECUTE FUNCTION public.audit_fn()'
+    ])
+    const renamed = pg.triggerStatements(original, { ...original, name: 'audit2', active: false, body: "BEGIN RAISE NOTICE '$body$'; RETURN NEW; END;" })
+    expect(renamed[0]).toContain('AS $body_$')
+    expect(renamed).toContain('ALTER TRIGGER audit ON public.orders RENAME TO audit2')
+    expect(renamed[renamed.length - 1]).toBe('ALTER TABLE public.orders DISABLE TRIGGER audit2')
+    expect(pg.triggerStatements(original, { ...original, table: 'items' })).toContain('DROP TRIGGER audit ON public.orders')
+    expect(pg.triggerStatements({ ...original, active: false }, original)).toContain('ALTER TABLE public.orders ENABLE TRIGGER audit')
+  })
+
+  it('MySQL drops and recreates; MariaDB uses CREATE OR REPLACE', () => {
+    const t = { ...base, name: 'orders_bi', database: 'app', table: 'orders', events: ['INSERT'] as ('INSERT' | 'UPDATE' | 'DELETE')[], body: 'SET NEW.total = 0' }
+    expect(new MySqlDialect(90700).triggerStatements(t, t)).toEqual([
+      'DROP TRIGGER IF EXISTS `app`.`orders_bi`',
+      'CREATE TRIGGER `app`.`orders_bi`\nBEFORE INSERT ON `app`.`orders`\nFOR EACH ROW\nSET NEW.total = 0'
+    ])
+    expect(new MariaDbDialect(110800).triggerStatements(t, t)).toEqual(['CREATE OR REPLACE TRIGGER `app`.`orders_bi`\nBEFORE INSERT ON `app`.`orders`\nFOR EACH ROW\nSET NEW.total = 0'])
+    expect(() => new MySqlDialect(90700).triggerStatements(null, { ...t, events: ['INSERT', 'UPDATE'] })).toThrow()
+  })
+})

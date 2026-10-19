@@ -1,4 +1,4 @@
-import type { ColumnDef, DbObjectRef, IndexDef, ObjectKind, ServerUser, TableDataRequest, TableStructure } from '@shared/model'
+import type { ColumnDef, DbObjectRef, IndexDef, ObjectKind, ServerUser, TableDataRequest, TableStructure, TriggerDef } from '@shared/model'
 import type { TemplateContext } from '@domain/ports/database'
 import { BaseDialect } from '../common/baseDialect'
 
@@ -209,6 +209,33 @@ export class FbDialect extends BaseDialect {
 
   override setExceptionMessage(ref: DbObjectRef, message: string): string[] {
     return [`ALTER EXCEPTION ${this.qualify(ref)} ${this.quoteString(message)}`]
+  }
+
+  triggerBodyTemplate(): string {
+    return 'AS\nBEGIN\n  /* NEW.ID = GEN_ID(GENERATOR_NAME, 1); */\nEND'
+  }
+
+  /** CREATE OR ALTER TRIGGER; renames and table changes drop the old trigger first (DDL is transactional). */
+  triggerStatements(original: TriggerDef | null, target: TriggerDef): string[] {
+    const name = target.name.trim()
+    if (!name) throw new Error('The trigger name is required')
+    const state = target.active ? 'ACTIVE' : 'INACTIVE'
+    let header: string
+    if (target.databaseEvent) {
+      header = `CREATE OR ALTER TRIGGER ${this.quoteIdent(name)}\n${state} ON ${target.databaseEvent} POSITION ${target.position ?? 0}`
+    } else {
+      if (!target.table) throw new Error('Choose the table of the trigger')
+      if (!target.events.length) throw new Error('Choose at least one event (INSERT, UPDATE or DELETE)')
+      const events = (['INSERT', 'UPDATE', 'DELETE'] as const).filter((e) => target.events.includes(e))
+      header = `CREATE OR ALTER TRIGGER ${this.quoteIdent(name)} FOR ${this.quoteIdent(target.table)}\n${state} ${target.timing} ${events.join(' OR ')} POSITION ${target.position ?? 0}`
+    }
+    const body = /^\s*AS\b/i.test(target.body) ? target.body.trim() : `AS\n${target.body.trim()}`
+    const out: string[] = []
+    if (original && (original.name !== name || (original.table ?? '') !== (target.table ?? '') || !!original.databaseEvent !== !!target.databaseEvent)) {
+      out.push(`DROP TRIGGER ${this.quoteIdent(original.name)}`)
+    }
+    out.push(`${header}\n${body}`)
+    return out
   }
 
   createTemplate(kind: ObjectKind, ctx: TemplateContext): string {

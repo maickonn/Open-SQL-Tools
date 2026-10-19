@@ -42,6 +42,30 @@ export function creatableKinds(engine: DbEngine): ObjectKind[] {
   }
 }
 
+/** What the trigger form offers for an engine. */
+export interface TriggerCapabilities {
+  multipleEvents: boolean
+  timings: ('BEFORE' | 'AFTER' | 'INSTEAD OF')[]
+  events: ('INSERT' | 'UPDATE' | 'DELETE' | 'TRUNCATE')[]
+  forEach: boolean
+  when: boolean
+  position: 'editable' | 'readonly' | 'none'
+  databaseEvents: boolean
+  active: boolean
+}
+
+export function triggerCapabilities(engine: DbEngine): TriggerCapabilities {
+  switch (engine) {
+    case 'firebird':
+      return { multipleEvents: true, timings: ['BEFORE', 'AFTER'], events: ['INSERT', 'UPDATE', 'DELETE'], forEach: false, when: false, position: 'editable', databaseEvents: true, active: true }
+    case 'postgres':
+      return { multipleEvents: true, timings: ['BEFORE', 'AFTER', 'INSTEAD OF'], events: ['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE'], forEach: true, when: true, position: 'none', databaseEvents: false, active: true }
+    case 'mysql':
+    case 'mariadb':
+      return { multipleEvents: false, timings: ['BEFORE', 'AFTER'], events: ['INSERT', 'UPDATE', 'DELETE'], forEach: false, when: false, position: 'readonly', databaseEvents: false, active: false }
+  }
+}
+
 /** Kinds listed in a dedicated grid tab (current values / messages). */
 export function hasListView(engine: DbEngine, kind: ObjectKind): kind is 'sequence' | 'exception' {
   return kind === 'sequence' || (kind === 'exception' && engine === 'firebird')

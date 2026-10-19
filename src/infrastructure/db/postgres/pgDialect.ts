@@ -1,4 +1,4 @@
-import type { BulkTableOperations, ColumnDef, DbObjectRef, IndexDef, ObjectKind, Partitioning, ServerUser, TableStructure } from '@shared/model'
+import type { BulkTableOperations, ColumnDef, DbObjectRef, IndexDef, ObjectKind, Partitioning, ServerUser, TableStructure, TriggerDef } from '@shared/model'
 import type { TemplateContext } from '@domain/ports/database'
 import { BaseDialect, toHex } from '../common/baseDialect'
 
@@ -281,6 +281,35 @@ export class PgDialect extends BaseDialect {
   /** setval makes `value` the last value returned, like a generator's current value. */
   override setSequenceValue(ref: DbObjectRef, value: string): string[] {
     return [`SELECT setval(${this.quoteString(this.qualify(ref))}, ${this.sequenceValue(value)})`]
+  }
+
+  triggerBodyTemplate(): string {
+    return 'BEGIN\n  -- NEW.updated_at := now();\n  RETURN NEW;\nEND;'
+  }
+
+  /** Function (plpgsql) + CREATE OR REPLACE TRIGGER, with rename / move / enable handled around it. */
+  triggerStatements(original: TriggerDef | null, target: TriggerDef): string[] {
+    const name = target.name.trim()
+    if (!name) throw new Error('The trigger name is required')
+    if (!target.table) throw new Error('Choose the table of the trigger')
+    if (!target.events.length) throw new Error('Choose at least one event')
+    const table = this.qualify({ schema: target.schema, name: target.table, kind: 'table' })
+    const fnName = (target.functionName?.trim() || `${name}_fn`).split('.')
+    const fn = fnName.length > 1 ? this.qualify({ schema: fnName[0], name: fnName.slice(1).join('.'), kind: 'function' }) : this.qualify({ schema: target.schema, name: fnName[0], kind: 'function' })
+    let tag = 'body'
+    while (target.body.includes(`$${tag}$`)) tag += '_'
+    const out = [`CREATE OR REPLACE FUNCTION ${fn}()\nRETURNS trigger\nLANGUAGE plpgsql\nAS $${tag}$\n${target.body.trim()}\n$${tag}$`]
+    if (original) {
+      const oldTable = this.qualify({ schema: original.schema ?? target.schema, name: original.table ?? target.table, kind: 'table' })
+      if (original.table !== target.table) out.push(`DROP TRIGGER ${this.quoteIdent(original.name)} ON ${oldTable}`)
+      else if (original.name !== name) out.push(`ALTER TRIGGER ${this.quoteIdent(original.name)} ON ${table} RENAME TO ${this.quoteIdent(name)}`)
+    }
+    const events = (['INSERT', 'UPDATE', 'DELETE', 'TRUNCATE'] as const).filter((e) => target.events.includes(e))
+    const when = target.when?.trim() ? `\nWHEN (${target.when.trim()})` : ''
+    out.push(`CREATE OR REPLACE TRIGGER ${this.quoteIdent(name)}\n${target.timing} ${events.join(' OR ')} ON ${table}\nFOR EACH ${target.forEach ?? 'ROW'}${when}\nEXECUTE FUNCTION ${fn}()`)
+    if (!target.active) out.push(`ALTER TABLE ${table} DISABLE TRIGGER ${this.quoteIdent(name)}`)
+    else if (original && !original.active) out.push(`ALTER TABLE ${table} ENABLE TRIGGER ${this.quoteIdent(name)}`)
+    return out
   }
 
   createTemplate(kind: ObjectKind, ctx: TemplateContext): string {

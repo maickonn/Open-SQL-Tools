@@ -211,6 +211,38 @@ export interface ObjectDependency {
   fields?: string[]
 }
 
+export type TriggerTiming = 'BEFORE' | 'AFTER' | 'INSTEAD OF'
+export type TriggerEvent = 'INSERT' | 'UPDATE' | 'DELETE' | 'TRUNCATE'
+export type TriggerDatabaseEvent = 'CONNECT' | 'DISCONNECT' | 'TRANSACTION START' | 'TRANSACTION COMMIT' | 'TRANSACTION ROLLBACK'
+
+/** Structured trigger, edited in the trigger form. */
+export interface TriggerDef {
+  name: string
+  database?: string
+  schema?: string
+  /** Table or view the trigger belongs to (absent for Firebird database triggers). */
+  table?: string
+  timing: TriggerTiming
+  events: TriggerEvent[]
+  /** Firebird database-level trigger (ON CONNECT, …) instead of a table trigger. */
+  databaseEvent?: TriggerDatabaseEvent
+  /** Firebird POSITION; MySQL ACTION_ORDER (read-only). */
+  position?: number
+  active: boolean
+  /** PostgreSQL FOR EACH ROW / STATEMENT. */
+  forEach?: 'ROW' | 'STATEMENT'
+  /** PostgreSQL WHEN condition (without the parentheses). */
+  when?: string
+  /** PostgreSQL trigger function (schema-qualified when outside the trigger's schema). */
+  functionName?: string
+  /** Firebird: the PSQL source starting at AS; PostgreSQL: the function body; MySQL: the trigger statement. */
+  body: string
+  /** False when the form cannot represent the trigger (Firebird DDL triggers, non-plpgsql functions). */
+  editable: boolean
+  /** Why the form is read-only. */
+  note?: string
+}
+
 /** A DML statement found in a routine or trigger body, with its execution plan when available. */
 export interface RoutineOperation {
   operation: 'select' | 'insert' | 'update' | 'delete' | 'merge' | 'upsert'

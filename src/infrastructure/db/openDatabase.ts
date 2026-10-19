@@ -39,7 +39,15 @@ export async function openDatabase(profile: ConnectionProfile, secrets: Connecti
   const meta = createConnection(profile, secrets, endpoint)
   // Both handshakes run concurrently (they cost several round trips over SSH or WAN links);
   // the primary's error wins so authentication failures surface once, with a clear message.
-  const [p, m] = await Promise.allSettled([primary.connect(), meta.connect()])
+  // Firebird attaches one after the other: concurrent attaches through an SSH tunnel were 10x slower.
+  const [p, m] =
+    profile.engine === 'firebird'
+      ? await (async () => {
+          const first = (await Promise.allSettled([primary.connect()]))[0]
+          if (first.status === 'rejected') return [first, first] as const
+          return [first, (await Promise.allSettled([meta.connect()]))[0]] as const
+        })()
+      : await Promise.allSettled([primary.connect(), meta.connect()])
   if (p.status === 'rejected' || m.status === 'rejected') {
     await Promise.allSettled([primary.close(), meta.close()])
     throw p.status === 'rejected' ? p.reason : (m as PromiseRejectedResult).reason

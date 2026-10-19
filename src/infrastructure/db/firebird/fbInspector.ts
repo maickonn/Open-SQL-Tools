@@ -12,6 +12,9 @@ import type {
   ObjectKind,
   SequenceInfo,
   ServerUser,
+  TriggerDatabaseEvent,
+  TriggerDef,
+  TriggerEvent,
   TableStructure,
   UserPrivileges
 } from '@shared/model'
@@ -74,7 +77,13 @@ const FB_DEPENDENCY_KINDS: Record<number, ObjectKind> = {
   0: 'table', 1: 'view', 2: 'trigger', 5: 'procedure', 7: 'exception', 9: 'domain', 14: 'sequence', 15: 'function', 18: 'package', 19: 'package'
 }
 
-const stripDefault =(src: string | undefined): string | null => (src ? src.replace(/^\s*DEFAULT\s+/i, '').trim() : null)
+/**
+ * Descriptions as inline text: text BLOBs cost three extra round trips each (open, read, close),
+ * which over SSH/WAN turns a catalog listing into minutes. Only for display (tooltips, grids).
+ */
+const DESCR = 'CAST(SUBSTRING(RDB$DESCRIPTION FROM 1 FOR 1000) AS VARCHAR(1000))'
+
+const stripDefault = (src: string | undefined): string | null => (src ? src.replace(/^\s*DEFAULT\s+/i, '').trim() : null)
 
 const fkRule = (v: CellValue): FkAction => {
   const s = str(v).toUpperCase()
@@ -108,15 +117,15 @@ export class FbInspector implements SchemaInspector {
     // Every kind in one round trip (catalog browsing is latency-bound over SSH/WAN).
     const parts = [
       `SELECT CAST(CASE WHEN RDB$VIEW_BLR IS NULL THEN 'table' ELSE 'view' END AS VARCHAR(16)) AS OBJ_KIND, TRIM(RDB$RELATION_NAME) AS NAME,
-              CAST(NULL AS VARCHAR(63)) AS REL, RDB$DESCRIPTION AS DESCR, 0 AS INACTIVE FROM RDB$RELATIONS WHERE ${user}`,
-      `SELECT 'procedure', TRIM(RDB$PROCEDURE_NAME), NULL, RDB$DESCRIPTION, 0 FROM RDB$PROCEDURES WHERE ${user}${pkgFilter}`,
-      `SELECT 'function', TRIM(RDB$FUNCTION_NAME), NULL, RDB$DESCRIPTION, 0 FROM RDB$FUNCTIONS WHERE ${user}${pkgFilter}`,
-      `SELECT 'trigger', TRIM(RDB$TRIGGER_NAME), TRIM(RDB$RELATION_NAME), RDB$DESCRIPTION, COALESCE(RDB$TRIGGER_INACTIVE, 0) FROM RDB$TRIGGERS WHERE ${user}`,
-      `SELECT 'sequence', TRIM(RDB$GENERATOR_NAME), NULL, RDB$DESCRIPTION, 0 FROM RDB$GENERATORS WHERE ${user}`,
-      `SELECT 'domain', TRIM(RDB$FIELD_NAME), NULL, RDB$DESCRIPTION, 0 FROM RDB$FIELDS WHERE ${user} AND RDB$FIELD_NAME NOT STARTING WITH 'RDB$'`,
-      `SELECT 'exception', TRIM(RDB$EXCEPTION_NAME), NULL, RDB$DESCRIPTION, 0 FROM RDB$EXCEPTIONS WHERE ${user}`
+              CAST(NULL AS VARCHAR(63)) AS REL, ${DESCR} AS DESCR, 0 AS INACTIVE FROM RDB$RELATIONS WHERE ${user}`,
+      `SELECT 'procedure', TRIM(RDB$PROCEDURE_NAME), NULL, ${DESCR}, 0 FROM RDB$PROCEDURES WHERE ${user}${pkgFilter}`,
+      `SELECT 'function', TRIM(RDB$FUNCTION_NAME), NULL, ${DESCR}, 0 FROM RDB$FUNCTIONS WHERE ${user}${pkgFilter}`,
+      `SELECT 'trigger', TRIM(RDB$TRIGGER_NAME), TRIM(RDB$RELATION_NAME), ${DESCR}, COALESCE(RDB$TRIGGER_INACTIVE, 0) FROM RDB$TRIGGERS WHERE ${user}`,
+      `SELECT 'sequence', TRIM(RDB$GENERATOR_NAME), NULL, ${DESCR}, 0 FROM RDB$GENERATORS WHERE ${user}`,
+      `SELECT 'domain', TRIM(RDB$FIELD_NAME), NULL, ${DESCR}, 0 FROM RDB$FIELDS WHERE ${user} AND RDB$FIELD_NAME NOT STARTING WITH 'RDB$'`,
+      `SELECT 'exception', TRIM(RDB$EXCEPTION_NAME), NULL, ${DESCR}, 0 FROM RDB$EXCEPTIONS WHERE ${user}`
     ]
-    if (this.version >= V3) parts.push(`SELECT 'package', TRIM(RDB$PACKAGE_NAME), NULL, RDB$DESCRIPTION, 0 FROM RDB$PACKAGES WHERE ${user}`)
+    if (this.version >= V3) parts.push(`SELECT 'package', TRIM(RDB$PACKAGE_NAME), NULL, ${DESCR}, 0 FROM RDB$PACKAGES WHERE ${user}`)
     const rows = await queryObjects(this.query, `${parts.join('\nUNION ALL\n')}\nORDER BY 2`)
     return rows.map((r) => {
       const kind = str(r.obj_kind) as DbObjectInfo['kind']
@@ -134,13 +143,13 @@ export class FbInspector implements SchemaInspector {
     const increment = this.version >= V3 ? 'RDB$GENERATOR_INCREMENT' : '1'
     const gens = await queryObjects(
       this.query,
-      `SELECT TRIM(RDB$GENERATOR_NAME) AS NAME, ${increment} AS INC, RDB$DESCRIPTION AS DESCR
+      `SELECT TRIM(RDB$GENERATOR_NAME) AS NAME, ${increment} AS INC, ${DESCR} AS DESCR
          FROM RDB$GENERATORS WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0 ORDER BY 1`
     )
-    // Current values: one GEN_ID per generator, batched into a few UNION ALL queries.
+    // Current values: one GEN_ID per generator, batched into UNION ALL queries (each branch is two of the 255 contexts allowed).
     const values = new Map<string, string>()
-    for (let i = 0; i < gens.length; i += 200) {
-      const batch = gens.slice(i, i + 200)
+    for (let i = 0; i < gens.length; i += 100) {
+      const batch = gens.slice(i, i + 100)
       const sql = batch
         .map((g) => `SELECT CAST(${this.lit(str(g.name))} AS VARCHAR(63)) AS NAME, GEN_ID(${this.dialect.quoteIdent(str(g.name))}, 0) AS VAL FROM RDB$DATABASE`)
         .join('\nUNION ALL\n')
@@ -152,7 +161,7 @@ export class FbInspector implements SchemaInspector {
   async listExceptions(): Promise<ExceptionInfo[]> {
     const rows = await queryObjects(
       this.query,
-      `SELECT RDB$EXCEPTION_NUMBER AS NUM, TRIM(RDB$EXCEPTION_NAME) AS NAME, RDB$MESSAGE AS MSG, RDB$DESCRIPTION AS DESCR
+      `SELECT RDB$EXCEPTION_NUMBER AS NUM, TRIM(RDB$EXCEPTION_NAME) AS NAME, RDB$MESSAGE AS MSG, ${DESCR} AS DESCR
          FROM RDB$EXCEPTIONS WHERE COALESCE(RDB$SYSTEM_FLAG, 0) = 0 ORDER BY 2`
     )
     return rows.map((r) => ({ number: num(r.num) ?? 0, name: str(r.name), message: str(r.msg), comment: optStr(r.descr) }))
@@ -193,6 +202,30 @@ export class FbInspector implements SchemaInspector {
       out.set(key, entry)
     }
     return [...out.values()].map((d) => (d.fields?.length ? d : { ...d, fields: undefined }))
+  }
+
+  async getTrigger(ref: DbObjectRef): Promise<TriggerDef> {
+    const r = await queryObjects(
+      this.query,
+      `SELECT TRIM(RDB$RELATION_NAME) AS REL, RDB$TRIGGER_TYPE AS TTYPE, RDB$TRIGGER_SEQUENCE AS SEQ, RDB$TRIGGER_INACTIVE AS INACTIVE,
+              RDB$TRIGGER_SOURCE AS SRC FROM RDB$TRIGGERS WHERE RDB$TRIGGER_NAME = ${this.lit(ref.name)}`
+    )
+    const t = r[0]
+    if (!t) throw new Error(`Trigger not found: ${ref.name}`)
+    const parts = decodeTriggerParts(num(t.ttype) ?? 0)
+    const source = optStr(t.src)
+    return {
+      name: ref.name,
+      table: optStr(t.rel),
+      timing: parts.timing,
+      events: parts.events,
+      databaseEvent: parts.databaseEvent,
+      position: num(t.seq) ?? 0,
+      active: num(t.inactive) !== 1,
+      body: (source ?? '').trim(),
+      editable: !parts.ddl && source !== undefined,
+      note: parts.ddl ? 'DDL triggers can be edited in the Source tab.' : source === undefined ? 'The trigger source is not stored in the database.' : undefined
+    }
   }
 
   /** EXECUTE PROCEDURE / SELECT … FROM for procedures, SELECT f(…) FROM RDB$DATABASE for functions. */
@@ -560,16 +593,27 @@ export class FbInspector implements SchemaInspector {
 }
 
 /** Decodes RDB$TRIGGER_TYPE into its DDL clause (supports multi-action and database/DDL triggers). */
-export function decodeTriggerType(type: number): string {
-  const dbEvents: Record<number, string> = { 8192: 'ON CONNECT', 8193: 'ON DISCONNECT', 8194: 'ON TRANSACTION START', 8195: 'ON TRANSACTION COMMIT', 8196: 'ON TRANSACTION ROLLBACK' }
-  if (dbEvents[type]) return dbEvents[type]
-  if ((type & 0x4000) !== 0) return `${type & 1 ? 'AFTER' : 'BEFORE'} ANY DDL STATEMENT`
-  const prefix = (type + 1) & 1 ? 'AFTER' : 'BEFORE'
-  const actions = ['INSERT', 'UPDATE', 'DELETE']
-  const slot = (n: number): string | undefined => {
+const FB_DB_EVENTS: Record<number, TriggerDatabaseEvent> = {
+  8192: 'CONNECT', 8193: 'DISCONNECT', 8194: 'TRANSACTION START', 8195: 'TRANSACTION COMMIT', 8196: 'TRANSACTION ROLLBACK'
+}
+
+/** RDB$TRIGGER_TYPE decoded: table triggers pack up to three actions in 2-bit slots after the BEFORE/AFTER bit. */
+export function decodeTriggerParts(type: number): { timing: 'BEFORE' | 'AFTER'; events: TriggerEvent[]; databaseEvent?: TriggerDatabaseEvent; ddl?: boolean } {
+  const dbEvent = FB_DB_EVENTS[type]
+  if (dbEvent) return { timing: 'BEFORE', events: [], databaseEvent: dbEvent }
+  if ((type & 0x4000) !== 0) return { timing: type & 1 ? 'AFTER' : 'BEFORE', events: [], ddl: true }
+  const actions: TriggerEvent[] = ['INSERT', 'UPDATE', 'DELETE']
+  const events: TriggerEvent[] = []
+  for (let n = 0; n < 3; n++) {
     const code = ((type + 1) >> (n * 2 + 1)) & 3
-    return code ? actions[code - 1] : undefined
+    if (code) events.push(actions[code - 1])
   }
-  const events = [slot(0), slot(1), slot(2)].filter(Boolean)
-  return `${prefix} ${events.join(' OR ')}`
+  return { timing: (type + 1) & 1 ? 'AFTER' : 'BEFORE', events }
+}
+
+export function decodeTriggerType(type: number): string {
+  const p = decodeTriggerParts(type)
+  if (p.databaseEvent) return `ON ${p.databaseEvent}`
+  if (p.ddl) return `${p.timing} ANY DDL STATEMENT`
+  return `${p.timing} ${p.events.join(' OR ')}`
 }

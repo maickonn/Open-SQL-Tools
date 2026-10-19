@@ -52,10 +52,22 @@ export const en = {
     function: 'function', trigger: 'trigger', event: 'event', sequence: 'sequence', domain: 'domain', exception: 'exception',
     package: 'package', type: 'type'
   },
-  tabs: { closeOthers: 'Close other tabs', pin: 'Keep open', nextPrev: 'Next / previous tab', host: 'Host', database: 'Database', table: 'Table', data: 'Data', query: 'Query', structure: 'Structure', ddl: 'CREATE code', source: 'Source', dependencies: 'Dependencies', operations: 'Operations / plan' },
+  tabs: { closeOthers: 'Close other tabs', pin: 'Keep open', nextPrev: 'Next / previous tab', host: 'Host', database: 'Database', table: 'Table', data: 'Data', query: 'Query', structure: 'Structure', ddl: 'CREATE code', source: 'Source', dependencies: 'Dependencies', operations: 'Operations / plan', trigger: 'Trigger' },
   deps: {
     uses: 'Objects {{name}} depends on', usedBy: 'Objects that depend on {{name}}', none: 'None recorded',
     limited: 'This server only records foreign keys, trigger tables and view tables.'
+  },
+  review: {
+    title: 'Review changes to {{name}}', statementList: 'Statement list', statement: 'Statement', operation: 'Operation', result: 'Result',
+    pending: 'Not run yet', successful: 'Successful', failed: 'Failed', execute: 'Execute', retry: 'Try again', copy: 'Copy all statements',
+    creating: 'Creating {{kind}} {{name}}', altering: 'Altering {{kind}} {{name}}', dropping: 'Dropping {{kind}} {{name}}',
+    renaming: 'Renaming {{kind}} {{name}} to {{to}}', activating: 'Activating {{kind}} {{name}}', deactivating: 'Deactivating {{kind}} {{name}}'
+  },
+  trigger: {
+    name: 'Name', forTable: 'For table', chooseTable: 'Choose a table…', position: 'Position', positionReadOnly: 'MySQL orders triggers by creation; use FOLLOWS / PRECEDES in SQL to change it.',
+    active: 'Is active', type: 'Type', events: 'Events', forEach: 'For each', when: 'When', function: 'Function', databaseEvent: 'Database event',
+    databaseTrigger: 'Database trigger', noChanges: 'No changes.',
+    mysqlRecreate: 'MySQL has no CREATE OR REPLACE TRIGGER: saving drops the trigger and creates it again.'
   },
   ops: { operation: 'Operation', table: 'Table', statement: 'Statement', plan: 'Plan', none: 'No DML statements found.', noPlan: 'No plan (the statement does not read rows).', error: 'Could not prepare' },
   list: {

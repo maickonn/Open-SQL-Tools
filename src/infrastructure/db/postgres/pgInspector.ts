@@ -7,6 +7,8 @@ import type {
   FkAction,
   ObjectDependency,
   SequenceInfo,
+  TriggerDef,
+  TriggerEvent,
   ForeignKeyDef,
   IndexDef,
   ObjectKind,
@@ -465,6 +467,54 @@ export class PgInspector implements SchemaInspector {
       out.set(key, entry)
     }
     return [...out.values()].map((d) => (d.fields?.length ? d : { ...d, fields: undefined }))
+  }
+
+  /** Trigger plus its function body; tgtype bits: 1 ROW, 2 BEFORE, 4 INSERT, 8 DELETE, 16 UPDATE, 32 TRUNCATE, 64 INSTEAD. */
+  async getTrigger(ref: DbObjectRef): Promise<TriggerDef> {
+    await this.ensureDatabase(ref.database)
+    if (!ref.table) throw new Error('The owning table is required to read a PostgreSQL trigger')
+    const rows = await queryObjects(
+      this.query,
+      `SELECT t.tgtype, t.tgenabled, t.tgnargs, t.tgconstraint <> 0 AS is_constraint, pg_get_triggerdef(t.oid) AS def,
+              p.proname, pn.nspname AS fn_schema, p.prosrc, l.lanname
+         FROM pg_trigger t
+         JOIN pg_proc p ON p.oid = t.tgfoid
+         JOIN pg_namespace pn ON pn.oid = p.pronamespace
+         JOIN pg_language l ON l.oid = p.prolang
+        WHERE t.tgname = ${this.lit(ref.name)} AND t.tgrelid = ${this.regclass({ ...ref, name: ref.table, kind: 'table' })}`
+    )
+    const r = rows[0]
+    if (!r) throw new Error(`Trigger not found: ${ref.name}`)
+    const type = num(r.tgtype) ?? 0
+    const events: TriggerEvent[] = []
+    if (type & 4) events.push('INSERT')
+    if (type & 16) events.push('UPDATE')
+    if (type & 8) events.push('DELETE')
+    if (type & 32) events.push('TRUNCATE')
+    const def = str(r.def)
+    const when = /\sWHEN \((.*)\) EXECUTE (?:FUNCTION|PROCEDURE)\s/s.exec(def)?.[1]
+    const fnSchema = str(r.fn_schema)
+    const unsupported =
+      str(r.lanname) !== 'plpgsql' ? `The trigger function is written in ${str(r.lanname)}; edit it in the Source tab.`
+        : (num(r.tgnargs) ?? 0) > 0 ? 'The trigger passes arguments to its function; edit it in the Source tab.'
+          : bool(r.is_constraint) ? 'Constraint triggers can be edited in the Source tab.'
+            : /\sUPDATE OF\s|\sREFERENCING\s/.test(def) ? 'UPDATE OF columns and transition tables can be edited in the Source tab.'
+              : undefined
+    return {
+      name: ref.name,
+      database: ref.database,
+      schema: ref.schema,
+      table: ref.table,
+      timing: type & 64 ? 'INSTEAD OF' : type & 2 ? 'BEFORE' : 'AFTER',
+      events,
+      active: str(r.tgenabled) !== 'D',
+      forEach: type & 1 ? 'ROW' : 'STATEMENT',
+      when,
+      functionName: fnSchema === (ref.schema ?? 'public') ? str(r.proname) : `${fnSchema}.${str(r.proname)}`,
+      body: str(r.prosrc).replace(/^\n/, '').trimEnd(),
+      editable: !unsupported,
+      note: unsupported
+    }
   }
 
   /** CALL for procedures, SELECT * FROM for functions; arguments come from the identity signature. */

@@ -387,7 +387,7 @@ function contextItems(row: Row, t: (k: string, o?: Record<string, unknown>) => s
     if (kind === 'table' && creatableKinds(engine).includes('trigger')) items.push({ ...newItem('trigger', ref.name), icon: <Zap size={14} /> })
     if (kind === 'table') items.push({ label: t('tree.editStructure'), icon: <Pencil size={14} />, onSelect: () => open('structure') })
     else if (hasListView(engine, kind)) items.push({ label: t('tree.editObject', { kind: kindLabel(kind) }), icon: <Pencil size={14} />, onSelect: () => openList(session, kind, database, schema, t) })
-    else items.push({ label: t('tree.editObject', { kind: kindLabel(kind) }), icon: <Pencil size={14} />, onSelect: () => open('ddl') })
+    else items.push({ label: t('tree.editObject', { kind: kindLabel(kind) }), icon: <Pencil size={14} />, onSelect: () => open(kind === 'trigger' ? 'trigger' : 'ddl') })
     items.push({
       label: t('tree.dropObject', { kind: kindLabel(kind) }),
       icon: <Trash2 size={14} />,
@@ -530,6 +530,11 @@ async function newObject(session: SessionState, kind: ObjectKind, database: stri
   const ws = useWorkspace.getState()
   if (kind === 'table') {
     ws.openTab({ sessionId: session.id, kind: 'object', title: t('structure.newTable'), ref: { database, schema, name: '', kind: 'table' }, database, schema, isNew: true, view: 'structure' })
+    return
+  }
+  if (kind === 'trigger') {
+    // Triggers have a form; the dialect builds the DDL.
+    ws.openTab({ sessionId: session.id, kind: 'object', title: t('tree.newObject', { kind: t('kinds.trigger') }), ref: { database, schema, name: '', kind: 'trigger', table }, database, schema, isNew: true, view: 'trigger' })
     return
   }
   try {

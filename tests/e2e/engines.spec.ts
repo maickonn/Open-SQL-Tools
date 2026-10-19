@@ -222,6 +222,50 @@ for (const target of targets) {
       }
       await expect(page.locator('[data-sonner-toast][data-type="error"]')).toHaveCount(0)
     })
+
+    test('creates and edits a trigger with the trigger form', async () => {
+      const objects = target.objects
+      test.skip(!objects, 'no object fixture for this engine')
+      if (!objects) return
+      const fb = target.engine === 'Firebird'
+      const name = fb ? 'E2E_FORM_TRG' : 'e2e_form_trg'
+      const visible = <T extends ReturnType<typeof page.locator>>(l: T) => l.filter({ visible: true })
+      const item = (n: string) => page.getByRole('treeitem', { name: new RegExp(`^${n}( |$)`) })
+
+      await item(target.table).click({ button: 'right' })
+      await page.getByRole('menuitem', { name: /^New trigger/ }).click()
+      await visible(page.getByLabel('Name', { exact: true })).fill(name)
+      await visible(page.getByRole('checkbox', { name: 'UPDATE' })).click()
+      const editor = visible(page.locator('.monaco-editor')).last()
+      await editor.click()
+      await page.keyboard.press('Control+A')
+      await page.keyboard.insertText(fb ? 'AS\nBEGIN\n  IF (NEW.ID < 0) THEN EXCEPTION E2E_ERR;\nEND' : 'BEGIN\n  RETURN NEW;\nEND;')
+      // Save shows the statements first; nothing runs until Execute.
+      await visible(page.getByRole('button', { name: 'Save' })).click()
+      const review = page.getByRole('dialog')
+      await expect(review.getByRole('cell', { name: new RegExp(`^Creating trigger ${name}$`) })).toBeVisible({ timeout: 15_000 })
+      await expect(review.getByTestId('review-statement')).toContainText(fb ? 'CREATE OR ALTER TRIGGER' : 'CREATE OR REPLACE FUNCTION')
+      await expect(item(name)).toHaveCount(0)
+      await page.screenshot({ path: join(shots, `e2e-${target.id}-trigger-review.png`) })
+      await review.getByRole('button', { name: 'Execute' }).click()
+      await expect(review.getByText('Successful').first()).toBeVisible({ timeout: 15_000 })
+      await review.getByRole('button', { name: 'Close' }).last().click()
+      await expect(item(name)).toBeVisible({ timeout: 15_000 })
+
+      // Reopened form shows the saved definition; deactivate it from the form.
+      await expect(visible(page.getByRole('checkbox', { name: 'INSERT' }))).toHaveAttribute('aria-checked', 'true')
+      await expect(visible(page.getByRole('checkbox', { name: 'UPDATE' }))).toHaveAttribute('aria-checked', 'true')
+      await visible(page.getByRole('checkbox', { name: 'Is active' })).click()
+      await visible(page.getByRole('button', { name: 'Save' })).click()
+      await expect(review.getByRole('cell', { name: fb ? `Altering trigger ${name}` : `Deactivating trigger ${name}` })).toBeVisible({ timeout: 15_000 })
+      await review.getByRole('button', { name: 'Execute' }).click()
+      await expect(review.getByText('Successful').first()).toBeVisible({ timeout: 15_000 })
+      await review.getByRole('button', { name: 'Close' }).last().click()
+      await expect(item(name).getByLabel('Inactive')).toBeVisible({ timeout: 15_000 })
+      await page.getByRole('button', { name: /^SQL preview/ }).click()
+      await page.screenshot({ path: join(shots, `e2e-${target.id}-trigger-form.png`) })
+      await expect(page.locator('[data-sonner-toast][data-type="error"]')).toHaveCount(0)
+    })
   })
 }
 

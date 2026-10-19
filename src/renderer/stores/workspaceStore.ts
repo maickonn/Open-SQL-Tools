@@ -19,7 +19,7 @@ export interface SessionState {
 
 export type TabKind = 'host' | 'database' | 'object' | 'query' | 'list'
 
-export type ObjectSubView = 'structure' | 'data' | 'ddl' | 'dependencies' | 'operations'
+export type ObjectSubView = 'structure' | 'data' | 'ddl' | 'dependencies' | 'operations' | 'trigger'
 
 export interface Tab {
   id: string

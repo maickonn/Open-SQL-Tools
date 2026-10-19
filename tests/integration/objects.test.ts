@@ -69,7 +69,7 @@ function fixtureFor(target: Target): Fixture {
           CREATE FUNCTION obj_trg_fn() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN INSERT INTO obj_log VALUES (NEW.id, NEW.name); RETURN NEW; END; $$;
           CREATE TRIGGER obj_t_audit AFTER INSERT ON obj_t FOR EACH ROW EXECUTE FUNCTION obj_trg_fn();
           CREATE FUNCTION obj_p(p_id integer) RETURNS SETOF varchar LANGUAGE sql AS $$ SELECT name FROM obj_t WHERE id = p_id $$;`,
-        cleanup: 'DROP VIEW IF EXISTS obj_v; DROP TABLE IF EXISTS obj_log, obj_t CASCADE; DROP SEQUENCE IF EXISTS obj_gen; DROP FUNCTION IF EXISTS obj_trg_fn() CASCADE; DROP FUNCTION IF EXISTS obj_p(integer);',
+        cleanup: 'DROP VIEW IF EXISTS obj_v; DROP TABLE IF EXISTS obj_log, obj_t CASCADE; DROP SEQUENCE IF EXISTS obj_gen; DROP FUNCTION IF EXISTS obj_trg_fn() CASCADE; DROP FUNCTION IF EXISTS obj_p(integer); DROP FUNCTION IF EXISTS obj_t_form_fn() CASCADE;',
         table: 'obj_t',
         trigger: { database: 'testdb', schema: 'public', name: 'obj_t_audit', kind: 'trigger', table: 'obj_t' },
         routine: { database: 'testdb', schema: 'public', name: 'obj_p', kind: 'function', args: 'p_id integer' },
@@ -132,6 +132,31 @@ describe.skipIf(!targets.length)('object utilities', () => {
       expect((await state())?.inactive).toBeUndefined()
     })
 
+    it.skipIf(target.engine !== 'firebird')('reads the catalog while another attachment has an uncommitted trigger change', async () => {
+      // Another tool compiled a trigger and has not committed yet: catalog reads must not wait for it.
+      const other = new SessionService({ openDatabase, openTunnel: async () => null, createWriter: createFileWriter, readText: readTextFile, emit: () => undefined })
+      await other.connect({ profile: profileFor(target), secrets: { password: target.password } })
+      try {
+        await other.setAutocommit({ enabled: false })
+        const pending = await other.execute({ queryId: 'pending', sql: `ALTER TRIGGER ${fx.trigger.name} INACTIVE`, maxRows: 10 })
+        expect(pending.statements[0].error?.message).toBeUndefined()
+        const listed = await Promise.race([objects(), new Promise<never>((_, rej) => setTimeout(() => rej(new Error('catalog read waited for the other attachment')), 5000))])
+        expect(listed.find((o) => o.name === fx.trigger.name)?.inactive).toBeUndefined()
+
+        // Saving the same trigger from the form fails after the lock timeout instead of hanging.
+        const def = await svc.getTrigger({ ref: fx.trigger })
+        const t0 = Date.now()
+        const saving = svc.saveTrigger({ original: def, target: { ...def, position: (def.position ?? 0) + 1 } })
+        const outcome = await Promise.race([saving.then(() => 'saved', (e: Error) => e.message), new Promise<string>((r) => setTimeout(() => r('hung'), 25_000))])
+        expect(outcome).not.toBe('hung')
+        expect(outcome).not.toBe('saved')
+        expect(Date.now() - t0).toBeLessThan(20_000)
+      } finally {
+        await other.rollback().catch(() => undefined)
+        await other.disconnect()
+      }
+    })
+
     it.skipIf(!fx.event)('disables and enables an event', async () => {
       const ref: DbObjectRef = { database: fx.database, name: fx.event!, kind: 'event' }
       const state = async () => (await objects()).find((o) => o.kind === 'event' && o.name === fx.event)
@@ -189,6 +214,46 @@ describe.skipIf(!targets.length)('object utilities', () => {
       const trg = await svc.getRoutineOperations({ ref: fx.trigger })
       expect(trg.map((o) => `${o.operation}:${o.table}`)).toEqual(['insert:OBJ_LOG'])
       expect(trg[0].error).toBeUndefined()
+    })
+
+    it('edits, creates and renames triggers through the trigger form model', async () => {
+      const fb = target.engine === 'firebird'
+      const my = target.engine === 'mysql' || target.engine === 'mariadb'
+      const original = await svc.getTrigger({ ref: fx.trigger })
+      expect(original).toMatchObject({ table: fx.table, timing: 'AFTER', events: ['INSERT'], active: true, editable: true })
+
+      const changed = {
+        ...original,
+        timing: 'BEFORE' as const,
+        events: my ? (['UPDATE'] as const).slice() : (['INSERT', 'UPDATE'] as const).slice(),
+        position: fb ? 5 : original.position,
+        active: my,
+        body: fb ? original.body.replace(/BEGIN/i, 'BEGIN\n  /* edited */') : my ? original.body : original.body.replace(/BEGIN/i, 'BEGIN /* edited */')
+      }
+      await svc.saveTrigger({ original, target: changed })
+      const reread = await svc.getTrigger({ ref: fx.trigger })
+      expect(reread).toMatchObject({ timing: 'BEFORE', events: changed.events, active: changed.active })
+      if (fb) expect(reread.position).toBe(5)
+      if (!my) expect(reread.body).toMatch(/edited/)
+
+      // New trigger from the form, then renamed.
+      const name = fb ? 'OBJ_T_FORM' : 'obj_t_form'
+      const created = { name, database: fx.database, schema: fx.schema, table: fx.table, timing: 'BEFORE' as const, events: ['DELETE' as const], position: 1, active: true, body: svc.triggerBodyTemplate(), editable: true }
+      const { ref } = await svc.saveTrigger({ original: null, target: created })
+      expect(ref.name).toBe(name)
+      const renamed = { ...(await svc.getTrigger({ ref })), name: `${name}2` }
+      await svc.saveTrigger({ original: { ...created }, target: renamed })
+      const triggers = (await objects()).filter((o) => o.kind === 'trigger').map((o) => o.name)
+      expect(triggers).toContain(`${name}2`)
+      expect(triggers).not.toContain(name)
+      await svc.objectAction({ ref: { ...ref, name: `${name}2` }, action: 'drop' })
+
+      if (fb) {
+        const dbTrigger = { name: 'OBJ_ON_CONNECT', timing: 'BEFORE' as const, events: [], databaseEvent: 'CONNECT' as const, position: 0, active: false, body: 'AS\nBEGIN\nEND', editable: true }
+        await svc.saveTrigger({ original: null, target: dbTrigger })
+        expect(await svc.getTrigger({ ref: { name: 'OBJ_ON_CONNECT', kind: 'trigger' } })).toMatchObject({ databaseEvent: 'CONNECT', active: false, table: undefined })
+        await svc.objectAction({ ref: { name: 'OBJ_ON_CONNECT', kind: 'trigger' }, action: 'drop' })
+      }
     })
 
     it('creates every kind of object from its template', async () => {

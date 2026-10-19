@@ -1,4 +1,4 @@
-import type { BulkTableOperations, ColumnDef, DbObjectRef, IndexDef, ObjectKind, Partitioning, ServerUser, TableStructure } from '@shared/model'
+import type { BulkTableOperations, ColumnDef, DbObjectRef, IndexDef, ObjectKind, Partitioning, ServerUser, TableStructure, TriggerDef } from '@shared/model'
 import type { TemplateContext } from '@domain/ports/database'
 import { BaseDialect } from '../common/baseDialect'
 
@@ -270,6 +270,26 @@ export class MySqlDialect extends BaseDialect {
     return [`ALTER EVENT ${this.qualify(ref)} ${enabled ? 'ENABLE' : 'DISABLE'}`]
   }
 
+  triggerBodyTemplate(): string {
+    return 'BEGIN\n  -- SET NEW.created_at = NOW();\nEND'
+  }
+
+  /** Header of CREATE TRIGGER (one event; FOR EACH ROW is the only granularity). */
+  protected triggerCreate(target: TriggerDef, orReplace: boolean): string {
+    const name = target.name.trim()
+    if (!name) throw new Error('The trigger name is required')
+    if (!target.table) throw new Error('Choose the table of the trigger')
+    if (target.events.length !== 1) throw new Error('Choose exactly one event (INSERT, UPDATE or DELETE)')
+    const table = this.qualify({ database: target.database, name: target.table, kind: 'table' })
+    return `CREATE ${orReplace ? 'OR REPLACE ' : ''}TRIGGER ${this.qualify({ database: target.database, name, kind: 'trigger' })}\n${target.timing} ${target.events[0]} ON ${table}\nFOR EACH ROW\n${target.body.trim()}`
+  }
+
+  /** MySQL has no CREATE OR REPLACE TRIGGER: the old trigger is dropped first (DDL is not transactional). */
+  triggerStatements(original: TriggerDef | null, target: TriggerDef): string[] {
+    const create = this.triggerCreate(target, false)
+    return original ? [`DROP TRIGGER IF EXISTS ${this.qualify({ database: original.database, name: original.name, kind: 'trigger' })}`, create] : [create]
+  }
+
   createTemplate(kind: ObjectKind, ctx: TemplateContext): string {
     const q = (name: string): string => this.qualify({ database: ctx.database, name, kind })
     const routine = (body: string): string => `DELIMITER $$\n${body}$$\nDELIMITER ;\n`
@@ -353,6 +373,15 @@ export class MariaDbDialect extends MySqlDialect {
   /** SETVAL makes `value` the last value returned (the next one is value + increment). */
   override setSequenceValue(ref: DbObjectRef, value: string): string[] {
     return [`SELECT SETVAL(${this.qualify(ref)}, ${this.sequenceValue(value)})`]
+  }
+
+  /** CREATE OR REPLACE TRIGGER keeps the swap atomic; a rename still drops the old name. */
+  override triggerStatements(original: TriggerDef | null, target: TriggerDef): string[] {
+    const create = this.triggerCreate(target, true)
+    if (original && original.name !== target.name.trim()) {
+      return [create, `DROP TRIGGER IF EXISTS ${this.qualify({ database: original.database, name: original.name, kind: 'trigger' })}`]
+    }
+    return [create]
   }
 
   override createTemplate(kind: ObjectKind, ctx: TemplateContext): string {

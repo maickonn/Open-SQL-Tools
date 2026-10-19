@@ -10,6 +10,7 @@ import type {
   ObjectKind,
   RowChange,
   SequenceInfo,
+  TriggerDef,
   ServerInfo,
   ServerUser,
   TableDataRequest,
@@ -32,6 +33,8 @@ export interface RunOptions {
   readOnly?: boolean
   /** Small internal query (catalog, kill): skip server-side cursors so it costs a single round trip. */
   direct?: boolean
+  /** Seconds to wait for locks held by other connections before failing (engines that support it). */
+  lockTimeoutSec?: number
 }
 
 export interface RunOutcome {
@@ -83,6 +86,8 @@ export interface SchemaInspector {
   getDependencies(ref: DbObjectRef): Promise<ObjectDependency[]>
   /** SQL that runs the routine, with input parameters as placeholders. */
   getRoutineCall(ref: DbObjectRef): Promise<string>
+  /** Structured trigger for the trigger form. */
+  getTrigger(ref: DbObjectRef): Promise<TriggerDef>
 }
 
 export interface TemplateContext {
@@ -115,6 +120,10 @@ export interface SqlDialect {
   setExceptionMessage(ref: DbObjectRef, message: string): string[]
   /** Script creating a new object of this kind, ready to edit in a query tab. */
   createTemplate(kind: ObjectKind, ctx: TemplateContext): string
+  /** Statements creating (original = null) or changing a trigger from the trigger form. */
+  triggerStatements(original: TriggerDef | null, target: TriggerDef): string[]
+  /** Starter body for a new trigger in the form. */
+  triggerBodyTemplate(): string
   useDatabase(database: string): string | null
   limitQuery(sql: string, limit: number): string
   userStatements(p: {

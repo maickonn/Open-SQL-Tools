@@ -17,6 +17,7 @@ import type {
   RowChange,
   SequenceInfo,
   ServerInfo,
+  TriggerDef,
   ServerUser,
   TableDataRequest,
   TableStructure,
@@ -119,6 +120,10 @@ export interface WorkerApi {
   getRoutineCall(p: { ref: DbObjectRef }): string
   getRoutineOperations(p: { ref: DbObjectRef }): RoutineOperation[]
   createTemplate(p: { kind: ObjectKind; database?: string; schema?: string; table?: string }): string
+  getTrigger(p: { ref: DbObjectRef }): TriggerDef
+  triggerBodyTemplate(p: void): string
+  triggerStatements(p: { original: TriggerDef | null; target: TriggerDef }): string[]
+  saveTrigger(p: { original: TriggerDef | null; target: TriggerDef }): { statements: string[]; ref: DbObjectRef }
 
   bulkAlterTables(p: { tables: DbObjectRef[]; ops: BulkTableOperations; dryRun?: boolean }): {
     results: { table: string; statements: string[]; error?: string }[]

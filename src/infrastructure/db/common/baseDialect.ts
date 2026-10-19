@@ -10,7 +10,8 @@ import type {
   RowChange,
   ServerUser,
   TableDataRequest,
-  TableStructure
+  TableStructure,
+  TriggerDef
 } from '@shared/model'
 import type { SqlDialect, TemplateContext } from '@domain/ports/database'
 import { toHex } from '@shared/bytes'
@@ -35,6 +36,8 @@ export abstract class BaseDialect implements SqlDialect {
   abstract useDatabase(database: string): string | null
   abstract bulkAlter(ref: DbObjectRef, ops: BulkTableOperations): string[]
   abstract createTemplate(kind: ObjectKind, ctx: TemplateContext): string
+  abstract triggerStatements(original: TriggerDef | null, target: TriggerDef): string[]
+  abstract triggerBodyTemplate(): string
 
   setEnabled(_ref: DbObjectRef, _enabled: boolean): string[] {
     return []

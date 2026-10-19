@@ -79,6 +79,9 @@ function readBinaryBlob(fn: (tx: Transaction, cb: (err: unknown, name: string, e
   })
 }
 
+/** Lock wait for user statements; forms and tree actions pass a shorter one. */
+const DEFAULT_LOCK_TIMEOUT_SEC = 30
+
 /** Sentinel used to stop `sequentially` once enough rows were read. */
 const STOP = new Error('fetch limit reached')
 
@@ -152,8 +155,16 @@ export class FbConnection implements DbConnection {
     await this.requireDb().queryAsync('SELECT 1 FROM RDB$DATABASE')
   }
 
-  private async startTransaction(readOnly = false): Promise<Transaction> {
-    return this.requireDb().transactionAsync(readOnly ? Firebird.ISOLATION_READ_COMMITTED_READ_ONLY : Firebird.ISOLATION_READ_COMMITTED)
+  /**
+   * READ COMMITTED with REC_VERSION (the driver's misnamed ISOLATION_READ_UNCOMMITTED): reads the last
+   * committed version instead of waiting for other attachments' uncommitted changes. The driver's
+   * READ_COMMITTED uses NO_REC_VERSION, so a pending metadata change elsewhere (e.g. a trigger compiled
+   * in another tool and not yet committed) froze every catalog read.
+   */
+  private async startTransaction(readOnly = false, lockTimeoutSec = DEFAULT_LOCK_TIMEOUT_SEC): Promise<Transaction> {
+    // Writes wait for conflicting locks only for a while: an uncommitted change in another tool
+    // (e.g. a trigger being compiled) would otherwise block the statement forever.
+    return this.requireDb().transactionAsync({ isolation: Firebird.ISOLATION_READ_UNCOMMITTED, readOnly, wait: true, waitTimeout: readOnly ? 0 : lockTimeoutSec })
   }
 
   async run(sql: string, sink: ResultSink | null, options: RunOptions): Promise<RunOutcome> {
@@ -168,7 +179,7 @@ export class FbConnection implements DbConnection {
       return { hasResultSet: false, rowCount: 0, truncated: false }
     }
     const ownTx = this.autocommit || (options.readOnly && !this.tx)
-    const tx = ownTx ? await this.startTransaction(options.readOnly) : (this.tx ??= await this.startTransaction())
+    const tx = ownTx ? await this.startTransaction(options.readOnly, options.lockTimeoutSec) : (this.tx ??= await this.startTransaction(false, options.lockTimeoutSec))
     try {
       const outcome = await this.runIn(tx, sql, sink, options)
       if (ownTx) await (options.readOnly ? tx.rollbackAsync() : tx.commitAsync())
