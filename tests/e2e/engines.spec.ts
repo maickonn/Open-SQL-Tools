@@ -39,7 +39,7 @@ const KNOWN: Record<string, Omit<E2ETarget, 'id'>> = {
   },
   firebird5: {
     engine: 'Firebird', port: 30500, user: 'SYSDBA', password: 'masterkey', database: '/var/lib/firebird/data/testdb.fdb',
-    setup: "RECREATE TABLE E2E_ITEMS (ID INTEGER NOT NULL PRIMARY KEY, NAME VARCHAR(50)); INSERT INTO E2E_ITEMS VALUES (1, 'one'); INSERT INTO E2E_ITEMS VALUES (2, 'two');",
+    setup: "RECREATE SEQUENCE E2E_SEQ; CREATE OR ALTER EXCEPTION E2E_ERR 'boom'; RECREATE TABLE E2E_ITEMS (ID INTEGER NOT NULL PRIMARY KEY, NAME VARCHAR(50)); INSERT INTO E2E_ITEMS VALUES (1, 'one'); INSERT INTO E2E_ITEMS VALUES (2, 'two');",
     table: 'E2E_ITEMS', path: []
   }
 }
@@ -134,6 +134,17 @@ for (const target of targets) {
       else {
         await partitions.click()
         await expect(page.locator('label', { hasText: /^Method/ }).locator('select')).toHaveValue('')
+      }
+
+      // Objects are grouped by kind: tables start expanded, other categories collapsed.
+      await expect(page.getByRole('treeitem', { name: /^Tables\s*\(\d+\)/ }).first()).toBeVisible()
+      if (target.engine === 'Firebird') {
+        await expect(page.getByRole('treeitem', { name: /^E2E_SEQ( |$)/ })).toHaveCount(0)
+        await page.getByRole('treeitem', { name: /^Generators\s*\(\d+\)/ }).dblclick()
+        await expect(page.getByRole('treeitem', { name: /^E2E_SEQ( |$)/ })).toBeVisible()
+        await expect(page.getByRole('treeitem', { name: /^Generators\s*\(\d+\)/ })).toHaveAttribute('aria-expanded', 'true')
+        await expect(page.getByRole('treeitem', { name: /^Exceptions\s*\(\d+\)/ })).toBeVisible()
+        await page.screenshot({ path: join(shots, `e2e-${target.id}-tree.png`) })
       }
 
       // Bulk editor from the database / schema node.

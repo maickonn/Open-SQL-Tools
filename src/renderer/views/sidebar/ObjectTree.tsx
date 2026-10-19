@@ -59,10 +59,30 @@ export const KIND_ICONS: Record<string, typeof Table2> = {
   database: Database
 }
 
+/** i18n key of the category node grouping each object kind. */
+const GROUP_LABELS: Partial<Record<ObjectKind, string>> = {
+  table: 'tree.tables',
+  view: 'tree.views',
+  materialized_view: 'tree.materializedViews',
+  procedure: 'tree.procedures',
+  function: 'tree.functions',
+  package: 'tree.packages',
+  trigger: 'tree.triggers',
+  event: 'tree.events',
+  sequence: 'tree.sequences',
+  domain: 'tree.domains',
+  type: 'tree.types',
+  exception: 'tree.exceptions'
+}
+
+const groupLabel = (kind: ObjectKind, session: SessionState): string =>
+  kind === 'sequence' && session.info.engine === 'firebird' ? 'tree.generators' : (GROUP_LABELS[kind] ?? `kinds.${kind}`)
+
 type Row =
   | { type: 'session'; key: string; depth: number; session: SessionState }
   | { type: 'database'; key: string; depth: number; session: SessionState; database: string }
   | { type: 'schema'; key: string; depth: number; session: SessionState; database: string; schema: string }
+  | { type: 'group'; key: string; depth: number; session: SessionState; database?: string; schema?: string; kind: ObjectKind; count: number; open: boolean }
   | { type: 'object'; key: string; depth: number; session: SessionState; database?: string; schema?: string; object: DbObjectInfo }
   | { type: 'status'; key: string; depth: number; text: string; loading?: boolean; error?: boolean }
 
@@ -92,11 +112,24 @@ export function ObjectTree() {
         out.push({ type: 'status', key: `${base}|error`, depth, text: entry.error, error: true })
         return
       }
-      const items = entry.items
-        .filter((o) => !f || o.name.toLowerCase().includes(f))
-        .sort((a, b) => KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) || a.name.localeCompare(b.name))
-      if (!items.length) out.push({ type: 'status', key: `${base}|empty`, depth, text: t('tree.empty') })
-      for (const o of items) out.push({ type: 'object', key: `${base}|${o.kind}|${o.name}|${o.args ?? ''}`, depth, session, database, schema, object: o })
+      const byKind = new Map<ObjectKind, DbObjectInfo[]>()
+      for (const o of entry.items) {
+        if (f && !o.name.toLowerCase().includes(f)) continue
+        const list = byKind.get(o.kind)
+        if (list) list.push(o)
+        else byKind.set(o.kind, [o])
+      }
+      if (!byKind.size) out.push({ type: 'status', key: `${base}|empty`, depth, text: t('tree.empty') })
+      const kinds = [...byKind.keys()].sort((a, b) => (KIND_ORDER.indexOf(a) + 1 || 99) - (KIND_ORDER.indexOf(b) + 1 || 99))
+      for (const kind of kinds) {
+        const list = byKind.get(kind)!.sort((a, b) => a.name.localeCompare(b.name))
+        const key = `${base}|group|${kind}`
+        // Tables start expanded; a filter opens every category that has matches.
+        const open = f ? true : (expanded[key] ?? kind === 'table')
+        out.push({ type: 'group', key, depth, session, database, schema, kind, count: list.length, open })
+        if (!open) continue
+        for (const o of list) out.push({ type: 'object', key: `${base}|${o.kind}|${o.name}|${o.args ?? ''}`, depth: depth + 1, session, database, schema, object: o })
+      }
     }
     for (const session of Object.values(sessions)) {
       out.push({ type: 'session', key: session.id, depth: 0, session })
@@ -151,7 +184,7 @@ export function ObjectTree() {
             const row = rows[v.index]
             return (
               <div key={row.key} style={{ position: 'absolute', top: 0, left: 0, right: 0, height: ROW_HEIGHT, transform: `translateY(${v.start}px)` }}>
-                <TreeRow row={row} selected={selected === row.key} expanded={!!expanded[row.key]} />
+                <TreeRow row={row} selected={selected === row.key} expanded={row.type === 'group' ? row.open : !!expanded[row.key]} />
               </div>
             )
           })}
@@ -210,6 +243,7 @@ const TreeRow = memo(function TreeRow({ row, selected, expanded }: { row: Row; s
   let icon
   let label: string
   let detail: string | undefined
+  let count: number | undefined
   if (row.type === 'session') {
     icon = <EngineBadge engine={row.session.info.engine} />
     label = row.session.profile.name
@@ -220,6 +254,11 @@ const TreeRow = memo(function TreeRow({ row, selected, expanded }: { row: Row; s
   } else if (row.type === 'schema') {
     icon = <FolderTree size={14} className="text-muted" />
     label = row.schema
+  } else if (row.type === 'group') {
+    const Icon = KIND_ICONS[row.kind] ?? FileCode2
+    icon = <Icon size={14} className={row.kind === 'table' ? 'text-accent' : 'text-muted'} />
+    label = t(groupLabel(row.kind, row.session))
+    count = row.count
   } else {
     const Icon = KIND_ICONS[row.object.kind] ?? FileCode2
     icon = <Icon size={14} className={row.object.kind === 'table' ? 'text-accent' : 'text-muted'} />
@@ -253,9 +292,10 @@ const TreeRow = memo(function TreeRow({ row, selected, expanded }: { row: Row; s
           <ChevronRight size={13} className={cx('transition-transform', expanded && 'rotate-90')} />
         </span>
         <span className="flex shrink-0 items-center">{icon}</span>
-        <span className={cx('truncate', row.type === 'session' && 'font-medium')} style={row.type === 'session' && row.session.profile.color ? { color: row.session.profile.color } : undefined}>
+        <span className={cx('truncate', (row.type === 'session' || row.type === 'group') && 'font-medium')} style={row.type === 'session' && row.session.profile.color ? { color: row.session.profile.color } : undefined}>
           {label}
         </span>
+        {count !== undefined && <span className="shrink-0 text-[11px] tabular-nums text-accent">({count})</span>}
         {row.type === 'session' && row.session.lost && <AlertTriangle size={12} className="shrink-0 text-danger" />}
         {detail && <span className="ml-auto shrink-0 pl-2 text-[11px] text-subtle">{detail}</span>}
       </div>
@@ -280,11 +320,10 @@ function contextItems(row: Row, t: (k: string, o?: Record<string, unknown>) => s
     } else if (row.type === 'database') {
       if (row.session.info.engine === 'postgres') void ws.loadSchemas(sid, row.database, true)
       else void ws.loadObjects(sid, row.database, undefined, true)
-    } else if (row.type === 'schema') void ws.loadObjects(sid, row.database, row.schema, true)
-    else void ws.loadObjects(sid, row.database, row.schema, true)
+    } else void ws.loadObjects(sid, row.database, row.schema, true)
   }
   const database = row.type === 'session' ? undefined : row.database
-  const schema = row.type === 'schema' || row.type === 'object' ? row.schema : undefined
+  const schema = row.type === 'schema' || row.type === 'object' || row.type === 'group' ? row.schema : undefined
 
   items.push({ label: t('tree.newQuery'), icon: <Plus size={14} />, onSelect: () => ws.newQueryTab(sid, undefined, database) })
   if (row.type !== 'object') {

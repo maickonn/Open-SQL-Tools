@@ -35,6 +35,7 @@ export const en = {
   },
   tree: {
     filter: 'Filter objects', databases: 'Databases', tables: 'Tables', views: 'Views', routines: 'Routines', triggers: 'Triggers',
+    materializedViews: 'Materialized views', procedures: 'Procedures', functions: 'Functions', generators: 'Generators',
     events: 'Events', sequences: 'Sequences', domains: 'Domains', exceptions: 'Exceptions', packages: 'Packages', types: 'Types',
     empty: 'No objects', newQuery: 'New query tab', createTable: 'Create table…', createView: 'Create view…', createRoutine: 'Create routine…',
     createDatabase: 'Create database…', drop: 'Drop…', truncate: 'Empty table…', copyName: 'Copy name', showData: 'Show data',
