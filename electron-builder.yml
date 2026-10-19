@@ -1,0 +1,25 @@
+appId: dev.opensqltool.app
+productName: Open SQL Tool
+directories:
+  output: release
+  buildResources: resources
+files:
+  - out/**
+  - package.json
+  - '!**/*.map'
+asarUnpack:
+  - '**/node_modules/cpu-features/**'
+win:
+  target: [nsis]
+  icon: resources/icon.png
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+mac:
+  target: [dmg]
+  category: public.app-category.developer-tools
+  icon: resources/icon.png
+linux:
+  target: [AppImage, deb]
+  category: Development
+  icon: resources/icon.png

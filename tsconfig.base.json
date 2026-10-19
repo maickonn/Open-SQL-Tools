@@ -1,0 +1,34 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": false,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "forceConsistentCasingInFileNames": true,
+    "verbatimModuleSyntax": false,
+    "paths": {
+      "@shared/*": [
+        "./src/shared/*"
+      ],
+      "@domain/*": [
+        "./src/domain/*"
+      ],
+      "@application/*": [
+        "./src/application/*"
+      ],
+      "@infrastructure/*": [
+        "./src/infrastructure/*"
+      ],
+      "@renderer/*": [
+        "./src/renderer/*"
+      ]
+    }
+  }
+}
