@@ -1,0 +1,411 @@
+import type {
+  CheckDef,
+  ColumnDef,
+  DbObjectInfo,
+  DbObjectRef,
+  FkAction,
+  ForeignKeyDef,
+  IndexDef,
+  ObjectKind,
+  PartitionMethod,
+  Partitioning,
+  ServerUser,
+  TableStructure,
+  UserPrivileges
+} from '@shared/model'
+import type { SchemaInspector } from '@domain/ports/database'
+import type { HostInfo } from '@shared/workerApi'
+import { bool, keyValueResult, num, optStr, queryObjects, str, type QueryFn } from '../common/queryHelpers'
+import type { PgDialect } from './pgDialect'
+
+const FK_ACTIONS: Record<string, FkAction> = { a: 'NO ACTION', r: 'RESTRICT', c: 'CASCADE', n: 'SET NULL', d: 'SET DEFAULT' }
+/** Unit separator used to aggregate lists without array parsing. */
+const SEP = '\u001f'
+
+const SYSTEM_SCHEMAS = new Set(['pg_catalog', 'information_schema', 'pg_toast'])
+
+export class PgInspector implements SchemaInspector {
+  constructor(
+    private readonly query: QueryFn,
+    private readonly dialect: PgDialect,
+    /** Switches the metadata connection to another database (PostgreSQL needs a reconnect). */
+    private readonly ensureDatabase: (database?: string) => Promise<void>
+  ) {}
+
+  private lit(v: string): string {
+    return this.dialect.quoteString(v)
+  }
+
+  /** regclass literal for a schema-qualified relation. */
+  private regclass(ref: DbObjectRef): string {
+    return `${this.lit(this.dialect.qualify({ ...ref, args: undefined }))}::regclass`
+  }
+
+  async listDatabases(): Promise<string[]> {
+    const rows = await queryObjects(this.query, 'SELECT datname FROM pg_database WHERE NOT datistemplate AND datallowconn ORDER BY datname')
+    return rows.map((r) => str(r.datname))
+  }
+
+  async listSchemas(database?: string): Promise<string[]> {
+    await this.ensureDatabase(database)
+    const rows = await queryObjects(
+      this.query,
+      `SELECT nspname FROM pg_namespace
+        WHERE nspname NOT LIKE 'pg\\_toast%' AND nspname NOT LIKE 'pg\\_temp\\_%'
+        ORDER BY nspname IN ('pg_catalog', 'information_schema'), nspname`
+    )
+    return rows.map((r) => str(r.nspname))
+  }
+
+  async listObjects(database?: string, schema?: string): Promise<DbObjectInfo[]> {
+    await this.ensureDatabase(database)
+    if (!schema) return []
+    const ns = this.lit(schema)
+    const system = SYSTEM_SCHEMAS.has(schema)
+    const out: DbObjectInfo[] = []
+    const rels = await queryObjects(
+      this.query,
+      `SELECT c.relname, c.relkind, c.reltuples::bigint AS rows, pg_total_relation_size(c.oid) AS size,
+              obj_description(c.oid, 'pg_class') AS comment
+         FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = ${ns} AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')
+        ORDER BY c.relname`
+    )
+    const relKinds: Record<string, ObjectKind> = { r: 'table', p: 'table', f: 'table', v: 'view', m: 'materialized_view', S: 'sequence' }
+    for (const r of rels) {
+      const kind = relKinds[str(r.relkind)] ?? 'table'
+      const rows = num(r.rows)
+      out.push({
+        database,
+        schema,
+        name: str(r.relname),
+        kind,
+        rows: kind === 'table' || kind === 'materialized_view' ? (rows !== undefined && rows >= 0 ? rows : undefined) : undefined,
+        sizeBytes: num(r.size),
+        comment: optStr(r.comment),
+        system
+      })
+    }
+    const procs = await queryObjects(
+      this.query,
+      `SELECT p.proname, p.prokind, pg_get_function_identity_arguments(p.oid) AS args, obj_description(p.oid, 'pg_proc') AS comment
+         FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = ${ns} AND p.prokind IN ('f', 'p')
+          AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.objid = p.oid AND d.deptype = 'e')
+        ORDER BY p.proname, args`
+    )
+    for (const p of procs) {
+      out.push({ database, schema, name: str(p.proname), args: str(p.args), kind: str(p.prokind) === 'p' ? 'procedure' : 'function', comment: optStr(p.comment), system })
+    }
+    const triggers = await queryObjects(
+      this.query,
+      `SELECT t.tgname, c.relname FROM pg_trigger t
+         JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = ${ns} AND NOT t.tgisinternal ORDER BY t.tgname`
+    )
+    for (const t of triggers) out.push({ database, schema, name: str(t.tgname), kind: 'trigger', table: str(t.relname), system })
+    const types = await queryObjects(
+      this.query,
+      `SELECT t.typname, t.typtype FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+        WHERE n.nspname = ${ns} AND (t.typtype IN ('d', 'e', 'r', 'm')
+              OR (t.typtype = 'c' AND (SELECT relkind FROM pg_class WHERE oid = t.typrelid) = 'c'))
+          AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.objid = t.oid AND d.deptype = 'e')
+        ORDER BY t.typname`
+    )
+    for (const t of types) out.push({ database, schema, name: str(t.typname), kind: str(t.typtype) === 'd' ? 'domain' : 'type', system })
+    return out
+  }
+
+  async getTableStructure(ref: DbObjectRef): Promise<TableStructure> {
+    await this.ensureDatabase(ref.database)
+    const rel = this.regclass(ref)
+    const colRows = await queryObjects(
+      this.query,
+      `SELECT a.attname, format_type(a.atttypid, a.atttypmod) AS fulltype, t.typname, a.attnotnull,
+              pg_get_expr(d.adbin, d.adrelid) AS defexpr, a.attidentity, a.attgenerated,
+              col_description(a.attrelid, a.attnum) AS comment,
+              CASE WHEN a.attcollation <> t.typcollation THEN co.collname END AS collation,
+              information_schema._pg_char_max_length(a.atttypid, a.atttypmod) AS charlen,
+              information_schema._pg_numeric_precision(a.atttypid, a.atttypmod) AS prec,
+              information_schema._pg_numeric_scale(a.atttypid, a.atttypmod) AS scale,
+              CASE WHEN t.typtype = 'd' THEN t.typname END AS domain,
+              (SELECT string_agg(e.enumlabel, '${SEP}' ORDER BY e.enumsortorder) FROM pg_enum e WHERE e.enumtypid = a.atttypid) AS enumvals
+         FROM pg_attribute a
+         JOIN pg_type t ON t.oid = a.atttypid
+         LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+         LEFT JOIN pg_collation co ON co.oid = a.attcollation
+        WHERE a.attrelid = ${rel} AND a.attnum > 0 AND NOT a.attisdropped
+        ORDER BY a.attnum`
+    )
+    const columns: ColumnDef[] = colRows.map((c) => {
+      const gen = str(c.attgenerated)
+      const ident = str(c.attidentity)
+      const def = optStr(c.defexpr)
+      const fullType = str(c.fulltype)
+      return {
+        name: str(c.attname),
+        originalName: str(c.attname),
+        dataType: str(c.typname).toUpperCase(),
+        fullType,
+        length: num(c.charlen),
+        precision: num(c.prec),
+        scale: num(c.scale),
+        nullable: !bool(c.attnotnull),
+        defaultValue: gen ? null : (def ?? null),
+        autoIncrement: !!ident || /^nextval\(/i.test(def ?? ''),
+        identity: ident === 'a' ? 'always' : ident === 'd' ? 'by_default' : undefined,
+        generated: gen ? { expression: (def ?? '').replace(/^\((.*)\)$/s, '$1'), stored: gen === 's' } : undefined,
+        collation: optStr(c.collation),
+        comment: optStr(c.comment),
+        domain: optStr(c.domain),
+        enumValues: optStr(c.enumvals)?.split(SEP)
+      }
+    })
+
+    const idxRows = await queryObjects(
+      this.query,
+      `SELECT i.relname, ix.indisprimary, ix.indisunique, am.amname,
+              pg_get_expr(ix.indpred, ix.indrelid) AS pred,
+              (SELECT string_agg(pg_get_indexdef(ix.indexrelid, k, true), '${SEP}' ORDER BY k)
+                 FROM generate_series(1, ix.indnkeyatts) k) AS cols,
+              (SELECT bool_or(k = 0) FROM unnest(ix.indkey) k) AS hasexpr,
+              EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conindid = ix.indexrelid AND c.contype IN ('p', 'u')) AS isconstraint,
+              obj_description(i.oid, 'pg_class') AS comment
+         FROM pg_index ix
+         JOIN pg_class i ON i.oid = ix.indexrelid
+         JOIN pg_am am ON am.oid = i.relam
+        WHERE ix.indrelid = ${rel}
+        ORDER BY ix.indisprimary DESC, i.relname`
+    )
+    const indexes: IndexDef[] = idxRows.map((r) => {
+      const cols = str(r.cols).split(SEP).filter(Boolean)
+      const hasExpr = bool(r.hasexpr)
+      return {
+        name: str(r.relname),
+        type: bool(r.indisprimary) ? 'PRIMARY' : bool(r.indisunique) ? 'UNIQUE' : 'INDEX',
+        columns: hasExpr ? [] : cols.map(unquotePg),
+        expression: hasExpr ? cols.join(', ') : undefined,
+        method: str(r.amname),
+        condition: optStr(r.pred),
+        constraint: bool(r.isconstraint),
+        comment: optStr(r.comment)
+      }
+    })
+
+    const fkRows = await queryObjects(
+      this.query,
+      `SELECT c.conname, rn.nspname AS refschema, rc.relname AS reftable, c.confupdtype, c.confdeltype,
+              (SELECT string_agg(a.attname, '${SEP}' ORDER BY k.ord) FROM unnest(c.conkey) WITH ORDINALITY k(attnum, ord)
+                 JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum) AS cols,
+              (SELECT string_agg(a.attname, '${SEP}' ORDER BY k.ord) FROM unnest(c.confkey) WITH ORDINALITY k(attnum, ord)
+                 JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = k.attnum) AS refcols
+         FROM pg_constraint c
+         JOIN pg_class rc ON rc.oid = c.confrelid JOIN pg_namespace rn ON rn.oid = rc.relnamespace
+        WHERE c.conrelid = ${rel} AND c.contype = 'f' ORDER BY c.conname`
+    )
+    const foreignKeys: ForeignKeyDef[] = fkRows.map((r) => ({
+      name: str(r.conname),
+      columns: str(r.cols).split(SEP),
+      refSchema: str(r.refschema),
+      refTable: str(r.reftable),
+      refColumns: str(r.refcols).split(SEP),
+      onUpdate: FK_ACTIONS[str(r.confupdtype)] ?? 'NO ACTION',
+      onDelete: FK_ACTIONS[str(r.confdeltype)] ?? 'NO ACTION'
+    }))
+
+    const ckRows = await queryObjects(
+      this.query,
+      `SELECT conname, pg_get_constraintdef(oid, true) AS def FROM pg_constraint WHERE conrelid = ${rel} AND contype = 'c' ORDER BY conname`
+    )
+    const checks: CheckDef[] = ckRows.map((r) => ({ name: str(r.conname), expression: str(r.def).replace(/^CHECK\s*/i, '') }))
+
+    const optRows = await queryObjects(
+      this.query,
+      `SELECT obj_description(c.oid, 'pg_class') AS comment, ts.spcname,
+              CASE WHEN c.relkind = 'p' THEN pg_get_partkeydef(c.oid) END AS partkey
+         FROM pg_class c LEFT JOIN pg_tablespace ts ON ts.oid = c.reltablespace WHERE c.oid = ${rel}`
+    )
+    const o = optRows[0] ?? {}
+    let partitioning: Partitioning | undefined
+    const key = /^(\w+)\s*\(([\s\S]*)\)$/.exec(str(o.partkey))
+    if (key) {
+      const children = await queryObjects(
+        this.query,
+        `SELECT c.relname, pg_get_expr(c.relpartbound, c.oid) AS bound, c.reltuples::bigint AS rows
+           FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid
+          WHERE i.inhparent = ${rel} ORDER BY c.relname`
+      )
+      partitioning = {
+        method: key[1].toUpperCase() as PartitionMethod,
+        expression: key[2],
+        partitions: children.map((c) => ({
+          name: str(c.relname),
+          bound: str(c.bound).replace(/^FOR VALUES\s+/i, ''),
+          rows: (num(c.rows) ?? -1) >= 0 ? num(c.rows) : undefined
+        }))
+      }
+    }
+    return {
+      ref: { ...ref, kind: 'table' },
+      columns,
+      indexes,
+      foreignKeys,
+      checks,
+      options: { comment: optStr(o.comment), tablespace: optStr(o.spcname), partitioning }
+    }
+  }
+
+  async getObjectDDL(ref: DbObjectRef): Promise<string> {
+    await this.ensureDatabase(ref.database)
+    switch (ref.kind) {
+      case 'table': {
+        const s = await this.getTableStructure(ref)
+        return this.dialect.createTable(s).join(';\n\n') + ';'
+      }
+      case 'view':
+      case 'materialized_view': {
+        const r = await this.query(`SELECT pg_get_viewdef(${this.regclass(ref)}, true)`)
+        const kw = ref.kind === 'view' ? 'CREATE OR REPLACE VIEW' : 'CREATE MATERIALIZED VIEW'
+        return `${kw} ${this.dialect.qualify(ref)} AS\n${str(r.rows[0]?.[0]).trimEnd()}`
+      }
+      case 'function':
+      case 'procedure': {
+        const sig = this.lit(this.dialect.qualify(ref))
+        const r = await this.query(`SELECT pg_get_functiondef(${sig}::regprocedure)`)
+        return str(r.rows[0]?.[0])
+      }
+      case 'trigger': {
+        const r = await this.query(
+          `SELECT pg_get_triggerdef(t.oid, true) FROM pg_trigger t WHERE t.tgname = ${this.lit(ref.name)}
+             AND t.tgrelid = ${this.regclass({ ...ref, name: ref.table ?? '', kind: 'table' })}`
+        )
+        return str(r.rows[0]?.[0])
+      }
+      case 'sequence': {
+        const rows = await queryObjects(
+          this.query,
+          `SELECT data_type, start_value, min_value, max_value, increment_by, cycle, cache_size, last_value
+             FROM pg_sequences WHERE schemaname = ${this.lit(ref.schema ?? 'public')} AND sequencename = ${this.lit(ref.name)}`
+        )
+        const s = rows[0]
+        if (!s) throw new Error(`Sequence not found: ${ref.name}`)
+        return [
+          `CREATE SEQUENCE ${this.dialect.qualify(ref)}`,
+          `  AS ${str(s.data_type)}`,
+          `  INCREMENT BY ${str(s.increment_by)}`,
+          `  MINVALUE ${str(s.min_value)}`,
+          `  MAXVALUE ${str(s.max_value)}`,
+          `  START WITH ${str(s.start_value)}`,
+          `  CACHE ${str(s.cache_size)}`,
+          `  ${bool(s.cycle) ? 'CYCLE' : 'NO CYCLE'};`,
+          s.last_value !== null ? `\nSELECT setval(${this.lit(this.dialect.qualify(ref))}, ${str(s.last_value)});` : ''
+        ].join('\n')
+      }
+      case 'domain': {
+        const rows = await queryObjects(
+          this.query,
+          `SELECT format_type(t.typbasetype, t.typtypmod) AS base, t.typnotnull, t.typdefault,
+                  (SELECT string_agg(pg_get_constraintdef(c.oid, true), ' ') FROM pg_constraint c WHERE c.contypid = t.oid) AS checks
+             FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+            WHERE n.nspname = ${this.lit(ref.schema ?? 'public')} AND t.typname = ${this.lit(ref.name)}`
+        )
+        const d = rows[0]
+        if (!d) throw new Error(`Domain not found: ${ref.name}`)
+        return `CREATE DOMAIN ${this.dialect.qualify(ref)} AS ${str(d.base)}${d.typdefault ? ` DEFAULT ${str(d.typdefault)}` : ''}${bool(d.typnotnull) ? ' NOT NULL' : ''}${d.checks ? ` ${str(d.checks)}` : ''};`
+      }
+      case 'type': {
+        const rows = await queryObjects(
+          this.query,
+          `SELECT t.typtype, (SELECT string_agg(quote_literal(e.enumlabel), ', ' ORDER BY e.enumsortorder) FROM pg_enum e WHERE e.enumtypid = t.oid) AS labels,
+                  (SELECT string_agg(quote_ident(a.attname) || ' ' || format_type(a.atttypid, a.atttypmod), ', ' ORDER BY a.attnum)
+                     FROM pg_attribute a WHERE a.attrelid = t.typrelid AND a.attnum > 0 AND NOT a.attisdropped) AS attrs
+             FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace
+            WHERE n.nspname = ${this.lit(ref.schema ?? 'public')} AND t.typname = ${this.lit(ref.name)}`
+        )
+        const t = rows[0]
+        if (!t) throw new Error(`Type not found: ${ref.name}`)
+        if (str(t.typtype) === 'e') return `CREATE TYPE ${this.dialect.qualify(ref)} AS ENUM (${str(t.labels)});`
+        if (str(t.typtype) === 'c') return `CREATE TYPE ${this.dialect.qualify(ref)} AS (${str(t.attrs)});`
+        return `-- Type ${ref.name} (${str(t.typtype)})`
+      }
+      case 'schema':
+        return `CREATE SCHEMA ${this.dialect.quoteIdent(ref.name)};`
+      case 'database':
+        return `CREATE DATABASE ${this.dialect.quoteIdent(ref.name)};`
+      default:
+        throw new Error(`No DDL available for ${ref.kind}`)
+    }
+  }
+
+  getRoutineSource(ref: DbObjectRef): Promise<string> {
+    return this.getObjectDDL(ref)
+  }
+
+  async listCollations(): Promise<{ charset: string; collation: string; isDefault: boolean }[]> {
+    const rows = await queryObjects(
+      this.query,
+      `SELECT collname, pg_encoding_to_char(collencoding) AS enc FROM pg_collation ORDER BY collname`
+    )
+    return rows.map((r) => ({ charset: str(r.enc) || 'any', collation: str(r.collname), isDefault: str(r.collname) === 'default' }))
+  }
+
+  async listEngines(): Promise<string[]> {
+    return []
+  }
+
+  async countRows(ref: DbObjectRef, where?: string): Promise<number> {
+    await this.ensureDatabase(ref.database)
+    const res = await this.query(`SELECT COUNT(*) FROM ${this.dialect.qualify(ref)}${where?.trim() ? ` WHERE ${where}` : ''}`)
+    return Number(res.rows[0]?.[0] ?? 0)
+  }
+
+  async hostInfo(): Promise<HostInfo> {
+    const variables = await this.query(
+      'SELECT name AS "Variable", setting AS "Value", unit AS "Unit", category AS "Category", short_desc AS "Description" FROM pg_settings ORDER BY name'
+    )
+    const statRows = await queryObjects(this.query, 'SELECT * FROM pg_stat_database WHERE datname = current_database()')
+    const status = keyValueResult(Object.entries(statRows[0] ?? {}).map(([k, v]) => [k, v]))
+    const processes = await this.query(
+      `SELECT pid AS "Id", usename AS "User", client_addr::text AS "Host", datname AS "db", application_name AS "Application",
+              state AS "State", backend_start AS "Started", query_start AS "Query start",
+              EXTRACT(EPOCH FROM (now() - query_start))::int AS "Time", wait_event_type AS "Wait", query AS "Info"
+         FROM pg_stat_activity WHERE backend_type = 'client backend' ORDER BY pid`
+    )
+    return { variables, status, processes }
+  }
+
+  async killProcess(id: string | number, queryOnly: boolean): Promise<void> {
+    await this.query(`SELECT ${queryOnly ? 'pg_cancel_backend' : 'pg_terminate_backend'}(${Number(id)})`)
+  }
+
+  async listUsers(): Promise<ServerUser[]> {
+    const rows = await queryObjects(this.query, 'SELECT rolname, rolsuper, rolcanlogin FROM pg_roles WHERE rolname NOT LIKE \'pg\\_%\' ORDER BY rolname')
+    return rows.map((r) => ({ name: str(r.rolname), superuser: bool(r.rolsuper), canLogin: bool(r.rolcanlogin) }))
+  }
+
+  async getUserPrivileges(user: ServerUser): Promise<UserPrivileges> {
+    const role = this.lit(user.name)
+    const memberships = await queryObjects(
+      this.query,
+      `SELECT r.rolname FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid JOIN pg_roles u ON u.oid = m.member WHERE u.rolname = ${role}`
+    )
+    const tables = await queryObjects(
+      this.query,
+      `SELECT table_schema, table_name, string_agg(privilege_type, ', ' ORDER BY privilege_type) AS privs
+         FROM information_schema.role_table_grants WHERE grantee = ${role}
+        GROUP BY table_schema, table_name ORDER BY table_schema, table_name`
+    )
+    const grants = [
+      ...memberships.map((m) => `GRANT ${this.dialect.quoteIdent(str(m.rolname))} TO ${this.dialect.quoteIdent(user.name)}`),
+      ...tables.map(
+        (t) =>
+          `GRANT ${str(t.privs)} ON ${this.dialect.qualify({ schema: str(t.table_schema), name: str(t.table_name), kind: 'table' })} TO ${this.dialect.quoteIdent(user.name)}`
+      )
+    ]
+    return { user, grants }
+  }
+}
+
+function unquotePg(name: string): string {
+  return /^".*"$/.test(name) ? name.slice(1, -1).replace(/""/g, '"') : name
+}
