@@ -80,7 +80,7 @@ export function Workspace() {
                 style={active && color ? { boxShadow: `inset 0 2px 0 ${color}` } : undefined}
               >
                 <TabIcon tab={tab} />
-                <span className={cx('truncate', tab.preview && 'italic')}>{tab.title}</span>
+                <span className={cx('truncate', tab.preview && 'italic pr-[0.2em]')}>{tab.title}</span>
                 <button
                   type="button"
                   aria-label={t('menu.closeTab')}
