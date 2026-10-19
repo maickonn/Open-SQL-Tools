@@ -1,0 +1,161 @@
+import { describe, expect, it } from 'vitest'
+import type { TableStructure } from '@shared/model'
+import { MariaDbDialect, MySqlDialect } from '@infrastructure/db/mysql-family/mysqlDialect'
+import { PgDialect } from '@infrastructure/db/postgres/pgDialect'
+import { FbDialect } from '@infrastructure/db/firebird/fbDialect'
+
+const table = (over: Partial<TableStructure> = {}): TableStructure => ({
+  ref: { database: 'app', schema: 'public', name: 'items', kind: 'table' },
+  columns: [
+    { name: 'id', originalName: 'id', dataType: 'INT', fullType: 'int', nullable: false, autoIncrement: true },
+    { name: 'name', originalName: 'name', dataType: 'VARCHAR', fullType: 'varchar(100)', nullable: false, defaultValue: "''" }
+  ],
+  indexes: [{ name: 'PRIMARY', type: 'PRIMARY', columns: ['id'] }],
+  foreignKeys: [],
+  checks: [],
+  options: {},
+  ...over
+})
+
+describe('MySQL dialect', () => {
+  const d = new MySqlDialect(80400)
+
+  it('quotes identifiers and literals with backslash escapes', () => {
+    expect(d.quoteIdent('a`b')).toBe('`a``b`')
+    expect(d.literal(String.raw`it's \ ok`)).toBe(String.raw`'it''s \\ ok'`)
+    expect(d.literal(new Uint8Array([1, 255]))).toBe("X'01ff'")
+    expect(d.literal(null)).toBe('NULL')
+  })
+
+  it('pages table data and limits edits to one row', () => {
+    expect(d.selectTableData({ ref: table().ref, where: 'id > 1', orderBy: [{ column: 'name', desc: true }], offset: 10, limit: 5 })).toBe(
+      'SELECT * FROM `app`.`items` WHERE id > 1 ORDER BY `name` DESC LIMIT 5 OFFSET 10'
+    )
+    expect(d.rowChanges(table().ref, [{ kind: 'update', key: { id: 1 }, values: { name: 'x' } }])).toEqual(["UPDATE `app`.`items` SET `name` = 'x' WHERE `id` = 1 LIMIT 1"])
+    expect(d.rowChanges(table().ref, [{ kind: 'delete', key: { id: null } }])).toEqual(['DELETE FROM `app`.`items` WHERE `id` IS NULL LIMIT 1'])
+  })
+
+  it('creates tables with inline keys and options', () => {
+    const [sql] = d.createTable(table({ options: { engine: 'InnoDB', comment: 'x' } }))
+    expect(sql).toContain('`id` int NOT NULL AUTO_INCREMENT')
+    expect(sql).toContain('PRIMARY KEY (`id`)')
+    expect(sql).toContain("ENGINE=InnoDB COMMENT='x'")
+  })
+
+  it('alters tables: rename, add with position, drop', () => {
+    const before = table()
+    const after = table({
+      columns: [before.columns[0], { ...before.columns[1], name: 'title' }, { name: 'qty', dataType: 'INT', fullType: 'int', nullable: true, defaultValue: '0' }]
+    })
+    const [sql] = d.alterTable(before, after)
+    expect(sql).toContain('CHANGE COLUMN `name` `title` varchar(100) NOT NULL')
+    expect(sql).toContain('ADD COLUMN `qty` int NULL DEFAULT 0 AFTER `title`')
+    expect(d.alterTable(before, table())).toEqual([])
+  })
+
+  it('uses DROP CONSTRAINT for checks on MariaDB', () => {
+    const m = new MariaDbDialect(110800)
+    const before = table({ checks: [{ name: 'c1', expression: 'id > 0' }] })
+    expect(m.alterTable(before, table())[0]).toContain('DROP CONSTRAINT `c1`')
+    expect(m.dataTypes).toContain('UUID')
+  })
+})
+
+describe('PostgreSQL dialect', () => {
+  const d = new PgDialect(180000)
+
+  it('quotes only when needed and casts bytea', () => {
+    expect(d.quoteIdent('items')).toBe('items')
+    expect(d.quoteIdent('Items')).toBe('"Items"')
+    expect(d.quoteIdent('user')).toBe('"user"')
+    expect(d.literal(new Uint8Array([0xde, 0xad]))).toBe(String.raw`'\xdead'::bytea`)
+    expect(d.qualify({ schema: 'public', name: 'f', kind: 'function', args: 'integer' })).toBe('public.f(integer)')
+  })
+
+  it('alters columns with separate statements', () => {
+    const before = table({ columns: [{ name: 'id', originalName: 'id', dataType: 'INT4', fullType: 'integer', nullable: false, identity: 'by_default' }] })
+    const after = table({ columns: [{ ...before.columns[0], name: 'item_id', nullable: true, comment: 'pk' }] })
+    expect(d.alterTable(before, after)).toEqual([
+      'ALTER TABLE public.items RENAME COLUMN id TO item_id',
+      'ALTER TABLE public.items ALTER COLUMN item_id DROP NOT NULL',
+      "COMMENT ON COLUMN public.items.item_id IS 'pk'"
+    ])
+  })
+
+  it('drops triggers with their table', () => {
+    expect(d.dropObject({ schema: 'public', name: 'trg', kind: 'trigger', table: 'items' })).toBe('DROP TRIGGER trg ON public.items')
+  })
+})
+
+describe('Firebird dialect', () => {
+  it('uses FIRST/SKIP, ROWS 1 and DELETE for truncate', () => {
+    const d = new FbDialect(50000)
+    const ref = { name: 'ITEMS', kind: 'table' as const }
+    expect(d.selectTableData({ ref, offset: 20, limit: 10 })).toBe('SELECT FIRST 10 SKIP 20 * FROM ITEMS')
+    expect(d.rowChanges(ref, [{ kind: 'delete', key: { ID: 1 } }])).toEqual(['DELETE FROM ITEMS WHERE ID = 1 ROWS 1'])
+    expect(d.truncateTable(ref)).toBe('DELETE FROM ITEMS')
+    expect(d.quoteIdent('Mixed')).toBe('"Mixed"')
+    expect(d.literal(true)).toBe('TRUE')
+  })
+
+  it('has no booleans before 3.0 and uses system tables for NOT NULL changes', () => {
+    const d = new FbDialect(20509)
+    expect(d.literal(true)).toBe('1')
+    const before = table({ ref: { name: 'ITEMS', kind: 'table' }, columns: [{ name: 'NAME', originalName: 'NAME', dataType: 'VARCHAR', fullType: 'VARCHAR(10)', nullable: true }] })
+    const after = table({ ref: { name: 'ITEMS', kind: 'table' }, columns: [{ ...before.columns[0], nullable: false }] })
+    expect(d.alterTable(before, after)[0]).toContain('UPDATE RDB$RELATION_FIELDS SET RDB$NULL_FLAG = 1')
+  })
+})
+
+describe('partitioning and bulk operations', () => {
+  const my = new MySqlDialect(80400)
+  const pg = new PgDialect(180000)
+  const ranged = (bounds: [string, string][]): TableStructure['options'] => ({
+    partitioning: { method: 'RANGE', expression: 'YEAR(created)', partitions: bounds.map(([name, bound]) => ({ name, bound })) }
+  })
+
+  it('creates MySQL partitioned tables', () => {
+    const [sql] = my.createTable(table({ options: ranged([['p2024', 'LESS THAN (2025)'], ['pmax', 'LESS THAN MAXVALUE']]) }))
+    expect(sql).toContain('PARTITION BY RANGE (YEAR(created))')
+    expect(sql).toContain('PARTITION `p2024` VALUES LESS THAN (2025)')
+    expect(sql).toContain('PARTITION `pmax` VALUES LESS THAN MAXVALUE')
+    expect(my.createTable(table({ options: { partitioning: { method: 'HASH', expression: 'id', count: 4, partitions: [] } } }))[0]).toContain('PARTITION BY HASH (id) PARTITIONS 4')
+  })
+
+  it('alters MySQL partitions minimally', () => {
+    const before = table({ options: ranged([['p1', 'LESS THAN (10)'], ['p2', 'LESS THAN (20)']]) })
+    expect(my.alterTable(before, table({ options: ranged([['p1', 'LESS THAN (10)'], ['p2', 'LESS THAN (20)'], ['p3', 'LESS THAN (30)']]) }))).toEqual([
+      'ALTER TABLE `app`.`items` ADD PARTITION (PARTITION `p3` VALUES LESS THAN (30))'
+    ])
+    expect(my.alterTable(before, table({ options: ranged([['p2', 'LESS THAN (20)']]) }))).toEqual(['ALTER TABLE `app`.`items` DROP PARTITION `p1`'])
+    expect(my.alterTable(before, table())).toEqual(['ALTER TABLE `app`.`items` REMOVE PARTITIONING'])
+    expect(my.alterTable(before, table({ options: ranged([['p1', 'LESS THAN (15)'], ['p2', 'LESS THAN (20)']]) }))[0]).toMatch(/^ALTER TABLE `app`.`items` PARTITION BY RANGE/)
+  })
+
+  it('creates PostgreSQL partitions as child tables and keeps the key fixed', () => {
+    const t1 = table({ options: { partitioning: { method: 'LIST', expression: 'country', partitions: [{ name: 'items_br', bound: "IN ('br')" }, { name: 'items_other', bound: 'DEFAULT' }] } } })
+    const sql = pg.createTable(t1)
+    expect(sql[0]).toContain('PARTITION BY LIST (country)')
+    expect(sql).toContain("CREATE TABLE public.items_br PARTITION OF public.items FOR VALUES IN ('br')")
+    expect(sql).toContain('CREATE TABLE public.items_other PARTITION OF public.items DEFAULT')
+    const t2 = structuredClone(t1)
+    t2.options.partitioning!.partitions[0].bound = "IN ('br', 'pt')"
+    expect(pg.alterTable(t1, t2)).toEqual([
+      'ALTER TABLE public.items DETACH PARTITION public.items_br',
+      "ALTER TABLE public.items ATTACH PARTITION public.items_br FOR VALUES IN ('br', 'pt')"
+    ])
+    const t3 = structuredClone(t1)
+    t3.options.partitioning!.expression = 'region'
+    expect(() => pg.alterTable(t1, t3)).toThrow(/partition key/)
+  })
+
+  it('generates bulk table statements', () => {
+    const ref = { database: 'app', schema: 'public', name: 'items', kind: 'table' as const }
+    expect(my.bulkAlter(ref, { engine: 'InnoDB', collation: 'utf8mb4_unicode_ci', charset: 'utf8mb4', convertData: true, moveTo: 'archive' })).toEqual([
+      'ALTER TABLE `app`.`items` ENGINE=InnoDB, CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',
+      'RENAME TABLE `app`.`items` TO `archive`.`items`'
+    ])
+    expect(pg.bulkAlter(ref, { owner: 'app', moveTo: 'archive' })).toEqual(['ALTER TABLE public.items OWNER TO app', 'ALTER TABLE public.items SET SCHEMA archive'])
+    expect(new FbDialect(50000).bulkAlter()).toEqual([])
+  })
+})
