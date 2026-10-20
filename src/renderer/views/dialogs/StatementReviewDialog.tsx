@@ -14,6 +14,12 @@ const KINDS = 'TRIGGER|FUNCTION|PROCEDURE|TABLE|VIEW|SEQUENCE|GENERATOR|EXCEPTIO
 export function describeStatement(sql: string, isNew: boolean, t: (k: string, o?: Record<string, unknown>) => string): string {
   const s = sql.trim().replace(/\s+/g, ' ')
   const name = (raw: string): string => raw.replace(/\(\)$/, '')
+  // Steps of a SQLite table rebuild.
+  let p = /^PRAGMA foreign_keys = (ON|OFF)/i.exec(s)
+  if (p) return t(p[1].toUpperCase() === 'ON' ? 'review.fkOn' : 'review.fkOff')
+  if (/_ost_fk_check/.test(s)) return t('review.fkCheck')
+  p = /^INSERT INTO (\S+)(?: \([^)]*\))? SELECT\b/i.exec(s)
+  if (p) return t('review.copyingRows', { name: p[1] })
   let m = new RegExp(`^ALTER TABLE \\S+ (ENABLE|DISABLE) TRIGGER (\\S+)`, 'i').exec(s)
   if (m) return t(m[1].toUpperCase() === 'ENABLE' ? 'review.activating' : 'review.deactivating', { kind: 'trigger', name: m[2] })
   m = new RegExp(`^ALTER (${KINDS}) (\\S+)(?: ON \\S+)? RENAME TO (\\S+)`, 'i').exec(s)

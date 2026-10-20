@@ -1,4 +1,4 @@
-import type { CheckDef, ColumnDef, DbObjectRef, ForeignKeyDef, IndexDef, ObjectKind, TableStructure, TriggerDef } from '@shared/model'
+import type { CheckDef, ColumnDef, DbEngine, DbObjectRef, ForeignKeyDef, IndexDef, ObjectKind, TableStructure, TriggerDef } from '@shared/model'
 import type { TemplateContext } from '@domain/ports/database'
 import { BaseDialect, sameColumn } from '../common/baseDialect'
 
@@ -13,6 +13,7 @@ const FK_CHECK = 'temp."_ost_fk_check"'
 
 export class SqliteDialect extends BaseDialect {
   readonly dataTypes = SQLITE_TYPES
+  protected readonly engine: DbEngine = 'sqlite'
 
   constructor(protected readonly version: number) {
     super()
@@ -43,8 +44,13 @@ export class SqliteDialect extends BaseDialect {
 
   columnDefinition(col: ColumnDef, table: TableStructure): string {
     const parts = [this.quoteIdent(col.name)]
-    if (col.fullType.trim()) parts.push(col.fullType.trim())
-    if (this.inlinePrimaryKey(table) === col) parts.push('PRIMARY KEY AUTOINCREMENT')
+    if (col.autoIncrement) {
+      // SQLite only accepts AUTOINCREMENT on a column declared exactly "INTEGER PRIMARY KEY"
+      // (a rowid alias): INTEGER(10) or BIGINT are refused, and lengths mean nothing there anyway.
+      if (this.inlinePrimaryKey(table) !== col) throw new Error(`Auto increment needs "${col.name}" to be the only primary key column`)
+      if (!/INT/i.test(col.dataType || col.fullType)) throw new Error(`Auto increment needs an integer column ("${col.name}" is ${col.fullType || 'untyped'})`)
+      parts.push('INTEGER PRIMARY KEY AUTOINCREMENT')
+    } else if (col.fullType.trim()) parts.push(col.fullType.trim())
     if (!col.nullable) parts.push('NOT NULL')
     if (col.generated) parts.push(`GENERATED ALWAYS AS (${col.generated.expression}) ${col.generated.stored ? 'STORED' : 'VIRTUAL'}`)
     else if (col.defaultValue !== undefined && col.defaultValue !== null && col.defaultValue !== '') parts.push(`DEFAULT ${defaultExpression(col.defaultValue)}`)
@@ -107,7 +113,8 @@ export class SqliteDialect extends BaseDialect {
    * Uses ALTER TABLE where SQLite supports the change (rename table/column, add/drop column, plain
    * indexes); anything else rebuilds the table with SQLite's documented procedure.
    */
-  alterTable(original: TableStructure, target: TableStructure): string[] {
+  alterTable(original: TableStructure, targetTable: TableStructure): string[] {
+    const target = this.prepareTable(targetTable)
     const plan = this.nativePlan(original, target)
     if (plan) return plan
     return this.rebuild(original, target)

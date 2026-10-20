@@ -1,4 +1,4 @@
-import type { BulkTableOperations, ColumnDef, DbObjectRef, IndexDef, ObjectKind, Partitioning, ServerUser, TableStructure, TriggerDef } from '@shared/model'
+import type { BulkTableOperations, ColumnDef, DbEngine, DbObjectRef, IndexDef, ObjectKind, Partitioning, ServerUser, TableStructure, TriggerDef } from '@shared/model'
 import type { TemplateContext } from '@domain/ports/database'
 import { BaseDialect } from '../common/baseDialect'
 
@@ -10,6 +10,7 @@ const MYSQL_TYPES = [
 ]
 
 export class MySqlDialect extends BaseDialect {
+  protected readonly engine: DbEngine = 'mysql'
   readonly dataTypes: string[]
 
   constructor(
@@ -114,7 +115,18 @@ export class MySqlDialect extends BaseDialect {
     return `DROP CHECK ${this.quoteIdent(name)}`
   }
 
-  alterTable(original: TableStructure, target: TableStructure): string[] {
+  /** MySQL allows one AUTO_INCREMENT column, numeric, leading some index (otherwise "Incorrect table definition"). */
+  protected override validateTable(t: TableStructure): void {
+    const auto = t.columns.filter((c) => c.autoIncrement)
+    if (auto.length > 1) throw new Error(`Only one column can auto increment (${auto.map((c) => c.name).join(', ')})`)
+    for (const c of auto) {
+      if (!/INT|FLOAT|DOUBLE|REAL|DEC|NUMERIC/i.test(c.dataType || c.fullType)) throw new Error(`Auto increment needs a numeric column ("${c.name}" is ${c.fullType})`)
+      if (!t.indexes.some((i) => i.columns[0] === c.name)) throw new Error(`Auto increment needs "${c.name}" to be a key: mark it as the primary key`)
+    }
+  }
+
+  alterTable(original: TableStructure, targetTable: TableStructure): string[] {
+    const target = this.prepareTable(targetTable)
     const table = this.qualify(original.ref)
     const specs: string[] = []
     const statements: string[] = []
@@ -341,6 +353,7 @@ export class MySqlDialect extends BaseDialect {
 }
 
 export class MariaDbDialect extends MySqlDialect {
+  protected override readonly engine: DbEngine = 'mariadb'
   protected override generatedNullability = false
 
   protected override buildTypes(): string[] {

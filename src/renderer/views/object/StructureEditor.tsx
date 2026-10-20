@@ -3,12 +3,14 @@ import { useTranslation } from 'react-i18next'
 import { ArrowDown, ArrowUp, Key, Plus, Save, Trash2, Undo2 } from 'lucide-react'
 import type { CheckDef, ColumnDef, DbEngine, FkAction, ForeignKeyDef, IndexDef, IndexType, PartitionMethod, Partitioning, TableStructure } from '@shared/model'
 import { joinType, splitType } from '@domain/sql/columnType'
+import { typeArguments } from '@domain/sql/typeArguments'
 import type { SessionState } from '../../stores/workspaceStore'
 import { useWorkspace } from '../../stores/workspaceStore'
-import { Badge, Button, Checkbox, Field, IconButton, Input, SegmentedTabs, Select, Spinner, cx } from '../../components/ui'
+import { Badge, Button, Checkbox, Field, IconButton, Input, SegmentedTabs, Select, cx } from '../../components/ui'
 import { notify } from '../../stores/toast'
+import { StatementReviewDialog } from '../dialogs/StatementReviewDialog'
 
-type Section = 'columns' | 'indexes' | 'foreignKeys' | 'checks' | 'options' | 'partitions' | 'preview'
+type Section = 'columns' | 'indexes' | 'foreignKeys' | 'checks' | 'options' | 'partitions'
 
 const FK_ACTIONS: FkAction[] = ['NO ACTION', 'RESTRICT', 'CASCADE', 'SET NULL', 'SET DEFAULT']
 
@@ -31,9 +33,9 @@ export function StructureEditor({ session, structure, isNew, onSaved }: { sessio
   const [draft, setDraft] = useState<TableStructure>(() => structuredClone(structure))
   const [section, setSection] = useState<Section>('columns')
   const [selected, setSelected] = useState(0)
-  const [preview, setPreview] = useState<string[]>([])
-  const [previewError, setPreviewError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  /** Statements shown for confirmation before anything runs; `saved` once they ran. */
+  const [review, setReview] = useState<{ statements: string[]; name: string; saved: boolean } | null>(null)
   const [types, setTypes] = useState<string[]>([])
   const [engines, setEngines] = useState<string[]>([])
   const [collations, setCollations] = useState<{ charset: string; collation: string }[]>([])
@@ -49,24 +51,6 @@ export function StructureEditor({ session, structure, isNew, onSaved }: { sessio
   }, [session, isMy])
 
   const dirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(structure) || isNew, [draft, structure, isNew])
-
-  // Regenerate the SQL preview whenever the draft changes.
-  useEffect(() => {
-    if (!dirty) {
-      setPreview([])
-      return
-    }
-    const timer = setTimeout(() => {
-      session.client
-        .call('generateTableDDL', { original: isNew ? null : structure, target: draft })
-        .then((s) => {
-          setPreview(s)
-          setPreviewError(null)
-        })
-        .catch((e) => setPreviewError(String(e.message ?? e)))
-    }, 150)
-    return () => clearTimeout(timer)
-  }, [draft, structure, isNew, dirty, session])
 
   const setCol = (i: number, patch: Partial<ColumnDef>): void =>
     setDraft((d) => ({ ...d, columns: d.columns.map((c, j) => (j === i ? { ...c, ...patch } : c)) }))
@@ -85,21 +69,33 @@ export function StructureEditor({ session, structure, isNew, onSaved }: { sessio
     setSelected(j)
   }
 
+  /** Builds the statements for the current draft and shows them for review; nothing runs yet. */
   const save = async (): Promise<void> => {
     if (!draft.ref.name.trim()) return notify.error(t('structure.tableName'))
-    if (!preview.length) return
     setSaving(true)
     try {
-      // SQLite rebuilds tables in several steps (copy, drop, rename): all or nothing.
-      await session.client.call('executeStatements', { statements: preview, database: draft.ref.database, transactional: session.info.engine === 'sqlite' })
-      notify.success(t('structure.saved'))
-      void useWorkspace.getState().loadObjects(session.id, draft.ref.database, draft.ref.schema, true)
-      onSaved(draft.ref.name)
+      const statements = await session.client.call('generateTableDDL', { original: isNew ? null : structure, target: draft })
+      if (!statements.length) return notify.info(t('structure.noChanges'))
+      setReview({ statements, name: draft.ref.name, saved: false })
     } catch (err) {
       notify.error(err)
     } finally {
       setSaving(false)
     }
+  }
+
+  const execute = async (statements: string[]): Promise<void> => {
+    // SQLite rebuilds tables in several steps (copy, drop, rename): all or nothing.
+    await session.client.call('executeStatements', { statements, database: draft.ref.database, transactional: session.info.engine === 'sqlite' })
+    setReview((r) => r && { ...r, saved: true })
+    void useWorkspace.getState().loadObjects(session.id, draft.ref.database, draft.ref.schema, true)
+  }
+
+  // The tab reloads the structure once saved, which unmounts this editor: wait until the dialog closes.
+  const closeReview = (): void => {
+    const done = review?.saved ? review.name : null
+    setReview(null)
+    if (done) onSaved(done)
   }
 
   const pk = draft.indexes.find((i) => i.type === 'PRIMARY')
@@ -117,8 +113,7 @@ export function StructureEditor({ session, structure, isNew, onSaved }: { sessio
     { value: 'foreignKeys' as const, label: `${t('structure.foreignKeys')} (${draft.foreignKeys.length})` },
     { value: 'checks' as const, label: `${t('structure.checks')} (${draft.checks.length})` },
     { value: 'options' as const, label: t('structure.options') },
-    ...(session.info.capabilities.includes('partitions') ? [{ value: 'partitions' as const, label: `${t('partitions.title')}${draft.options.partitioning ? ` (${draft.options.partitioning.partitions.length || draft.options.partitioning.count || 0})` : ''}` }] : []),
-    { value: 'preview' as const, label: t('structure.preview') }
+    ...(session.info.capabilities.includes('partitions') ? [{ value: 'partitions' as const, label: `${t('partitions.title')}${draft.options.partitioning ? ` (${draft.options.partitioning.partitions.length || draft.options.partitioning.count || 0})` : ''}` }] : [])
   ]
 
   return (
@@ -139,7 +134,7 @@ export function StructureEditor({ session, structure, isNew, onSaved }: { sessio
           <Button icon={<Undo2 size={14} />} disabled={!dirty || isNew} onClick={() => setDraft(structuredClone(structure))}>
             {t('common.discard')}
           </Button>
-          <Button variant="primary" icon={<Save size={14} />} loading={saving} disabled={!dirty || !preview.length} onClick={() => void save()}>
+          <Button variant="primary" icon={<Save size={14} />} loading={saving} disabled={!dirty} onClick={() => void save()}>
             {t('common.save')}
           </Button>
         </div>
@@ -203,7 +198,19 @@ export function StructureEditor({ session, structure, isNew, onSaved }: { sessio
                         <TypeSelect types={types} base={ty.base} onChange={(base, args) => setColType(i, base, args, ty.suffix)} disabled={!!c.generated && engine === 'firebird'} />
                       </td>
                       <td>
-                        <Input className="h-7 font-mono text-xs" value={ty.args} onChange={(e) => setColType(i, ty.base, e.target.value, ty.suffix)} />
+                        {(() => {
+                          // Types without arguments (INTEGER, DATE…) and SQLite auto increment keys take no length.
+                          const rule = engine === 'sqlite' && c.autoIncrement ? 'none' : typeArguments(engine, ty.base)
+                          return (
+                            <Input
+                              className="h-7 font-mono text-xs"
+                              value={rule === 'none' ? '' : ty.args}
+                              disabled={rule === 'none'}
+                              placeholder={rule === 'required' ? t('structure.lengthRequired') : undefined}
+                              onChange={(e) => setColType(i, ty.base, e.target.value, ty.suffix)}
+                            />
+                          )
+                        })()}
                       </td>
                       {isMy && (
                         <td className="text-center">
@@ -446,18 +453,17 @@ export function StructureEditor({ session, structure, isNew, onSaved }: { sessio
             onChange={(partitioning) => setDraft((d) => ({ ...d, options: { ...d.options, partitioning } }))}
           />
         )}
-
-        {section === 'preview' && (
-          <pre className="selectable h-full overflow-auto p-4 font-mono text-xs leading-relaxed">
-            {previewError ? <span className="text-danger">{previewError}</span> : preview.length ? preview.map((s) => s + ';').join('\n\n') : t('structure.noChanges')}
-          </pre>
-        )}
       </div>
-      {section !== 'preview' && dirty && (
-        <div className="max-h-32 shrink-0 overflow-auto border-t border-border bg-sunken px-3 py-2 font-mono text-[11px] text-muted">
-          {previewError ? <span className="text-danger">{previewError}</span> : preview.length ? preview.map((s, i) => <div key={i} className="whitespace-pre-wrap">{s};</div>) : <Spinner />}
-        </div>
-      )}
+
+      <StatementReviewDialog
+        open={!!review}
+        title={t('review.title', { name: review?.name ?? '' })}
+        statements={review?.statements ?? []}
+        engine={engine}
+        isNew={isNew}
+        onExecute={() => execute(review!.statements)}
+        onClose={closeReview}
+      />
     </div>
   )
 }

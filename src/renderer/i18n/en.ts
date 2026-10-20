@@ -62,7 +62,8 @@ export const en = {
     title: 'Review changes to {{name}}', statementList: 'Statement list', statement: 'Statement', operation: 'Operation', result: 'Result',
     pending: 'Not run yet', successful: 'Successful', failed: 'Failed', execute: 'Execute', retry: 'Try again', copy: 'Copy all statements',
     creating: 'Creating {{kind}} {{name}}', altering: 'Altering {{kind}} {{name}}', dropping: 'Dropping {{kind}} {{name}}',
-    renaming: 'Renaming {{kind}} {{name}} to {{to}}', activating: 'Activating {{kind}} {{name}}', deactivating: 'Deactivating {{kind}} {{name}}'
+    renaming: 'Renaming {{kind}} {{name}} to {{to}}', activating: 'Activating {{kind}} {{name}}', deactivating: 'Deactivating {{kind}} {{name}}',
+    copyingRows: 'Copying rows into {{name}}', fkOff: 'Pausing foreign key enforcement', fkOn: 'Resuming foreign key enforcement', fkCheck: 'Checking foreign keys'
   },
   trigger: {
     name: 'Name', forTable: 'For table', chooseTable: 'Choose a table…', position: 'Position', positionReadOnly: 'MySQL orders triggers by creation; use FOLLOWS / PRECEDES in SQL to change it.',
@@ -104,8 +105,8 @@ export const en = {
     addIndex: 'Add index', addForeignKey: 'Add foreign key', addCheck: 'Add check', indexType: 'Index type', indexColumns: 'Columns',
     expression: 'Expression', condition: 'Condition (WHERE)', refTable: 'Reference table', refColumns: 'Reference columns', onUpdate: 'On UPDATE',
     onDelete: 'On DELETE', engine: 'Engine', autoIncValue: 'Auto increment value', rowFormat: 'Row format', tableName: 'Name',
-    tableComment: 'Comment', systemVersioning: 'System versioning', tablespace: 'Tablespace', withoutRowid: 'WITHOUT ROWID (clustered on the primary key)', strict: 'STRICT (enforce column types)', preview: 'SQL preview', noChanges: 'No changes',
-    saved: 'Table saved', newTable: 'New table', primary: 'Primary key', unique: 'Unique', index: 'Index', fulltext: 'Full-text', spatial: 'Spatial',
+    tableComment: 'Comment', systemVersioning: 'System versioning', tablespace: 'Tablespace', withoutRowid: 'WITHOUT ROWID (clustered on the primary key)', strict: 'STRICT (enforce column types)', preview: 'SQL preview', noChanges: 'No changes', lengthRequired: 'required',
+    newTable: 'New table', primary: 'Primary key', unique: 'Unique', index: 'Index', fulltext: 'Full-text', spatial: 'Spatial',
     descending: 'Descending'
   },
   routine: { save: 'Save', saved: 'Saved', run: 'Run' },

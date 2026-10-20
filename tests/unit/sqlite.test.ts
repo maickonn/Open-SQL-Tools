@@ -129,6 +129,19 @@ describe('SQLite dialect', () => {
     expect(d.selectTableData({ ref: { name: 'items', kind: 'table' }, offset: 10, limit: 5 })).toBe('SELECT * FROM "items" LIMIT 5 OFFSET 10')
   })
 
+  it('declares auto increment keys exactly as INTEGER PRIMARY KEY', () => {
+    // The table editor may send INTEGER(10) or INT: SQLite refuses AUTOINCREMENT on anything but INTEGER.
+    const t = table()
+    t.columns[0] = { ...t.columns[0], dataType: 'INTEGER', fullType: 'INTEGER(10)', nullable: false }
+    expect(d.createTable(t)[0]).toContain('"id" INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,')
+    t.columns[0] = { ...t.columns[0], dataType: 'INT', fullType: 'INT' }
+    expect(d.createTable(t)[0]).toContain('"id" INTEGER PRIMARY KEY AUTOINCREMENT')
+    expect(() => d.createTable(table({ indexes: [] }))).toThrow(/only primary key column/)
+    const text = table()
+    text.columns[0] = { ...text.columns[0], dataType: 'TEXT', fullType: 'TEXT' }
+    expect(() => d.createTable(text)).toThrow(/integer column/)
+  })
+
   it('wraps non-literal defaults in parentheses', () => {
     const t = table()
     t.columns.push({ name: 'at', dataType: 'TEXT', fullType: 'TEXT', nullable: true, defaultValue: "datetime('now')" })

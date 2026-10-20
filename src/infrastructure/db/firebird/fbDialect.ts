@@ -1,5 +1,6 @@
-import type { ColumnDef, DbObjectRef, IndexDef, ObjectKind, ServerUser, TableDataRequest, TableStructure, TriggerDef } from '@shared/model'
+import type { ColumnDef, DbEngine, DbObjectRef, IndexDef, ObjectKind, ServerUser, TableDataRequest, TableStructure, TriggerDef } from '@shared/model'
 import type { TemplateContext } from '@domain/ports/database'
+import { splitType } from '@domain/sql/columnType'
 import { BaseDialect } from '../common/baseDialect'
 
 const FB_TYPES_25 = [
@@ -11,6 +12,7 @@ const encode = (major: number, minor = 0): number => major * 10000 + minor * 100
 
 export class FbDialect extends BaseDialect {
   readonly dataTypes: string[]
+  protected readonly engine: DbEngine = 'firebird'
 
   constructor(protected readonly version: number) {
     super()
@@ -94,7 +96,18 @@ export class FbDialect extends BaseDialect {
     return [...super.createTable(t), ...this.comments(t)]
   }
 
-  alterTable(original: TableStructure, target: TableStructure): string[] {
+  /** Identity columns must be exact integers (Firebird answers "Unknow error" otherwise). */
+  protected override validateTable(t: TableStructure): void {
+    for (const c of t.columns) {
+      if (!c.identity || this.version < encode(3) || c.domain) continue
+      const { base, args } = splitType(c.fullType)
+      const exact = /^(SMALLINT|INTEGER|INT|BIGINT|INT128)$/i.test(base) || (/^(NUMERIC|DECIMAL)$/i.test(base) && !/,\s*[1-9]/.test(args))
+      if (!exact) throw new Error(`Identity needs an integer column ("${c.name}" is ${c.fullType})`)
+    }
+  }
+
+  alterTable(original: TableStructure, targetTable: TableStructure): string[] {
+    const target = this.prepareTable(targetTable)
     const ref = original.ref
     const table = this.qualify(ref)
     const out: string[] = []

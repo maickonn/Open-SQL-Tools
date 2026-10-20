@@ -1,5 +1,6 @@
-import type { BulkTableOperations, ColumnDef, DbObjectRef, IndexDef, ObjectKind, Partitioning, ServerUser, TableStructure, TriggerDef } from '@shared/model'
+import type { BulkTableOperations, ColumnDef, DbEngine, DbObjectRef, IndexDef, ObjectKind, Partitioning, ServerUser, TableStructure, TriggerDef } from '@shared/model'
 import type { TemplateContext } from '@domain/ports/database'
+import { splitType } from '@domain/sql/columnType'
 import { BaseDialect, toHex } from '../common/baseDialect'
 
 /** Keywords that must be quoted when used as identifiers (reserved in PostgreSQL). */
@@ -24,6 +25,7 @@ const PG_TYPES = [
 
 export class PgDialect extends BaseDialect {
   readonly dataTypes = PG_TYPES
+  protected readonly engine: DbEngine = 'postgres'
 
   constructor(protected readonly version: number) {
     super()
@@ -160,7 +162,17 @@ export class PgDialect extends BaseDialect {
     return this.createIndex(ref, idx)
   }
 
-  alterTable(original: TableStructure, target: TableStructure): string[] {
+  /** "identity column type must be smallint, integer, or bigint". */
+  protected override validateTable(t: TableStructure): void {
+    for (const c of t.columns) {
+      if (c.identity && !/^(smallint|integer|int|bigint|int2|int4|int8)$/i.test(splitType(c.fullType).base)) {
+        throw new Error(`Identity needs a smallint, integer or bigint column ("${c.name}" is ${c.fullType})`)
+      }
+    }
+  }
+
+  alterTable(original: TableStructure, targetTable: TableStructure): string[] {
+    const target = this.prepareTable(targetTable)
     const ref = original.ref
     const table = this.qualify(ref)
     const out: string[] = []

@@ -3,6 +3,7 @@ import type {
   CellValue,
   CheckDef,
   ColumnDef,
+  DbEngine,
   DbObjectRef,
   ForeignKeyDef,
   IndexDef,
@@ -14,6 +15,8 @@ import type {
   TriggerDef
 } from '@shared/model'
 import type { SqlDialect, TemplateContext } from '@domain/ports/database'
+import { joinType, splitType } from '@domain/sql/columnType'
+import { typeArguments } from '@domain/sql/typeArguments'
 import { toHex } from '@shared/bytes'
 
 export type RawSql = { sql: string }
@@ -26,6 +29,8 @@ export { toHex }
 /** Shared SQL generation; engines override what differs. */
 export abstract class BaseDialect implements SqlDialect {
   abstract readonly dataTypes: string[]
+  /** Engine whose type and key rules apply to generated DDL. */
+  protected abstract readonly engine: DbEngine
   abstract quoteIdent(name: string): string
   abstract qualify(ref: DbObjectRef): string
   abstract columnDefinition(col: ColumnDef, table: TableStructure): string
@@ -198,7 +203,30 @@ export abstract class BaseDialect implements SqlDialect {
     return `CREATE ${unique}INDEX ${this.quoteIdent(idx.name)} ON ${this.qualify(ref)} (${this.indexColumns(idx)})`
   }
 
-  createTable(t: TableStructure): string[] {
+  /**
+   * Fixes what the table editor can produce but the engine rejects (arguments on types that take
+   * none, such as INTEGER(10) or DATE(3)) and refuses what cannot be fixed with a clear message
+   * before anything runs. Dialects call it first in createTable and alterTable.
+   */
+  protected prepareTable(t: TableStructure): TableStructure {
+    const columns = t.columns.map((c) => {
+      if (c.domain || !c.fullType.trim()) return c
+      const { base, args, suffix } = splitType(c.fullType)
+      const rule = typeArguments(this.engine, base)
+      if (rule === 'none' && args) return { ...c, fullType: joinType(base, '', suffix), length: undefined, precision: undefined, scale: undefined }
+      if (rule === 'required' && !args) throw new Error(`${base.toUpperCase()} needs a length: set Length/Set for column "${c.name}"`)
+      return c
+    })
+    const prepared = { ...t, columns }
+    this.validateTable(prepared)
+    return prepared
+  }
+
+  /** Engine rules the generated DDL must respect (auto increment / identity columns…). */
+  protected validateTable(_t: TableStructure): void {}
+
+  createTable(table: TableStructure): string[] {
+    const t = this.prepareTable(table)
     const elements = [...t.columns.map((c) => '  ' + this.columnDefinition(c, t)), ...this.tableConstraints(t).map((c) => '  ' + c)]
     return [`CREATE TABLE ${this.qualify(t.ref)} (\n${elements.join(',\n')}\n)${this.tableOptionsClause(t)}`, ...this.createIndexStatements(t)]
   }

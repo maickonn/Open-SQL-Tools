@@ -94,6 +94,30 @@ describe.skipIf(!enabled)('sqlite', () => {
     await svc.disconnect()
   })
 
+  it('creates a table from the editor with an auto increment key typed INTEGER(10)', async () => {
+    const svc = await open(join(dir, 'create.db'))
+    const statements = svc.generateTableDDL({
+      original: null,
+      target: {
+        ref: { name: 'Tabela_de_testes', kind: 'table' },
+        columns: [
+          { name: 'id', dataType: 'INTEGER', fullType: 'INTEGER(10)', nullable: false, autoIncrement: true },
+          { name: 'test', dataType: 'VARCHAR', fullType: 'VARCHAR(100)', nullable: true }
+        ],
+        indexes: [{ name: 'PRIMARY', type: 'PRIMARY', columns: ['id'], constraint: true }],
+        foreignKeys: [],
+        checks: [],
+        options: {}
+      }
+    })
+    await svc.executeStatements({ statements, transactional: true })
+    await run(svc, "INSERT INTO Tabela_de_testes (test) VALUES ('a'), ('b')")
+    expect(await rows(svc, 'SELECT id, test FROM Tabela_de_testes ORDER BY id')).toEqual([[1, 'a'], [2, 'b']])
+    const s = await svc.getTableStructure({ ref: { name: 'Tabela_de_testes', kind: 'table' } })
+    expect(s.columns[0]).toMatchObject({ fullType: 'INTEGER', autoIncrement: true })
+    await svc.disconnect()
+  })
+
   it('uses ALTER TABLE for supported changes', async () => {
     const svc = await open(join(dir, 'native.db'))
     await run(svc, 'CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT, old TEXT)')

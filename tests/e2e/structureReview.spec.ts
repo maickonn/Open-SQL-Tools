@@ -1,0 +1,87 @@
+// Table structure changes are shown in the review dialog and run only after Execute (SQLite, no container).
+import { test, expect, _electron as electron } from '@playwright/test'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+test('structure changes go through the review dialog', async () => {
+  const app = await electron.launch({ args: ['.'], env: { ...process.env, OST_USER_DATA: mkdtempSync(join(tmpdir(), 'ost-sr-')) } })
+  const page = await app.firstWindow()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByRole('button', { name: /New session/ }).click()
+  await page.getByRole('menuitem', { name: 'SQLite' }).click()
+  await dialog.locator('label', { hasText: /^Database file/ }).locator('input').first().fill(join(mkdtempSync(join(tmpdir(), 'ost-sr-db-')), 'a.db'))
+  await dialog.getByRole('checkbox', { name: /Create the file/ }).click()
+  await dialog.getByRole('button', { name: /^Open$/ }).click()
+  await expect(page.getByRole('dialog')).toBeHidden({ timeout: 30_000 })
+  await page.keyboard.press('Control+T')
+  await page.waitForSelector('.monaco-editor')
+  await page.locator('.monaco-editor').first().click()
+  await page.keyboard.type("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT); INSERT INTO t (name) VALUES ('a');")
+  await page.keyboard.press('Control+Enter')
+  await page.getByRole('treeitem', { name: /^t( |$)/ }).click()
+  await page.getByRole('button', { name: /^Structure$/ }).click()
+  await expect(page.getByRole('button', { name: /SQL preview/ })).toHaveCount(0)
+
+  await page.getByRole('button', { name: /Add column/ }).click()
+  const rows = page.locator('table tbody tr')
+  await rows.nth(1).locator('td').nth(2).locator('input').fill('qty')
+  await page.getByRole('button', { name: 'Save' }).click()
+  const review = page.getByRole('dialog')
+  await expect(review.getByRole('cell', { name: 'Creating table "_ost_new_t"' })).toBeVisible({ timeout: 10_000 })
+  await review.getByRole('cell', { name: 'Creating table "_ost_new_t"' }).click()
+  await expect(review.getByTestId('review-statement')).toContainText('"qty"')
+  await expect(review.getByRole('cell', { name: /^Copying rows into/ })).toBeVisible()
+  await expect(review.getByRole('cell', { name: 'Pausing foreign key enforcement' })).toBeVisible()
+  await page.screenshot({ path: join(process.env.OST_SHOTS ?? tmpdir(), 'structure-review.png') })
+  // Nothing runs before Execute.
+  await review.getByRole('button', { name: 'Cancel' }).click()
+  await page.getByRole('button', { name: 'Save' }).click()
+  await review.getByRole('button', { name: 'Execute' }).click()
+  await expect(review.getByText('Successful').first()).toBeVisible({ timeout: 15_000 })
+  await review.getByRole('button', { name: 'Close' }).last().click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(page.locator('table tbody tr')).toHaveCount(3, { timeout: 10_000 })
+  await expect(page.getByText('Unsaved changes')).toHaveCount(0)
+  await expect(page.locator('[data-sonner-toast][data-type="error"]')).toHaveCount(0)
+  await app.close()
+})
+
+test('creates a SQLite table with an auto increment key from the editor', async () => {
+  const app = await electron.launch({ args: ['.'], env: { ...process.env, OST_USER_DATA: mkdtempSync(join(tmpdir(), 'ost-sr-')) } })
+  const page = await app.firstWindow()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByRole('button', { name: /New session/ }).click()
+  await page.getByRole('menuitem', { name: 'SQLite' }).click()
+  await dialog.locator('label', { hasText: /^Database file/ }).locator('input').first().fill(join(mkdtempSync(join(tmpdir(), 'ost-sr-db-')), 'new.db'))
+  await dialog.getByRole('checkbox', { name: /Create the file/ }).click()
+  await dialog.getByRole('button', { name: /^Open$/ }).click()
+  await expect(page.getByRole('dialog')).toBeHidden({ timeout: 30_000 })
+
+  // An empty file has no Tables group yet: the session menu creates the first table.
+  await page.getByRole('treeitem').first().click({ button: 'right' })
+  await page.getByRole('menuitem', { name: /^New$/ }).click()
+  await page.getByRole('menuitem', { name: /^Tables$/ }).click()
+  await page.locator('label', { hasText: /^Name$/ }).locator('input').first().fill('Tabela_de_testes')
+  const rows = page.locator('table tbody tr')
+  const cell = (r: number, c: number) => rows.nth(r).locator('td').nth(c)
+  if ((await rows.count()) === 0) await page.getByRole('button', { name: /Add column/ }).click()
+  await cell(0, 2).locator('input').fill('id')
+  await cell(0, 4).locator('input').fill('10')
+  await cell(0, 1).locator('button').click() // primary key
+  await cell(0, 5).getByRole('checkbox').click() // allow NULL off
+  await cell(0, 7).getByRole('checkbox').click() // auto increment
+  await page.getByRole('button', { name: /Add column/ }).click()
+  await cell(1, 2).locator('input').fill('test')
+  await cell(1, 3).locator('select').selectOption('VARCHAR')
+  await cell(1, 4).locator('input').fill('100')
+  await page.getByRole('button', { name: 'Save' }).click()
+  const review = page.getByRole('dialog')
+  await expect(review.getByTestId('review-statement')).toContainText('"id" INTEGER PRIMARY KEY AUTOINCREMENT')
+  await review.getByRole('button', { name: 'Execute' }).click()
+  await expect(review.getByText('Successful').first()).toBeVisible({ timeout: 15_000 })
+  await page.screenshot({ path: join(process.env.OST_SHOTS ?? tmpdir(), 'structure-create.png') })
+  await review.getByRole('button', { name: 'Close' }).last().click()
+  await expect(page.getByRole('treeitem', { name: /^Tabela_de_testes( |$)/ })).toBeVisible({ timeout: 15_000 })
+  await app.close()
+})
