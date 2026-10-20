@@ -23,7 +23,7 @@ npm run test:db -- mysql97 postgres18          # up only these containers, run i
 npm run test:e2e:db -- postgres18 firebird5    # build + Playwright Electron flow against only these containers
 DB_TARGETS=sqlite npx vitest run --project integration                       # SQLite integration tests (temp files, no Docker)
 OST_E2E_TARGETS=sqlite npx playwright test tests/e2e/engines.spec.ts         # SQLite E2E after npm run build
-npm run dist                # electron-builder installers
+npm run package             # electron-builder installers
 ```
 
 - Integration tests (`tests/integration`) select servers through `DB_TARGETS` (comma-separated compose service names, see `tests/integration/targets.ts`); tests for servers that aren't reachable are skipped. The `sqlite` target needs no container and is always available; `sqlite.test.ts` covers the SQLite-only behaviour (file options, table rebuilds, dumps). `PERF=1` enables the benchmarks: `perf.test.ts` (1M-row streaming) and `sshPerf.test.ts` (object-tree browsing through the `sshd` tunnel with simulated latency, `PERF_RTT_MS`, default 60; prints timings in round trips). `connectivity.test.ts` needs the `tools` profile services (`sshd`, `postgres18ssl`).

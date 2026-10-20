@@ -71,7 +71,7 @@ Other scripts:
 | `npm run test:e2e:db -- postgres18 firebird5` | Builds the app and runs the Playwright flow (connect, create, edit, copy, bulk/partition editors) against only those containers |
 | `npm run build && OST_E2E_TARGETS=sqlite npx playwright test tests/e2e/engines.spec.ts` | The same flow for SQLite (no container) |
 | `npm run test:e2e` | Builds and drives the real Electron app with Playwright (set `OST_E2E_MYSQL_PORT=33097` with `mysql97` running for the connected scenario) |
-| `npm run dist` | Builds installers with electron-builder |
+| `npm run package` | Builds installers with electron-builder |
 
 ### Test databases
 
