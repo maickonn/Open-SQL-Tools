@@ -7,7 +7,7 @@
 #
 # Credentials: MySQL/MariaDB root/test, PostgreSQL postgres/test, Firebird SYSDBA/masterkey.
 # Each server has a `testdb` database (Firebird: /var/lib/firebird/data/testdb.fdb).
-name: open-sql-tool
+name: open-sql-tools
 
 x-mysql: &mysql
   environment:
@@ -69,7 +69,7 @@ services:
   firebird25:
     <<: *firebird
     build: ./firebird25
-    image: open-sql-tool/firebird:2.5.9
+    image: open-sql-tools/firebird:2.5.9
     platform: linux/amd64
     ports: ['30250:3050']
     profiles: [all, firebird]
@@ -205,7 +205,7 @@ services:
   # SSH bastion: tunnel to other services by their service name (e.g. mysql97:3306).
   sshd:
     build: ./sshd
-    image: open-sql-tool/sshd:test
+    image: open-sql-tools/sshd:test
     ports: ['2222:22']
     healthcheck:
       test: ['CMD-SHELL', "nc -z 127.0.0.1 22"]

@@ -1,4 +1,4 @@
-appId: dev.opensqltool.app
+appId: dev.opensqltools.app
 productName: Open SQL Tools
 directories:
   output: release

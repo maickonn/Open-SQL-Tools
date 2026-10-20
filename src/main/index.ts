@@ -12,19 +12,18 @@ import { createMainWindow } from './window'
 
 // Tests run with an isolated profile directory.
 if (process.env.OST_USER_DATA) app.setPath('userData', process.env.OST_USER_DATA)
-// Keep the profile directory from before the rename to Open SQL Tools (settings, connections, history).
-else app.setPath('userData', join(app.getPath('appData'), 'Open SQL Tool'))
+else app.setPath('userData', join(app.getPath('appData'), 'Open SQL Tools'))
 
 // One instance: a second launch focuses the existing window.
 if (!process.env.OST_USER_DATA && !app.requestSingleInstanceLock()) app.quit()
 
-app.setAppUserModelId('dev.opensqltool.app')
+app.setAppUserModelId('dev.opensqltools.app')
 
 let mainWindow: BrowserWindow | null = null
 let sessions: SessionManager | null = null
 
 function bootstrap(): void {
-  const store = new SqliteStore(join(app.getPath('userData'), 'open-sql-tool.db'))
+  const store = new SqliteStore(join(app.getPath('userData'), 'open-sql-tools.db'))
   const settings = settingsRepository(store)
   const secrets = new SafeStorageSecretStore(store)
   sessions = new SessionManager((sessionId, reason) => broadcast('session:closed', { sessionId, reason }))
