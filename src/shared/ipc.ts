@@ -9,7 +9,8 @@ import type {
   ProgressInfo,
   QueryHistoryEntry,
   ServerInfo,
-  Snippet
+  Snippet,
+  UpdateState
 } from './model'
 
 export interface OpenSessionResult {
@@ -86,6 +87,12 @@ export interface IpcInvokeMap {
 
   'app:info': { args: []; result: { version: string; electron: string; chrome: string; userData: string } }
   'app:setNativeTheme': { args: [theme: 'dark' | 'light' | 'system']; result: void }
+  /* Startup update splash */
+  'update:getState': { args: []; result: UpdateState }
+  'update:download': { args: []; result: void }
+  'update:cancel': { args: []; result: void }
+  'update:skip': { args: []; result: void }
+  'update:install': { args: []; result: void }
   /** Runs an edit command on the focused field (keeps the native undo stack and input events). */
   'edit:command': { args: [command: EditCommand]; result: void }
   'edit:canPaste': { args: []; result: boolean }
@@ -99,6 +106,7 @@ export interface IpcEventMap {
   'session:closed': { sessionId: string; reason?: string }
   'progress': ProgressInfo
   'menu:command': { command: string }
+  'update:state': UpdateState
   /** The agent asks to open SQL in a new editor tab. */
   'editor:open': { sql: string; sessionId?: string }
 }

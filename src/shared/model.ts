@@ -538,6 +538,8 @@ export interface AppSettings {
   autocommit: boolean
   confirmDangerousQueries: boolean
   restoreTabs: boolean
+  /** Look for a new release on startup (Windows installs only). */
+  checkForUpdates: boolean
   ai: {
     defaultProvider: AiProviderId
     /** Model last picked in the chat; new conversations start with it. */
@@ -560,6 +562,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autocommit: true,
   confirmDangerousQueries: true,
   restoreTabs: true,
+  checkForUpdates: true,
   ai: {
     defaultProvider: 'anthropic',
     effort: 'medium',
@@ -567,6 +570,17 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   shortcuts: {}
 }
+
+/** Public repository; releases (and the update feed) live under it. */
+export const REPOSITORY_URL = 'https://github.com/maickonn/Open-SQL-Tools'
+
+/** What the startup update splash shows; `current` is the running version. */
+export type UpdateState =
+  | { phase: 'checking'; current: string }
+  | { phase: 'available'; current: string; version: string; notes: string[] }
+  | { phase: 'downloading'; current: string; version: string; percent: number; transferred: number; total: number; bytesPerSecond: number }
+  | { phase: 'ready'; current: string; version: string }
+  | { phase: 'failed'; current: string }
 
 export interface QueryHistoryEntry {
   id: number

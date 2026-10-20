@@ -4,11 +4,15 @@ import { SqliteStore, historyRepository, settingsRepository, snippetRepository }
 import { SafeStorageSecretStore } from '@infrastructure/security/safeStorageSecretStore'
 import { ConnectionService } from '@application/connections/connectionService'
 import { AgentService } from '@application/chat/agentService'
+import { UpdateService } from '@application/update/updateService'
+import { ElectronUpdateSource } from '@infrastructure/update/electronUpdateSource'
+import { PreviewUpdateSource } from '@infrastructure/update/previewUpdateSource'
+import type { AppSettings } from '@shared/model'
 import { SessionManager } from './sessions/sessionManager'
 import { ProviderRegistry } from './providers'
 import { createAgentGateway } from './agentGateway'
 import { broadcast, registerIpc } from './ipc'
-import { createMainWindow } from './window'
+import { createMainWindow, createSplashWindow } from './window'
 
 // Tests run with an isolated profile directory.
 if (process.env.OST_USER_DATA) app.setPath('userData', process.env.OST_USER_DATA)
@@ -22,7 +26,22 @@ app.setAppUserModelId('dev.opensqltools.app')
 let mainWindow: BrowserWindow | null = null
 let sessions: SessionManager | null = null
 
-function bootstrap(): void {
+/**
+ * Installed Windows builds check GitHub for a new release behind a splash on startup.
+ * OST_SPLASH_PREVIEW (update|offline|latest) shows the splash with fake releases in dev.
+ */
+function createUpdates(settings: AppSettings): UpdateService | null {
+  const preview = process.env.OST_SPLASH_PREVIEW
+  const enabled = process.platform === 'win32' && app.isPackaged && settings.checkForUpdates && !process.env.OST_USER_DATA
+  if (!preview && !enabled) return null
+  return new UpdateService({
+    source: preview ? new PreviewUpdateSource(preview, () => app.quit()) : new ElectronUpdateSource(),
+    currentVersion: app.getVersion(),
+    emit: (state) => broadcast('update:state', state)
+  })
+}
+
+async function bootstrap(): Promise<void> {
   const store = new SqliteStore(join(app.getPath('userData'), 'open-sql-tools.db'))
   const settings = settingsRepository(store)
   const secrets = new SafeStorageSecretStore(store)
@@ -41,12 +60,26 @@ function bootstrap(): void {
     emit: (event) => broadcast('chat:event', event)
   })
 
-  registerIpc({ store, settings, history: historyRepository(store), snippets: snippetRepository(store), secrets, connections, sessions, agent, providers })
+  const updates = createUpdates(settings.get())
+  registerIpc({ store, settings, history: historyRepository(store), snippets: snippetRepository(store), secrets, connections, sessions, agent, providers, updates })
 
   nativeTheme.themeSource = settings.get().theme
   // The renderer draws its own menu bar in the title bar area.
   Menu.setApplicationMenu(process.platform === 'darwin' ? Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }, { role: 'windowMenu' }]) : null)
 
+  // will-quit fires after every window has closed (and saved its bounds).
+  app.on('will-quit', () => store.close())
+
+  if (updates) {
+    const splash = createSplashWindow()
+    // "Restart now" quits the app and runs the installer.
+    if ((await updates.run()) === 'install') return
+    openMainWindow(settings)
+    splash.destroy()
+  } else openMainWindow(settings)
+}
+
+function openMainWindow(settings: ReturnType<typeof settingsRepository>): void {
   const bounds = settings.getState('window.bounds') as Parameters<typeof createMainWindow>[0]
   mainWindow = createMainWindow(bounds)
   const persistBounds = (): void => {
@@ -57,8 +90,6 @@ function bootstrap(): void {
   mainWindow.on('closed', () => {
     mainWindow = null
   })
-  // will-quit fires after every window has closed (and saved its bounds).
-  app.on('will-quit', () => store.close())
 }
 
 app.on('second-instance', () => {
@@ -68,7 +99,7 @@ app.on('second-instance', () => {
   }
 })
 
-app.whenReady().then(bootstrap)
+void app.whenReady().then(bootstrap)
 
 app.on('window-all-closed', async () => {
   await sessions?.closeAll()

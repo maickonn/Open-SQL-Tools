@@ -27,6 +27,7 @@ npm run package             # electron-builder installers
 ```
 
 - Integration tests (`tests/integration`) select servers through `DB_TARGETS` (comma-separated compose service names, see `tests/integration/targets.ts`); tests for servers that aren't reachable are skipped. The `sqlite` target needs no container and is always available; `sqlite.test.ts` covers the SQLite-only behaviour (file options, table rebuilds, dumps). `PERF=1` enables the benchmarks: `perf.test.ts` (1M-row streaming) and `sshPerf.test.ts` (object-tree browsing through the `sshd` tunnel with simulated latency, `PERF_RTT_MS`, default 60; prints timings in round trips). `connectivity.test.ts` needs the `tools` profile services (`sshd`, `postgres18ssl`).
+- CI (`.github/workflows/ci.yml`) runs one job per compose service (each starts only its own container) and the Electron E2E under `xvfb-run`; `release.yml` runs on `v*` tags, requires the tag to equal `v` + the `package.json` version (bump with `npm version`), and uploads the Windows installer plus `latest.yml` to a draft release that is published by hand.
 - E2E (`tests/e2e`) uses Playwright `_electron` against `out/`, so always build first. `OST_E2E_TARGETS` selects engines for `engines.spec.ts`; `OST_USER_DATA` gives the app an isolated profile directory.
 - Service names, ports and credentials are in `docker/compose.yml` and the README (MySQL/MariaDB `root`/`test`, PostgreSQL `postgres`/`test`, Firebird `SYSDBA`/`masterkey`, database `testdb`). Firebird 2.5 is a custom image built from the official tarball (`docker/firebird25`).
 
@@ -133,6 +134,10 @@ Driver quirks the code depends on:
 ### Renderer details
 
 Heavy pieces (Monaco, chat, tool dialogs) are lazy-loaded. Monaco is bundled locally (`renderer/components/editor/monaco.ts`), not from a CDN. Dialogs are opened through `uiStore.openDialog({ kind })` and rendered lazily in `App.tsx`. Use the in-app `confirmDialog` rather than `window.confirm`. Keyboard shortcuts come from the registry in `renderer/lib/shortcuts.ts` (user overrides live in `AppSettings.shortcuts`). Theming is CSS variables consumed by Tailwind v4 `@theme inline`.
+
+### Auto update
+
+Windows installs check GitHub releases on startup (`electron-builder.yml` `publish`). `application/update/updateService.ts` drives the splash (check with a timeout, available, cancellable download, ready, failed) over the `UpdateSource` port (`domain/ports/updater.ts`); `infrastructure/update/electronUpdateSource.ts` adapts `electron-updater` (no auto download, silent NSIS install on restart). `main/index.ts` shows the splash (`renderer/splash.html`, a second renderer entry) before creating the main window, only when packaged on Windows, `checkForUpdates` is on and `OST_USER_DATA` is unset. `OST_SPLASH_PREVIEW=update|offline|latest` uses `PreviewUpdateSource` to show it in dev.
 
 ### AI agent
 

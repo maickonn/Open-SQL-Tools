@@ -139,7 +139,7 @@ export const en = {
     title: 'Preferences', general: 'General', editor: 'SQL editor', grid: 'Data grid', ai: 'AI assistant',
     theme: 'Theme', fontSize: 'Font size', fontFamily: 'Font family', maxRows: 'Max rows per query result', pageSize: 'Rows per page (Data tab)',
     nullText: 'NULL display text', autocommit: 'Auto-commit by default', confirmDangerous: 'Confirm before running data-changing scripts',
-    restoreTabs: 'Restore query tabs on start', anthropicKey: 'Anthropic API key', openaiKey: 'OpenAI API key', keySaved: 'Key saved',
+    restoreTabs: 'Restore query tabs on start', checkForUpdates: 'Check for updates on start', anthropicKey: 'Anthropic API key', openaiKey: 'OpenAI API key', keySaved: 'Key saved',
     keyMissing: 'Not set', defaultProvider: 'Default provider', effort: 'Reasoning effort', low: 'Low', medium: 'Medium',
     high: 'High', maxRowsModel: 'Max rows sent to the model', clearKey: 'Remove key', setKey: 'Save key'
   },
@@ -180,6 +180,22 @@ export const en = {
   },
   keys: {
     title: 'Keyboard shortcuts', action: 'Action', shortcut: 'Shortcut', press: 'Press keys…', reset: 'Reset', resetAll: 'Reset all', conflict: 'Already used by "{{action}}"'
+  },
+  update: {
+    checking: 'Checking for updates…',
+    available: 'Update available',
+    whatsNew: "What's new",
+    releaseNotes: 'Release notes',
+    later: 'Later',
+    updateNow: 'Update now',
+    updatingTo: 'Updating to v{{version}}',
+    downloading: 'Downloading update…',
+    downloaded: '{{transferred}} of {{total}} · {{speed}}/s',
+    cancel: 'Cancel',
+    ready: 'Update ready',
+    readyDetail: 'Version {{version}} was downloaded. Restart to finish installing it.',
+    restart: 'Restart now',
+    failed: "Couldn't check for updates. Starting anyway…"
   },
   welcome: {
     title: 'Welcome to Open SQL Tools', subtitle: 'Fast SQL client for MySQL, MariaDB, PostgreSQL, Firebird and SQLite.', open: 'Open session manager'

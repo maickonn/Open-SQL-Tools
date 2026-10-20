@@ -55,6 +55,9 @@ export function SettingsDialog({ section: initial }: { section?: string }) {
               </Field>
               <Checkbox checked={settings.confirmDangerousQueries} onChange={(v) => set({ confirmDangerousQueries: v })} label={t('settings.confirmDangerous')} />
               <Checkbox checked={settings.restoreTabs} onChange={(v) => set({ restoreTabs: v })} label={t('settings.restoreTabs')} />
+              {api.platform === 'win32' && (
+                <Checkbox checked={settings.checkForUpdates} onChange={(v) => set({ checkForUpdates: v })} label={t('settings.checkForUpdates')} />
+              )}
             </div>
           )}
           {section === 'editor' && (

@@ -13,6 +13,12 @@ extraFiles:
     to: LICENSE.txt
   - from: out/THIRD_PARTY_NOTICES.txt
     to: THIRD_PARTY_NOTICES.txt
+# Releases are drafts on GitHub; electron-updater reads latest.yml from the published ones.
+publish:
+  provider: github
+  owner: maickonn
+  repo: Open-SQL-Tools
+  releaseType: draft
 asarUnpack:
   - '**/node_modules/cpu-features/**'
 win:

@@ -40,7 +40,13 @@ export default defineConfig({
     resolve: { alias },
     plugins: [react(), tailwindcss(), thirdPartyNotices(['tailwindcss', '@fontsource-variable/inter', '@fontsource-variable/jetbrains-mono'])],
     build: {
-      rollupOptions: { input: { index: resolve(__dirname, 'src/renderer/index.html') } }
+      rollupOptions: {
+        input: {
+          index: resolve(__dirname, 'src/renderer/index.html'),
+          // Startup window that checks for updates (Windows installs).
+          splash: resolve(__dirname, 'src/renderer/splash.html')
+        }
+      }
     }
   }
 })

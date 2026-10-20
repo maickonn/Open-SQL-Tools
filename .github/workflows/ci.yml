@@ -1,0 +1,169 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Electron and electron-builder download caches (Linux and Windows runners).
+  ELECTRON_CACHE_PATHS: |
+    ~/.cache/electron
+    ~/.cache/electron-builder
+    ~/AppData/Local/electron/Cache
+    ~/AppData/Local/electron-builder/Cache
+
+jobs:
+  check:
+    name: Typecheck, unit tests, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.ELECTRON_CACHE_PATHS }}
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: out
+          path: out
+          retention-days: 3
+
+  # One job per database server: each starts only its own container (never the whole matrix).
+  databases:
+    name: DB ${{ matrix.target }}
+    needs: check
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - sqlite
+          - firebird25
+          - firebird3
+          - firebird4
+          - firebird5
+          - firebird6
+          - mysql57
+          - mysql80
+          - mysql84
+          - mysql97
+          - mysql267
+          - mariadb102
+          - mariadb103
+          - mariadb104
+          - mariadb105
+          - mariadb106
+          - mariadb1011
+          - mariadb114
+          - mariadb118
+          - mariadb123
+          - mariadb130
+          - postgres15
+          - postgres16
+          - postgres17
+          - postgres18
+          - postgres19
+        # Servers the Electron end-to-end flow knows (tests/e2e/engines.spec.ts) also run it.
+        include:
+          - target: sqlite
+            e2e: tests/e2e/engines.spec.ts tests/e2e/structureReview.spec.ts tests/e2e/textContextMenu.spec.ts
+          - target: firebird5
+            e2e: tests/e2e/engines.spec.ts
+          - target: mysql97
+            e2e: tests/e2e/engines.spec.ts tests/e2e/smoke.spec.ts
+          - target: mariadb118
+            e2e: tests/e2e/engines.spec.ts
+          - target: postgres18
+            e2e: tests/e2e/engines.spec.ts
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.ELECTRON_CACHE_PATHS }}
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - run: npm ci
+      - name: Start ${{ matrix.target }}
+        if: matrix.target != 'sqlite'
+        run: docker compose -f docker/compose.yml up -d --wait ${{ matrix.target }}
+      - name: Integration tests
+        run: npx vitest run --project integration
+        env:
+          DB_TARGETS: ${{ matrix.target }}
+      - uses: actions/download-artifact@v4
+        if: matrix.e2e
+        with:
+          name: out
+          path: out
+      - name: End-to-end tests
+        if: matrix.e2e
+        run: |
+          # Ubuntu 24.04 blocks the unprivileged user namespaces Chromium's sandbox needs.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          xvfb-run -a npx playwright test ${{ matrix.e2e }}
+        env:
+          OST_E2E_TARGETS: ${{ matrix.target }}
+          OST_E2E_MYSQL_PORT: 33097
+      - uses: actions/upload-artifact@v4
+        if: failure() && matrix.e2e
+        with:
+          name: e2e-${{ matrix.target }}
+          path: test-results
+          retention-days: 7
+      - name: Server logs
+        if: failure() && matrix.target != 'sqlite'
+        run: docker compose -f docker/compose.yml logs ${{ matrix.target }}
+
+  connectivity:
+    name: SSH tunnel, TLS and auth plugins
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.ELECTRON_CACHE_PATHS }}
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - run: npm ci
+      - run: docker compose -f docker/compose.yml up -d --wait sshd postgres18ssl mysql97 postgres18 mariadb118
+      - run: npx vitest run --project integration tests/integration/connectivity.test.ts
+
+  package:
+    name: Windows installer
+    needs: check
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.ELECTRON_CACHE_PATHS }}
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - run: npm ci
+      - run: npm run package -- --win --publish never

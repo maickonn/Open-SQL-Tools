@@ -51,7 +51,43 @@ export function createMainWindow(bounds?: { x: number; y: number; width: number;
     if (url !== win.webContents.getURL()) e.preventDefault()
   })
 
-  if (process.env.ELECTRON_RENDERER_URL) void win.loadURL(process.env.ELECTRON_RENDERER_URL)
-  else void win.loadFile(join(__dirname, '../renderer/index.html'))
+  loadPage(win, 'index.html')
   return win
+}
+
+/** Small frameless window shown on startup while the app checks for updates. */
+export function createSplashWindow(): BrowserWindow {
+  const win = new BrowserWindow({
+    width: 480,
+    height: 300,
+    frame: false,
+    resizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    center: true,
+    show: false,
+    backgroundColor: nativeTheme.shouldUseDarkColors ? DARK_BG : LIGHT_BG,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      contextIsolation: true,
+      sandbox: true,
+      nodeIntegration: false,
+      spellcheck: false
+    }
+  })
+  win.once('ready-to-show', () => win.show())
+  // The release notes link opens in the system browser.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https:\/\//i.test(url)) void shell.openExternal(url)
+    return { action: 'deny' }
+  })
+  win.webContents.on('will-navigate', (e) => e.preventDefault())
+  loadPage(win, 'splash.html')
+  return win
+}
+
+function loadPage(win: BrowserWindow, page: string): void {
+  const devUrl = process.env.ELECTRON_RENDERER_URL
+  if (devUrl) void win.loadURL(page === 'index.html' ? devUrl : `${devUrl}/${page}`)
+  else void win.loadFile(join(__dirname, '../renderer', page))
 }

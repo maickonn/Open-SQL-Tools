@@ -2,10 +2,15 @@
   "name": "open-sql-tools",
   "productName": "Open SQL Tools",
   "version": "0.1.0",
-  "description": "Modern desktop SQL client for Firebird, MySQL, MariaDB and PostgreSQL with an agentic AI chat.",
+  "description": "Modern desktop SQL client for Firebird, MySQL, MariaDB, PostgreSQL and SQLite with an agentic AI chat.",
   "main": "./out/main/index.js",
   "author": "Maickonn Richard",
   "license": "MIT",
+  "homepage": "https://github.com/maickonn/Open-SQL-Tools",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/maickonn/Open-SQL-Tools.git"
+  },
   "private": true,
   "type": "commonjs",
   "scripts": {
@@ -26,6 +31,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.135.0",
+    "electron-updater": "^6.8.9",
     "fflate": "0.8.3",
     "mysql2": "3.24.6",
     "node-firebird": "2.18.2",

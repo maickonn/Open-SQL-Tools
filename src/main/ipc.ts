@@ -7,6 +7,7 @@ import type { HistoryRepository, SecretStore, SettingsRepository, SnippetReposit
 import { secretKeys } from '@domain/ports/repositories'
 import type { ConnectionService } from '@application/connections/connectionService'
 import type { AgentService } from '@application/chat/agentService'
+import type { UpdateService } from '@application/update/updateService'
 import type { SqliteStore } from '@infrastructure/persistence/sqliteStore'
 import type { SessionManager } from './sessions/sessionManager'
 import type { ProviderRegistry } from './providers'
@@ -22,6 +23,8 @@ export interface IpcServices {
   sessions: SessionManager
   agent: AgentService
   providers: ProviderRegistry
+  /** Present only while the startup update splash runs. */
+  updates: UpdateService | null
 }
 
 type Handler<C extends IpcChannel> = (e: IpcMainInvokeEvent, ...args: IpcInvokeMap[C]['args']) => Promise<IpcInvokeMap[C]['result']> | IpcInvokeMap[C]['result']
@@ -145,6 +148,13 @@ export function registerIpc(s: IpcServices): void {
     chrome: process.versions.chrome,
     userData: app.getPath('userData')
   }))
+
+  /* Startup update splash */
+  handle('update:getState', () => s.updates?.state ?? { phase: 'checking' as const, current: app.getVersion() })
+  handle('update:download', () => s.updates?.download())
+  handle('update:cancel', () => s.updates?.cancel())
+  handle('update:skip', () => s.updates?.skip())
+  handle('update:install', () => s.updates?.install())
   handle('edit:command', (e, command) => {
     const allowed = ['undo', 'redo', 'cut', 'copy', 'paste', 'delete', 'selectAll'] as const
     if (allowed.includes(command)) e.sender[command]()

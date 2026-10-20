@@ -1,5 +1,7 @@
 # Open SQL Tools
 
+[![CI](https://github.com/maickonn/Open-SQL-Tools/actions/workflows/ci.yml/badge.svg)](https://github.com/maickonn/Open-SQL-Tools/actions/workflows/ci.yml)
+
 A fast, modern desktop SQL client in the spirit of HeidiSQL, for **MySQL 5.7+**, **MariaDB 10.2+**, **PostgreSQL 15+**, **Firebird 2.5+** and **SQLite** (database files, using the SQLite bundled with Electron), with a built-in AI assistant (Anthropic and OpenAI) that can inspect and query your database. Dark theme by default, light theme available.
 
 This application was written with the help of [Claude Code](https://claude.com/claude-code).
@@ -72,6 +74,7 @@ Other scripts:
 | `npm run build && OST_E2E_TARGETS=sqlite npx playwright test tests/e2e/engines.spec.ts` | The same flow for SQLite (no container) |
 | `npm run test:e2e` | Builds and drives the real Electron app with Playwright (set `OST_E2E_MYSQL_PORT=33097` with `mysql97` running for the connected scenario) |
 | `npm run package` | Builds installers with electron-builder |
+| `OST_SPLASH_PREVIEW=update npm run dev` | Shows the startup update splash with a fake release (`offline` and `latest` show the other outcomes) |
 
 ### Test databases
 
@@ -87,6 +90,24 @@ Other scripts:
 The `tools` profile adds `sshd` (port 2222, user/password `tunnel`, throwaway key `docker/sshd/test_key`; reach databases by service name, e.g. `mysql97:3306`) and `postgres18ssl` (port 35428, TLS on).
 
 Credentials: MySQL/MariaDB `root`/`test`, PostgreSQL `postgres`/`test`, Firebird `SYSDBA`/`masterkey`. Each server has a `testdb` database (Firebird: `/var/lib/firebird/data/testdb.fdb`).
+
+## CI and releases
+
+GitHub Actions ([`ci.yml`](.github/workflows/ci.yml)) runs on every push to `main` and every pull request: typecheck, unit tests and build, then one job per database server in `docker/compose.yml` (integration tests, plus the Electron end-to-end flow for SQLite, `firebird5`, `mysql97`, `mariadb118` and `postgres18`), the SSH/TLS connectivity tests and a Windows installer build.
+
+To release, bump the version and push the tag:
+
+```bash
+npm version patch
+```
+
+```bash
+git push --follow-tags
+```
+
+[`release.yml`](.github/workflows/release.yml) checks that the tag matches `package.json`, creates a draft GitHub release with generated notes and uploads the Windows installer and its update feed (`latest.yml`). Test the installer, then publish the draft.
+
+Installed Windows builds check the published releases on startup (a small splash: update available, download progress, restart to install) and open normally when offline or up to date; the check can be turned off in Preferences. Linux and macOS builds are not published yet.
 
 ## License
 
