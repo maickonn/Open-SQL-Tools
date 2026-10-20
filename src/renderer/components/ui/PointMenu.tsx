@@ -48,7 +48,8 @@ export function PointMenu({ at, items, onClose }: { at: { x: number; y: number }
         <div style={{ position: 'fixed', left: at?.x ?? 0, top: at?.y ?? 0, width: 0, height: 0 }} />
       </RDM.Trigger>
       <RDM.Portal>
-        <RDM.Content className={contentClass} align="start" sideOffset={2}>
+        {/* The trigger is only an anchor point: returning focus to it would pull focus out of an open dialog. */}
+        <RDM.Content className={contentClass} align="start" sideOffset={2} onCloseAutoFocus={(e) => e.preventDefault()}>
           <Items items={items} />
         </RDM.Content>
       </RDM.Portal>

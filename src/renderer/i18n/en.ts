@@ -58,6 +58,7 @@ export const en = {
     uses: 'Objects {{name}} depends on', usedBy: 'Objects that depend on {{name}}', none: 'None recorded',
     limited: 'This server only records foreign keys, trigger tables and view tables.'
   },
+  edit: { undo: 'Undo', redo: 'Redo', cut: 'Cut', copy: 'Copy', paste: 'Paste', delete: 'Delete', selectAll: 'Select all' },
   review: {
     title: 'Review changes to {{name}}', statementList: 'Statement list', statement: 'Statement', operation: 'Operation', result: 'Result',
     pending: 'Not run yet', successful: 'Successful', failed: 'Failed', execute: 'Execute', retry: 'Try again', copy: 'Copy all statements',

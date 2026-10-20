@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell, type IpcMainInvokeEvent } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeTheme, shell, type IpcMainInvokeEvent } from 'electron'
 import { readFile, writeFile } from 'node:fs/promises'
 import type { IpcChannel, IpcEventMap, IpcInvokeMap, SessionsFile } from '@shared/ipc'
 import type { AppSettings } from '@shared/model'
@@ -145,6 +145,11 @@ export function registerIpc(s: IpcServices): void {
     chrome: process.versions.chrome,
     userData: app.getPath('userData')
   }))
+  handle('edit:command', (e, command) => {
+    const allowed = ['undo', 'redo', 'cut', 'copy', 'paste', 'delete', 'selectAll'] as const
+    if (allowed.includes(command)) e.sender[command]()
+  })
+  handle('edit:canPaste', async () => (await clipboard.readText()).length > 0)
   handle('app:setNativeTheme', (e, theme) => {
     nativeTheme.themeSource = theme
     const win = BrowserWindow.fromWebContents(e.sender)

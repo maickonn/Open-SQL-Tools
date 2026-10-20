@@ -174,6 +174,21 @@ export interface DialogProps {
   className?: string
 }
 
+/**
+ * Last pointerdown that started inside a menu. Radix checks "outside" clicks after the menu item
+ * was already removed from the DOM, when its menu ancestor can no longer be found.
+ */
+let menuPointerDown: Event | null = null
+if (typeof document !== 'undefined') {
+  document.addEventListener(
+    'pointerdown',
+    (e) => {
+      menuPointerDown = e.target instanceof Element && e.target.closest('[role="menu"]') ? e : null
+    },
+    true
+  )
+}
+
 export function Dialog({ open, onOpenChange, title, children, footer, width = 560, height, className }: DialogProps) {
   const { t } = useTranslation()
   return (
@@ -184,6 +199,12 @@ export function Dialog({ open, onOpenChange, title, children, footer, width = 56
           style={{ width, height, maxWidth: 'calc(100vw - 32px)', maxHeight: 'calc(100vh - 48px)' }}
           className={cx('fixed left-1/2 top-1/2 z-40 -translate-x-1/2 -translate-y-1/2 flex flex-col rounded-xl border border-border bg-panel shadow-pop outline-none', className)}
           aria-describedby={undefined}
+          // Menus opened from inside the dialog (e.g. a text field's context menu) render in a portal:
+          // using them is not a click outside the dialog.
+          onInteractOutside={(e) => {
+            const original = (e.detail as { originalEvent?: Event } | undefined)?.originalEvent
+            if (original === menuPointerDown || (e.target instanceof Element && e.target.closest('[role="menu"]'))) e.preventDefault()
+          }}
           // Focus the content, not the close button (which would pop its tooltip on open).
           onOpenAutoFocus={(e) => {
             e.preventDefault()

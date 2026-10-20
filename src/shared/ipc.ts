@@ -17,6 +17,8 @@ export interface OpenSessionResult {
   serverInfo: ServerInfo
 }
 
+export type EditCommand = 'undo' | 'redo' | 'cut' | 'copy' | 'paste' | 'delete' | 'selectAll'
+
 export interface FileDialogOptions {
   title?: string
   defaultPath?: string
@@ -84,6 +86,9 @@ export interface IpcInvokeMap {
 
   'app:info': { args: []; result: { version: string; electron: string; chrome: string; userData: string } }
   'app:setNativeTheme': { args: [theme: 'dark' | 'light' | 'system']; result: void }
+  /** Runs an edit command on the focused field (keeps the native undo stack and input events). */
+  'edit:command': { args: [command: EditCommand]; result: void }
+  'edit:canPaste': { args: []; result: boolean }
 }
 
 export type IpcChannel = keyof IpcInvokeMap

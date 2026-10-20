@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect } from 'react'
+import { TextContextMenu } from './components/ui/TextContextMenu'
 import { Group, Panel, Separator } from 'react-resizable-panels'
 import { Toaster } from 'sonner'
 import { TooltipProvider } from './components/ui'
@@ -171,6 +172,7 @@ export function App() {
         <StatusBar />
       </div>
       <SessionManagerDialog />
+      <TextContextMenu />
       <DialogHost />
       <PromptHost />
       <Toaster theme={theme} position="bottom-right" richColors closeButton />
