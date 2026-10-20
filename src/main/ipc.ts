@@ -143,8 +143,6 @@ export function registerIpc(s: IpcServices): void {
     version: app.getVersion(),
     electron: process.versions.electron,
     chrome: process.versions.chrome,
-    node: process.versions.node,
-    platform: process.platform,
     userData: app.getPath('userData')
   }))
   handle('app:setNativeTheme', (e, theme) => {

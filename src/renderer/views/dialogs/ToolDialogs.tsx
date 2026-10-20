@@ -652,7 +652,7 @@ export function UsersDialog({ d }: { d: Extract<DialogState, { kind: 'users' }> 
 export function AboutDialog() {
   const { t } = useTranslation()
   const close = useUi((s) => s.closeDialog)
-  const [info, setInfo] = useState<{ version: string; electron: string; chrome: string; node: string; platform: string; userData: string } | null>(null)
+  const [info, setInfo] = useState<{ version: string; electron: string; chrome: string; userData: string } | null>(null)
   useEffect(() => void api.invoke('app:info').then(setInfo), [])
   return (
     <Dialog open onOpenChange={(v) => !v && close()} title={t('app.name')} width={440}>
@@ -660,7 +660,7 @@ export function AboutDialog() {
         <div className="text-lg font-semibold">{t('app.name')} {info?.version}</div>
         <div className="text-muted">MySQL · MariaDB · PostgreSQL · Firebird</div>
         <div className="mt-3 text-xs text-muted">
-          Electron {info?.electron} · Chromium {info?.chrome} · Node {info?.node} · {info?.platform}
+          Electron {info?.electron} · Chromium {info?.chrome}
         </div>
         <div className="truncate text-xs text-subtle" title={info?.userData}>{info?.userData}</div>
       </div>

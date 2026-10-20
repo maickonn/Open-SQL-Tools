@@ -82,7 +82,7 @@ export interface IpcInvokeMap {
   'shell:showItem': { args: [filePath: string]; result: void }
   'shell:openExternal': { args: [url: string]; result: void }
 
-  'app:info': { args: []; result: { version: string; electron: string; chrome: string; node: string; platform: string; userData: string } }
+  'app:info': { args: []; result: { version: string; electron: string; chrome: string; userData: string } }
   'app:setNativeTheme': { args: [theme: 'dark' | 'light' | 'system']; result: void }
 }
 
