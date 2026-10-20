@@ -1,4 +1,7 @@
 import { connect } from 'node:net'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { ConnectionProfile, DbEngine } from '@shared/model'
 
 export interface Target {
@@ -22,8 +25,12 @@ const fb = (id: string, port: number): Target => ({
   database: '/var/lib/firebird/data/testdb.fdb'
 })
 
-/** Mirrors docker/compose.yml. */
+/** SQLite needs no server: each test run works on a fresh file in a temporary directory. */
+const sqlite = (id: string): Target => ({ id, engine: 'sqlite', port: 0, user: '', password: '', database: join(mkdtempSync(join(tmpdir(), 'ost-sqlite-')), 'testdb.sqlite') })
+
+/** Mirrors docker/compose.yml, plus SQLite (no container). */
 export const ALL_TARGETS: Target[] = [
+  sqlite('sqlite'),
   fb('firebird25', 30250), fb('firebird3', 30300), fb('firebird4', 30400), fb('firebird5', 30500), fb('firebird6', 30600),
   my('mysql57', 33057), my('mysql80', 33080), my('mysql84', 33084), my('mysql97', 33097), my('mysql267', 33267),
   maria('mariadb102', 34102), maria('mariadb103', 34103), maria('mariadb104', 34104), maria('mariadb105', 34105),
@@ -49,7 +56,7 @@ function reachable(port: number): Promise<boolean> {
 export async function availableTargets(): Promise<Target[]> {
   const wanted = process.env.DB_TARGETS?.split(',').map((s) => s.trim()).filter(Boolean)
   const candidates = wanted?.length ? ALL_TARGETS.filter((t) => wanted.includes(t.id)) : ALL_TARGETS
-  const flags = await Promise.all(candidates.map((t) => reachable(t.port)))
+  const flags = await Promise.all(candidates.map((t) => (t.engine === 'sqlite' ? true : reachable(t.port))))
   return candidates.filter((_, i) => flags[i])
 }
 
@@ -59,11 +66,11 @@ export function profileFor(t: Target): ConnectionProfile {
     id: t.id,
     name: t.id,
     engine: t.engine,
-    host: '127.0.0.1',
+    host: t.engine === 'sqlite' ? '' : '127.0.0.1',
     port: t.port,
     user: t.user,
     database: t.database,
-    options: {},
+    options: t.engine === 'sqlite' ? { createIfMissing: true } : {},
     ssl: { enabled: false, rejectUnauthorized: false },
     ssh: { enabled: false, host: '', port: 22, user: '', authMethod: 'password' },
     savePassword: true,

@@ -11,6 +11,7 @@ import { uid } from '../../lib/format'
 import { parseCsv } from '@application/import/csv'
 import { SHORTCUT_ACTIONS, resolveShortcut } from '../../lib/shortcuts'
 import { useSettings } from '../../stores/settingsStore'
+import { isSingleDatabase } from '@domain/engineTraits'
 
 const EXTENSIONS: Record<ExportFormat, string> = { csv: 'csv', tsv: 'tsv', json: 'json', sql: 'sql', html: 'html', xml: 'xml', markdown: 'md', latex: 'tex', xlsx: 'xlsx' }
 
@@ -201,7 +202,7 @@ export function DumpDialog({ d }: { d: Extract<DialogState, { kind: 'dump' }> })
     if (!file) return
     setBusy(true)
     try {
-      await session.client.call('dumpSql', { operationId: opId, options: { ...o, filePath: file, databases: session.info.engine === 'firebird' ? [''] : dbs } })
+      await session.client.call('dumpSql', { operationId: opId, options: { ...o, filePath: file, databases: isSingleDatabase(session.info.engine) ? [''] : dbs } })
       notify.success(t('dump.done', { file }))
       void api.invoke('shell:showItem', file)
       close()
@@ -222,14 +223,14 @@ export function DumpDialog({ d }: { d: Extract<DialogState, { kind: 'dump' }> })
         <>
           <ProgressLine p={progress} />
           <Button onClick={close} disabled={busy}>{t('common.cancel')}</Button>
-          <Button variant="primary" loading={busy} disabled={session.info.engine !== 'firebird' && !dbs.length} onClick={() => void run()}>
+          <Button variant="primary" loading={busy} disabled={!isSingleDatabase(session.info.engine) && !dbs.length} onClick={() => void run()}>
             {t('common.ok')}
           </Button>
         </>
       }
     >
       <div className="grid grid-cols-2 gap-4 p-4">
-        {session.info.engine !== 'firebird' && (
+        {!isSingleDatabase(session.info.engine) && (
           <Field label={t('dump.databases')} className="row-span-2">
             <div className="h-56 overflow-auto rounded-md border border-border bg-sunken p-2">
               {(session.databases ?? []).map((db) => (
@@ -316,7 +317,7 @@ export function ImportSqlDialog({ d }: { d: Extract<DialogState, { kind: 'import
             </Button>
           </div>
         </Field>
-        {session.info.engine !== 'firebird' && (
+        {!isSingleDatabase(session.info.engine) && (
           <Field label={t('query.database')}>
             <Select value={database} onChange={(e) => setDatabase(e.target.value)}>
               <option value="">—</option>
@@ -410,7 +411,7 @@ export function ImportCsvDialog({ d }: { d: Extract<DialogState, { kind: 'import
             </Button>
           </div>
         </Field>
-        {session.info.engine !== 'firebird' && (
+        {!isSingleDatabase(session.info.engine) && (
           <Field label={t('query.database')}>
             <Input value={database} onChange={(e) => setDatabase(e.target.value)} />
           </Field>
@@ -516,7 +517,7 @@ export function FindTextDialog({ d }: { d: Extract<DialogState, { kind: 'findTex
               <option value="regexp">{t('find.regexp')}</option>
             </Select>
           </Field>
-          {session.info.engine !== 'firebird' && (
+          {!isSingleDatabase(session.info.engine) && (
             <Field label={t('find.databases')} className="col-span-2">
               <div className="flex max-h-24 flex-wrap gap-x-4 gap-y-1 overflow-auto rounded-md border border-border bg-sunken p-2">
                 {(session.databases ?? []).map((db) => (

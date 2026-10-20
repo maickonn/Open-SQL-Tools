@@ -3,27 +3,31 @@
  * Pure types and constants only — no runtime dependencies.
  */
 
-export type DbEngine = 'mysql' | 'mariadb' | 'postgres' | 'firebird'
+export type DbEngine = 'mysql' | 'mariadb' | 'postgres' | 'firebird' | 'sqlite'
 
 export const ENGINE_LABELS: Record<DbEngine, string> = {
   mysql: 'MySQL',
   mariadb: 'MariaDB',
   postgres: 'PostgreSQL',
-  firebird: 'Firebird'
+  firebird: 'Firebird',
+  sqlite: 'SQLite'
 }
 
 export const DEFAULT_PORTS: Record<DbEngine, number> = {
   mysql: 3306,
   mariadb: 3306,
   postgres: 5432,
-  firebird: 3050
+  firebird: 3050,
+  /** File based: no network. */
+  sqlite: 0
 }
 
 export const DEFAULT_USERS: Record<DbEngine, string> = {
   mysql: 'root',
   mariadb: 'root',
   postgres: 'postgres',
-  firebird: 'SYSDBA'
+  firebird: 'SYSDBA',
+  sqlite: ''
 }
 
 export interface SslConfig {
@@ -60,6 +64,10 @@ export interface ConnectionOptions {
   connectTimeoutSec?: number
   /** PostgreSQL: application_name. */
   applicationName?: string
+  /** SQLite: create the database file when it does not exist. */
+  createIfMissing?: boolean
+  /** SQLite: open the file read-only. */
+  readOnly?: boolean
 }
 
 export interface ConnectionProfile {
@@ -71,7 +79,7 @@ export interface ConnectionProfile {
   host: string
   port: number
   user: string
-  /** MySQL/MariaDB/PostgreSQL: initial database. Firebird: .fdb file path or alias. */
+  /** MySQL/MariaDB/PostgreSQL: initial database. Firebird: .fdb file path or alias. SQLite: database file path. */
   database?: string
   /** Databases to show (empty = all), like HeidiSQL. */
   databaseFilter?: string[]
@@ -382,6 +390,13 @@ export interface TableStructure {
   foreignKeys: ForeignKeyDef[]
   checks: CheckDef[]
   options: TableOptions
+  /**
+   * SQLite: triggers and views that depend on the table, recreated when a change needs the table to
+   * be rebuilt (SQLite's ALTER TABLE cannot change types, constraints or column order).
+   */
+  dependents?: { kind: 'trigger' | 'view'; name: string; sql: string }[]
+  /** SQLite: WITHOUT ROWID / STRICT table options kept across rebuilds. */
+  sqliteOptions?: { withoutRowid?: boolean; strict?: boolean }
 }
 
 export type TypeCategory = 'integer' | 'decimal' | 'float' | 'string' | 'text' | 'datetime' | 'binary' | 'boolean' | 'json' | 'other'

@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import type { DbObjectInfo } from '@shared/model'
 import { useWorkspace, objectsKey, type SessionState } from '../../stores/workspaceStore'
 import type { CompletionSource } from '../../components/editor/monaco'
+import { isSingleDatabase } from '@domain/engineTraits'
 
 const KEYWORDS = (
   'SELECT FROM WHERE AND OR NOT NULL IS IN EXISTS BETWEEN LIKE ILIKE AS ON JOIN LEFT RIGHT INNER OUTER FULL CROSS GROUP BY ORDER HAVING LIMIT OFFSET ' +
@@ -22,13 +23,15 @@ export function useCompletionSource(session: SessionState | undefined, database:
     for (const [key, entry] of Object.entries(objects)) {
       if (entry.status !== 'ok' || !key.startsWith(session.id)) continue
       const [, db] = key.split('\u0001')
-      if (engine !== 'firebird' && database && db !== database) continue
+      if (!isSingleDatabase(engine) && database && db !== database) continue
       lists.push(...entry.items)
     }
     const tables = lists.filter((o) => o.kind === 'table' || o.kind === 'view' || o.kind === 'materialized_view')
     const quote = (name: string): string => {
       if (engine === 'mysql' || engine === 'mariadb') return /^[A-Za-z_][A-Za-z0-9_$]*$/.test(name) ? name : '`' + name.replace(/`/g, '``') + '`'
       if (engine === 'postgres') return /^[a-z_][a-z0-9_$]*$/.test(name) ? name : `"${name.replace(/"/g, '""')}"`
+      // SQLite identifiers are case-insensitive: only unusual names need quotes.
+      if (engine === 'sqlite') return /^[A-Za-z_][A-Za-z0-9_$]*$/.test(name) ? name : `"${name.replace(/"/g, '""')}"`
       return /^[A-Z][A-Z0-9_$]*$/.test(name) ? name : `"${name.replace(/"/g, '""')}"`
     }
     return {

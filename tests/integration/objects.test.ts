@@ -3,7 +3,7 @@ import type { DbEngine, DbObjectRef } from '@shared/model'
 import { SessionService } from '@application/session/sessionService'
 import { openDatabase } from '@infrastructure/db/openDatabase'
 import { createFileWriter, readTextFile } from '@infrastructure/fs/fileWriter'
-import { creatableKinds } from '@domain/objectCapabilities'
+import { creatableKinds, triggerCapabilities } from '@domain/objectCapabilities'
 import { availableTargets, profileFor, type Target } from './targets'
 
 // Trigger / routine / generator / exception utilities against real servers:
@@ -17,7 +17,8 @@ interface Fixture {
   cleanup: string
   table: string
   trigger: DbObjectRef
-  routine: DbObjectRef
+  /** Absent for engines without stored routines (SQLite). */
+  routine?: DbObjectRef
   sequence?: string
   event?: string
   /** Template objects created by the "New …" menu items, dropped afterwards. */
@@ -97,6 +98,17 @@ function fixtureFor(target: Target): Fixture {
           'DROP VIEW IF EXISTS new_view; DROP PROCEDURE IF EXISTS new_procedure; DROP FUNCTION IF EXISTS new_function; DROP TRIGGER IF EXISTS obj_t_bi; DROP EVENT IF EXISTS new_event; ' +
           (engine === 'mariadb' ? 'DROP SEQUENCE IF EXISTS new_sequence;' : '')
       }
+    case 'sqlite':
+      return {
+        setup: `CREATE TABLE obj_t (id INTEGER PRIMARY KEY, name VARCHAR(20));
+          CREATE TABLE obj_log (id INTEGER, msg VARCHAR(50));
+          CREATE VIEW obj_v AS SELECT id, name FROM obj_t;
+          CREATE TRIGGER obj_t_audit AFTER INSERT ON obj_t BEGIN INSERT INTO obj_log (id, msg) VALUES (NEW.id, NEW.name); END;`,
+        cleanup: 'DROP VIEW IF EXISTS obj_v; DROP TABLE IF EXISTS obj_log; DROP TABLE IF EXISTS obj_t;',
+        table: 'obj_t',
+        trigger: { name: 'obj_t_audit', kind: 'trigger', table: 'obj_t' },
+        templateCleanup: 'DROP VIEW IF EXISTS new_view; DROP TRIGGER IF EXISTS obj_t_ai;'
+      }
   }
 }
 
@@ -123,7 +135,7 @@ describe.skipIf(!targets.length)('object utilities', () => {
       await svc.disconnect()
     })
 
-    it.skipIf(target.engine === 'mysql' || target.engine === 'mariadb')('deactivates and reactivates a trigger', async () => {
+    it.skipIf(!triggerCapabilities(target.engine).active)('deactivates and reactivates a trigger', async () => {
       const state = async () => (await objects()).find((o) => o.kind === 'trigger' && o.name === fx.trigger.name)
       expect((await state())?.inactive).toBeUndefined()
       await svc.setEnabled({ refs: [fx.trigger], enabled: false })
@@ -191,6 +203,11 @@ describe.skipIf(!targets.length)('object utilities', () => {
         expect(uses).toEqual(expect.arrayContaining(['table:OBJ_T', 'table:OBJ_LOG', 'exception:OBJ_ERR']))
         expect(tableDeps.some((d) => d.direction === 'usedBy' && d.kind === 'procedure' && d.name === 'OBJ_P')).toBe(true)
       }
+      if (target.engine === 'sqlite') {
+        expect(tableDeps.some((d) => d.direction === 'usedBy' && d.kind === 'view' && d.name === 'obj_v')).toBe(true)
+        const viewDeps = await svc.getDependencies({ ref: { name: 'obj_v', kind: 'view' } })
+        expect(viewDeps.some((d) => d.direction === 'uses' && d.kind === 'table' && d.name === 'obj_t')).toBe(true)
+      }
       if (target.engine === 'postgres') {
         expect(tableDeps.some((d) => d.direction === 'usedBy' && d.kind === 'view' && d.name === 'obj_v')).toBe(true)
         const triggerDeps = await svc.getDependencies({ ref: fx.trigger })
@@ -198,15 +215,15 @@ describe.skipIf(!targets.length)('object utilities', () => {
       }
     })
 
-    it('builds a runnable call for a routine', async () => {
-      const sql = await svc.getRoutineCall({ ref: fx.routine })
+    it.skipIf(!fx.routine)('builds a runnable call for a routine', async () => {
+      const sql = await svc.getRoutineCall({ ref: fx.routine! })
       expect(sql).toMatch(/NULL \/\*/)
       const r = await svc.execute({ queryId: 'call', sql, maxRows: 10, database: fx.database })
       expect(r.statements[0].error?.message).toBeUndefined()
     })
 
     it.skipIf(target.engine !== 'firebird')('lists routine and trigger operations with plans', async () => {
-      const proc = await svc.getRoutineOperations({ ref: fx.routine })
+      const proc = await svc.getRoutineOperations({ ref: fx.routine! })
       expect(proc).toHaveLength(1)
       expect(proc[0]).toMatchObject({ operation: 'select', table: 'OBJ_T' })
       expect(proc[0].error).toBeUndefined()
@@ -219,15 +236,17 @@ describe.skipIf(!targets.length)('object utilities', () => {
     it('edits, creates and renames triggers through the trigger form model', async () => {
       const fb = target.engine === 'firebird'
       const my = target.engine === 'mysql' || target.engine === 'mariadb'
+      // MySQL family and SQLite: one event per trigger and no inactive state.
+      const single = !triggerCapabilities(target.engine).multipleEvents
       const original = await svc.getTrigger({ ref: fx.trigger })
       expect(original).toMatchObject({ table: fx.table, timing: 'AFTER', events: ['INSERT'], active: true, editable: true })
 
       const changed = {
         ...original,
         timing: 'BEFORE' as const,
-        events: my ? (['UPDATE'] as const).slice() : (['INSERT', 'UPDATE'] as const).slice(),
+        events: single ? (['UPDATE'] as const).slice() : (['INSERT', 'UPDATE'] as const).slice(),
         position: fb ? 5 : original.position,
-        active: my,
+        active: single,
         body: fb ? original.body.replace(/BEGIN/i, 'BEGIN\n  /* edited */') : my ? original.body : original.body.replace(/BEGIN/i, 'BEGIN /* edited */')
       }
       await svc.saveTrigger({ original, target: changed })

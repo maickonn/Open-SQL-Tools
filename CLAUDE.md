@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Open SQL Tools is an Electron + TypeScript desktop SQL client aiming at feature parity with HeidiSQL (MySQL 5.7+, MariaDB 10.2+, PostgreSQL 15+, Firebird 2.5+) plus an agentic AI chat (Anthropic/OpenAI). Application performance is a primary requirement.
+Open SQL Tools is an Electron + TypeScript desktop SQL client aiming at feature parity with HeidiSQL (MySQL 5.7+, MariaDB 10.2+, PostgreSQL 15+, Firebird 2.5+, SQLite files) plus an agentic AI chat (Anthropic/OpenAI). Application performance is a primary requirement.
 
 ## Conventions
 
@@ -21,10 +21,12 @@ npm test                    # unit tests (vitest project "unit")
 npx vitest run --project unit tests/unit/splitter.test.ts -t "DELIMITER"   # single file / single test
 npm run test:db -- mysql97 postgres18          # up only these containers, run integration tests, stop them (--keep to leave them up)
 npm run test:e2e:db -- postgres18 firebird5    # build + Playwright Electron flow against only these containers
+DB_TARGETS=sqlite npx vitest run --project integration                       # SQLite integration tests (temp files, no Docker)
+OST_E2E_TARGETS=sqlite npx playwright test tests/e2e/engines.spec.ts         # SQLite E2E after npm run build
 npm run dist                # electron-builder installers
 ```
 
-- Integration tests (`tests/integration`) select servers through `DB_TARGETS` (comma-separated compose service names, see `tests/integration/targets.ts`); tests for servers that aren't reachable are skipped. `PERF=1` enables the benchmarks: `perf.test.ts` (1M-row streaming) and `sshPerf.test.ts` (object-tree browsing through the `sshd` tunnel with simulated latency, `PERF_RTT_MS`, default 60; prints timings in round trips). `connectivity.test.ts` needs the `tools` profile services (`sshd`, `postgres18ssl`).
+- Integration tests (`tests/integration`) select servers through `DB_TARGETS` (comma-separated compose service names, see `tests/integration/targets.ts`); tests for servers that aren't reachable are skipped. The `sqlite` target needs no container and is always available; `sqlite.test.ts` covers the SQLite-only behaviour (file options, table rebuilds, dumps). `PERF=1` enables the benchmarks: `perf.test.ts` (1M-row streaming) and `sshPerf.test.ts` (object-tree browsing through the `sshd` tunnel with simulated latency, `PERF_RTT_MS`, default 60; prints timings in round trips). `connectivity.test.ts` needs the `tools` profile services (`sshd`, `postgres18ssl`).
 - E2E (`tests/e2e`) uses Playwright `_electron` against `out/`, so always build first. `OST_E2E_TARGETS` selects engines for `engines.spec.ts`; `OST_USER_DATA` gives the app an isolated profile directory.
 - Service names, ports and credentials are in `docker/compose.yml` and the README (MySQL/MariaDB `root`/`test`, PostgreSQL `postgres`/`test`, Firebird `SYSDBA`/`masterkey`, database `testdb`). Firebird 2.5 is a custom image built from the official tarball (`docker/firebird25`).
 
@@ -49,6 +51,7 @@ src/
     db/mysql-family/          mysql2 connection, MySQL/MariaDB dialect + inspector, MariaDB auth plugins
     db/postgres/              pg + pg-cursor connection, dialect, inspector
     db/firebird/              node-firebird connection, dialect, inspector
+    db/sqlite/                node:sqlite in a child process (sqliteProcess.mts), connection, dialect, inspector
     db/common/                baseDialect, columnar chunk builder, query helpers
     db/openDatabase.ts        engine factory
     db/worker/connectionWorker.ts   utilityProcess entry (one per session)
@@ -122,8 +125,10 @@ Driver quirks the code depends on:
 - mysql2 runs with `rowsAsArray`, `dateStrings`, `jsonStrings`; MariaDB `client_ed25519` and `parsec` auth are implemented in `mysql-family/mariadbAuth.ts` and passed via `authPlugins`.
 - pg uses custom type parsers to keep exact text values and `pg-cursor` for streaming user queries. PostgreSQL can't switch databases on a live connection, so `PgConnection.useDatabase` parks the current client per database (up to 4 idle, LRU) and reuses it when switching back; the handshake loads server info and `pg_type` in a single multi-statement query.
 - node-firebird uses `sequentially` with array rows, `blobAsText` and string numerics; queries must run inside transactions. Firebird 2.5 lacks boolean select expressions — use `CASE`.
+- SQLite uses Node's built-in `node:sqlite` (no native module). It is synchronous and has no interrupt, so each connection runs in a child process (`sqlite/sqliteProcess.mts`, forked with `ELECTRON_RUN_AS_NODE`; a worker thread cannot be stopped while SQLite's native code runs). Cancel = kill + reopen. The `.mts` script must stay self-contained (built-ins and type-only imports): the bundle ships it as `out/main/sqliteProcess.js`, while integration tests run the source with Node's type stripping. Read-only runs set `PRAGMA query_only`. `PRAGMA foreign_keys` is a no-op inside transactions, so `SqliteConnection` applies OFF before the auto-started transaction and defers ON until it ends — table rebuilds (`SqliteDialect.rebuild`, SQLite's 12-step procedure) rely on this so `DROP TABLE` doesn't fire `ON DELETE` actions.
+- Single-database engines (Firebird, SQLite) address objects without a database; use the helpers in `domain/engineTraits.ts` (`isSingleDatabase`, `isFileBased`, `hasTransactionalDdl`, `hasBulkTableOptions`) instead of comparing engine names.
 
-`domain/sql/splitter.ts` splits scripts per dialect (MySQL `DELIMITER`, Firebird `SET TERM` and PSQL blocks, PostgreSQL dollar quoting); `classifier.ts` decides which statements are read-only vs dangerous (used for confirmation dialogs and AI approval).
+`domain/sql/splitter.ts` splits scripts per dialect (MySQL `DELIMITER`, Firebird `SET TERM` and PSQL blocks, PostgreSQL dollar quoting, SQLite trigger bodies and `[identifiers]`); `classifier.ts` decides which statements are read-only vs dangerous (used for confirmation dialogs and AI approval).
 
 ### Renderer details
 

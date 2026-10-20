@@ -74,6 +74,12 @@ export function capabilitiesFor(engine: DbEngine, version: number): Capability[]
       add(version >= v(5, 0), 'partialIndexes', 'skipLocked')
       add(version >= v(6, 0), 'schemas')
       break
+    case 'sqlite':
+      add(true, 'cte', 'checkConstraints', 'partialIndexes', 'functionalIndexes', 'json')
+      add(version >= v(3, 25), 'windowFunctions')
+      add(version >= v(3, 31), 'generatedColumns')
+      add(version >= v(3, 35), 'returning')
+      break
   }
   return caps
 }

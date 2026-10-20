@@ -7,7 +7,8 @@ import { createFileWriter, readTextFile } from '@infrastructure/fs/fileWriter'
 import { copyTable, type CopySession } from '@application/copy/copyTable'
 import { availableTargets, profileFor, type Target } from './targets'
 
-const targets = (await availableTargets()).filter((t) => t.engine !== 'firebird')
+// Partitions, cross-database copies and bulk table options: MySQL family and PostgreSQL only.
+const targets = (await availableTargets()).filter((t) => t.engine !== 'firebird' && t.engine !== 'sqlite')
 
 /** Wraps a SessionService so renderer code (which talks RPC) can drive it in-process. */
 async function liveSession(target: Target, id: string): Promise<{ state: CopySession; svc: SessionService }> {

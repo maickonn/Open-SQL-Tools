@@ -15,8 +15,8 @@ const FK_ACTIONS: FkAction[] = ['NO ACTION', 'RESTRICT', 'CASCADE', 'SET NULL', 
 
 const blankColumn = (engine: string): ColumnDef => ({
   name: '',
-  dataType: engine === 'postgres' ? 'INTEGER' : 'INT',
-  fullType: engine === 'postgres' ? 'integer' : engine === 'firebird' ? 'INTEGER' : 'int',
+  dataType: engine === 'postgres' || engine === 'sqlite' ? 'INTEGER' : 'INT',
+  fullType: engine === 'postgres' ? 'integer' : engine === 'firebird' || engine === 'sqlite' ? 'INTEGER' : 'int',
   nullable: true,
   defaultValue: null
 })
@@ -25,6 +25,9 @@ export function StructureEditor({ session, structure, isNew, onSaved }: { sessio
   const { t } = useTranslation()
   const engine = session.info.engine
   const isMy = engine === 'mysql' || engine === 'mariadb'
+  // SQLite keeps no table or column comments; collations exist per column (BINARY, NOCASE, RTRIM).
+  const hasComments = engine !== 'sqlite'
+  const hasCollations = isMy || engine === 'postgres' || engine === 'sqlite'
   const [draft, setDraft] = useState<TableStructure>(() => structuredClone(structure))
   const [section, setSection] = useState<Section>('columns')
   const [selected, setSelected] = useState(0)
@@ -87,7 +90,8 @@ export function StructureEditor({ session, structure, isNew, onSaved }: { sessio
     if (!preview.length) return
     setSaving(true)
     try {
-      await session.client.call('executeStatements', { statements: preview, database: draft.ref.database })
+      // SQLite rebuilds tables in several steps (copy, drop, rename): all or nothing.
+      await session.client.call('executeStatements', { statements: preview, database: draft.ref.database, transactional: session.info.engine === 'sqlite' })
       notify.success(t('structure.saved'))
       void useWorkspace.getState().loadObjects(session.id, draft.ref.database, draft.ref.schema, true)
       onSaved(draft.ref.name)
@@ -113,7 +117,7 @@ export function StructureEditor({ session, structure, isNew, onSaved }: { sessio
     { value: 'foreignKeys' as const, label: `${t('structure.foreignKeys')} (${draft.foreignKeys.length})` },
     { value: 'checks' as const, label: `${t('structure.checks')} (${draft.checks.length})` },
     { value: 'options' as const, label: t('structure.options') },
-    ...(engine !== 'firebird' ? [{ value: 'partitions' as const, label: `${t('partitions.title')}${draft.options.partitioning ? ` (${draft.options.partitioning.partitions.length || draft.options.partitioning.count || 0})` : ''}` }] : []),
+    ...(session.info.capabilities.includes('partitions') ? [{ value: 'partitions' as const, label: `${t('partitions.title')}${draft.options.partitioning ? ` (${draft.options.partitioning.partitions.length || draft.options.partitioning.count || 0})` : ''}` }] : []),
     { value: 'preview' as const, label: t('structure.preview') }
   ]
 
@@ -123,9 +127,13 @@ export function StructureEditor({ session, structure, isNew, onSaved }: { sessio
         <Field label={t('structure.tableName')} className="w-60">
           <Input value={draft.ref.name} onChange={(e) => setDraft((d) => ({ ...d, ref: { ...d.ref, name: e.target.value } }))} disabled={!isNew && engine === 'firebird'} />
         </Field>
-        <Field label={t('structure.tableComment')} className="min-w-60 flex-1">
-          <Input value={draft.options.comment ?? ''} onChange={(e) => setDraft((d) => ({ ...d, options: { ...d.options, comment: e.target.value || undefined } }))} />
-        </Field>
+        {hasComments ? (
+          <Field label={t('structure.tableComment')} className="min-w-60 flex-1">
+            <Input value={draft.options.comment ?? ''} onChange={(e) => setDraft((d) => ({ ...d, options: { ...d.options, comment: e.target.value || undefined } }))} />
+          </Field>
+        ) : (
+          <div className="flex-1" />
+        )}
         <div className="flex items-center gap-2 pb-0.5">
           {dirty && !isNew && <Badge tone="warning">{t('sessions.unsaved')}</Badge>}
           <Button icon={<Undo2 size={14} />} disabled={!dirty || isNew} onClick={() => setDraft(structuredClone(structure))}>
@@ -177,8 +185,8 @@ export function StructureEditor({ session, structure, isNew, onSaved }: { sessio
                   <th className="w-16">{t('structure.allowNull')}</th>
                   <th>{t('structure.default')}</th>
                   <th className="w-20">{engine === 'postgres' || engine === 'firebird' ? t('structure.identity') : t('structure.autoIncrement')}</th>
-                  <th>{t('structure.comment')}</th>
-                  {(isMy || engine === 'postgres') && <th className="w-40">{t('structure.collation')}</th>}
+                  {hasComments && <th>{t('structure.comment')}</th>}
+                  {hasCollations && <th className="w-40">{t('structure.collation')}</th>}
                 </tr>
               </thead>
               <tbody>
@@ -238,10 +246,12 @@ export function StructureEditor({ session, structure, isNew, onSaved }: { sessio
                           <Checkbox checked={!!c.autoIncrement} onChange={(v) => setCol(i, { autoIncrement: v })} />
                         )}
                       </td>
-                      <td>
-                        <Input className="h-7 text-xs" value={c.comment ?? ''} onChange={(e) => setCol(i, { comment: e.target.value || undefined })} />
-                      </td>
-                      {(isMy || engine === 'postgres') && (
+                      {hasComments && (
+                        <td>
+                          <Input className="h-7 text-xs" value={c.comment ?? ''} onChange={(e) => setCol(i, { comment: e.target.value || undefined })} />
+                        </td>
+                      )}
+                      {hasCollations && (
                         <td>
                           <Input className="h-7 text-xs" list={`coll-${session.id}`} value={c.collation ?? ''} onChange={(e) => setCol(i, { collation: e.target.value || undefined })} />
                         </td>
@@ -287,12 +297,12 @@ export function StructureEditor({ session, structure, isNew, onSaved }: { sessio
                     placeholder={draft.columns.map((c) => c.name).slice(0, 3).join(', ')}
                   />
                 </Field>
-                {(engine === 'postgres' || (engine === 'firebird' && session.info.capabilities.includes('partialIndexes'))) && (
+                {session.info.capabilities.includes('partialIndexes') && (
                   <Field label={t('structure.condition')} className="w-56">
                     <Input value={idx.condition ?? ''} onChange={(e) => set({ condition: e.target.value || undefined })} className="font-mono text-xs" />
                   </Field>
                 )}
-                {(engine === 'postgres' || engine === 'firebird') && idx.type === 'UNIQUE' && (
+                {(engine === 'postgres' || engine === 'firebird' || engine === 'sqlite') && idx.type === 'UNIQUE' && (
                   <Checkbox checked={!!idx.constraint} onChange={(v) => set({ constraint: v })} label="CONSTRAINT" className="mb-1.5" />
                 )}
               </>
@@ -409,6 +419,20 @@ export function StructureEditor({ session, structure, isNew, onSaved }: { sessio
                     label={t('structure.systemVersioning')}
                   />
                 )}
+              </>
+            )}
+            {engine === 'sqlite' && (
+              <>
+                <Checkbox
+                  checked={!!draft.sqliteOptions?.withoutRowid}
+                  onChange={(v) => setDraft((d) => ({ ...d, sqliteOptions: { ...d.sqliteOptions, withoutRowid: v || undefined } }))}
+                  label={t('structure.withoutRowid')}
+                />
+                <Checkbox
+                  checked={!!draft.sqliteOptions?.strict}
+                  onChange={(v) => setDraft((d) => ({ ...d, sqliteOptions: { ...d.sqliteOptions, strict: v || undefined } }))}
+                  label={t('structure.strict')}
+                />
               </>
             )}
             {engine === 'postgres' && (

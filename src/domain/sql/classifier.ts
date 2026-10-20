@@ -7,6 +7,10 @@ const WRITE = new Set(['INSERT', 'UPDATE', 'DELETE', 'MERGE', 'REPLACE', 'UPSERT
 const DDL = new Set(['CREATE', 'ALTER', 'DROP', 'TRUNCATE', 'RENAME', 'GRANT', 'REVOKE', 'COMMENT', 'RECREATE', 'SECURITY', 'DECLARE'])
 const TRANSACTION = new Set(['BEGIN', 'COMMIT', 'ROLLBACK', 'START', 'SAVEPOINT', 'RELEASE', 'XA', 'END', 'ABORT'])
 const SESSION = new Set(['USE', 'SET'])
+/** SQLite pragmas that change the database file when assigned. */
+const PRAGMA_PERSISTENT = new Set(['user_version', 'application_id', 'schema_version', 'journal_mode', 'page_size', 'auto_vacuum', 'encoding'])
+/** SQLite pragmas that act on the database even without an assignment. */
+const PRAGMA_ACTIONS = new Set(['optimize', 'incremental_vacuum', 'wal_checkpoint', 'shrink_memory'])
 
 /** Tokens that make an otherwise read-looking statement modify data or lock rows. */
 const WRITE_MARKERS = /\b(INSERT|UPDATE|DELETE|MERGE|INTO\s+(?:OUTFILE|DUMPFILE)|FOR\s+(?:UPDATE|SHARE|NO\s+KEY\s+UPDATE|KEY\s+SHARE)|LOCK\s+IN\s+SHARE\s+MODE)\b/i
@@ -42,6 +46,13 @@ export function classifyStatement(sql: string): StatementKind {
     return 'session'
   }
   if (first === 'ALTER' && /^ALTER\s+(SESSION|DATABASE\s+SET)\b/i.test(text)) return 'session'
+  // SQLite: PRAGMA reads a setting or catalog unless it assigns a value or runs an action.
+  if (first === 'PRAGMA') {
+    const name = /^PRAGMA\s+(?:\w+\.)?(\w+)/i.exec(text)?.[1]?.toLowerCase() ?? ''
+    if (/^PRAGMA\s+[\w.]+\s*=/i.test(text)) return PRAGMA_PERSISTENT.has(name) ? 'write' : 'session'
+    return PRAGMA_ACTIONS.has(name) ? 'write' : 'read'
+  }
+  if (first === 'ATTACH' || first === 'DETACH') return 'session'
   if (READ.has(first)) return 'read'
   if (TRANSACTION.has(first)) return 'transaction'
   if (SESSION.has(first)) return 'session'

@@ -11,7 +11,7 @@ export interface SqlStatement {
 
 /** Heads of statements whose body may contain `;` inside BEGIN…END blocks. */
 const ROUTINE_HEAD =
-  /^(?:(?:CREATE|ALTER|RECREATE)\s+(?:OR\s+(?:REPLACE|ALTER)\s+)?(?:DEFINER\s*=\s*(?:`[^`]*`|'[^']*'|[^\s@]+)(?:@(?:`[^`]*`|'[^']*'|\S+))?\s+)?(?:AGGREGATE\s+)?(?:PROCEDURE|FUNCTION|TRIGGER|EVENT|PACKAGE(?:\s+BODY)?)\b|EXECUTE\s+BLOCK\b)/i
+  /^(?:(?:CREATE|ALTER|RECREATE)\s+(?:OR\s+(?:REPLACE|ALTER)\s+)?(?:TEMP(?:ORARY)?\s+)?(?:DEFINER\s*=\s*(?:`[^`]*`|'[^']*'|[^\s@]+)(?:@(?:`[^`]*`|'[^']*'|\S+))?\s+)?(?:AGGREGATE\s+)?(?:PROCEDURE|FUNCTION|TRIGGER|EVENT|PACKAGE(?:\s+BODY)?)\b|EXECUTE\s+BLOCK\b)/i
 
 /** `END <word>` forms that close constructs we do not count as nesting. */
 const CLOSERS_NOT_COUNTED = new Set(['IF', 'LOOP', 'WHILE', 'REPEAT', 'FOR'])
@@ -20,14 +20,15 @@ const isWordChar = (c: string | undefined): boolean => c !== undefined && /[A-Za
 
 /**
  * Splits a script into statements. Aware of strings, quoted identifiers, comments,
- * PostgreSQL dollar quoting, MySQL/MariaDB `DELIMITER`, Firebird `SET TERM`, and
- * BEGIN…END bodies of routines created without changing the delimiter.
+ * PostgreSQL dollar quoting, MySQL/MariaDB `DELIMITER`, Firebird `SET TERM`, SQLite `[identifiers]`,
+ * and BEGIN…END bodies of routines and triggers created without changing the delimiter.
  */
 export function splitSql(script: string, engine: DbEngine): SqlStatement[] {
   const out: SqlStatement[] = []
   const isMy = engine === 'mysql' || engine === 'mariadb'
   const isPg = engine === 'postgres'
   const isFb = engine === 'firebird'
+  const isLite = engine === 'sqlite'
   const n = script.length
 
   let delimiter = ';'
@@ -109,8 +110,13 @@ export function splitSql(script: string, engine: DbEngine): SqlStatement[] {
       continue
     }
     // Quoted identifiers
-    if (c === '"' || (c === '`' && isMy)) {
+    if (c === '"' || (c === '`' && (isMy || isLite))) {
       i = skipQuoted(script, i, c, false)
+      continue
+    }
+    if (c === '[' && isLite) {
+      const close = script.indexOf(']', i + 1)
+      i = close === -1 ? n : close + 1
       continue
     }
     // PostgreSQL dollar quoting

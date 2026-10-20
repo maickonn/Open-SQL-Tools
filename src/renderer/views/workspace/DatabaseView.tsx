@@ -8,6 +8,7 @@ import { ResultGrid } from '../../components/grid/ResultGrid'
 import { ResultSet } from '../../lib/resultSet'
 import { formatBytes } from '../../lib/format'
 import { useUi } from '../../stores/uiStore'
+import { hasBulkTableOptions } from '@domain/engineTraits'
 
 /** Lists the objects of a database/schema with size, rows and comment (HeidiSQL "Database" tab). */
 export function DatabaseView({ tab }: { tab: Tab }) {
@@ -68,7 +69,7 @@ export function DatabaseView({ tab }: { tab: Tab }) {
           <Search size={13} className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-subtle" />
           <Input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={t('common.filter')} className="h-7 pl-7 text-xs" />
         </div>
-        {session.info.engine !== 'firebird' && (
+        {hasBulkTableOptions(session.info.engine) && (
           <IconButton label={t('bulk.menu')} onClick={() => useUi.getState().openDialog({ kind: 'bulkEdit', sessionId: session.id, database: tab.database, schema })}>
             <Layers size={15} />
           </IconButton>

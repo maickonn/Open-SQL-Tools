@@ -46,6 +46,7 @@ import { notify } from '../../stores/toast'
 import { confirmDialog, promptDialog } from '../../components/ui/prompts'
 import { formatBytes } from '../../lib/format'
 import { EngineBadge } from '../common/EngineBadge'
+import { isSingleDatabase } from '@domain/engineTraits'
 
 const KIND_ORDER: ObjectKind[] = ['table', 'view', 'materialized_view', 'procedure', 'function', 'package', 'trigger', 'event', 'sequence', 'domain', 'type', 'exception']
 
@@ -141,7 +142,7 @@ export function ObjectTree() {
     for (const session of Object.values(sessions)) {
       out.push({ type: 'session', key: session.id, depth: 0, session })
       if (!expanded[session.id]) continue
-      if (session.info.engine === 'firebird') {
+      if (isSingleDatabase(session.info.engine)) {
         pushObjects(session, 1)
         continue
       }
@@ -220,7 +221,7 @@ const TreeRow = memo(function TreeRow({ row, selected, expanded }: { row: Row; s
     const open = !expanded
     ws().toggleNode(row.key, open)
     if (!open) return
-    if (row.type === 'session' && row.session.info.engine === 'firebird') void ws().loadObjects(row.session.id)
+    if (row.type === 'session' && isSingleDatabase(row.session.info.engine)) void ws().loadObjects(row.session.id)
     if (row.type === 'database') {
       if (row.session.info.engine === 'postgres') void ws().loadSchemas(row.session.id, row.database)
       else void ws().loadObjects(row.session.id, row.database)
@@ -332,7 +333,7 @@ function contextItems(row: Row, t: (k: string, o?: Record<string, unknown>) => s
   const items: MenuItem[] = []
   const refresh = (): void => {
     if (row.type === 'session') {
-      if (engine === 'firebird') void ws.loadObjects(sid, undefined, undefined, true)
+      if (isSingleDatabase(engine)) void ws.loadObjects(sid, undefined, undefined, true)
       else void ws.refreshDatabases(sid)
     } else if (row.type === 'database') {
       if (engine === 'postgres') void ws.loadSchemas(sid, row.database, true)
@@ -343,7 +344,7 @@ function contextItems(row: Row, t: (k: string, o?: Record<string, unknown>) => s
   const schema = row.type === 'schema' || row.type === 'object' || row.type === 'group' ? row.schema : undefined
   const kindLabel = (kind: ObjectKind): string => t(`kinds.${kind}`)
   // Object containers: Firebird sessions, MySQL databases, PostgreSQL schemas.
-  const isContainer = row.type === 'schema' || (row.type === 'database' && engine !== 'postgres') || (row.type === 'session' && engine === 'firebird')
+  const isContainer = row.type === 'schema' || (row.type === 'database' && engine !== 'postgres') || (row.type === 'session' && isSingleDatabase(engine))
   const newItem = (kind: ObjectKind, table?: string): MenuItem => ({
     label: t('tree.newObject', { kind: kindLabel(kind) }),
     icon: <Plus size={14} />,
@@ -495,7 +496,7 @@ function contextItems(row: Row, t: (k: string, o?: Record<string, unknown>) => s
     items.push({
       label: t('tree.createDatabase'),
       icon: <Database size={14} />,
-      disabled: engine === 'firebird',
+      disabled: isSingleDatabase(engine),
       onSelect: async () => {
         const r = await promptDialog(t('tree.createDatabase'), t('common.name'))
         if (!r) return

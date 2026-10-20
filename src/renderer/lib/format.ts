@@ -35,3 +35,13 @@ export function fullText(v: CellValue): string {
 export function uid(): string {
   return crypto.randomUUID()
 }
+
+/** Where a session connects: the database file for SQLite, user@host:port for servers. */
+export function endpointLabel(p: { engine: string; user: string; host: string; port: number; database?: string }): string {
+  return p.engine === 'sqlite' ? (p.database ?? '') : `${p.user}@${p.host}:${p.port}`
+}
+
+/** Default session name when the user leaves it empty. */
+export function defaultSessionName(p: { engine: string; user: string; host: string; database?: string }): string {
+  return p.engine === 'sqlite' ? ((p.database ?? '').split(/[\\/]/).pop() ?? '') : `${p.user}@${p.host}`
+}

@@ -19,7 +19,9 @@ export default defineConfig({
         input: {
           index: resolve(__dirname, 'src/main/index.ts'),
           // Utility process: one per database session (drivers stay out of main/renderer).
-          connectionWorker: resolve(__dirname, 'src/infrastructure/db/worker/connectionWorker.ts')
+          connectionWorker: resolve(__dirname, 'src/infrastructure/db/worker/connectionWorker.ts'),
+          // Child process hosting a SQLite connection (node:sqlite is synchronous, killed to cancel).
+          sqliteProcess: resolve(__dirname, 'src/infrastructure/db/sqlite/sqliteProcess.mts')
         }
       }
     }

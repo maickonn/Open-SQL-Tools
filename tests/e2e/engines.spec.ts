@@ -9,7 +9,7 @@ import { join } from 'node:path'
 
 interface E2ETarget {
   id: string
-  engine: 'MySQL' | 'MariaDB' | 'PostgreSQL' | 'Firebird'
+  engine: 'MySQL' | 'MariaDB' | 'PostgreSQL' | 'Firebird' | 'SQLite'
   port: number
   user: string
   password: string
@@ -54,6 +54,13 @@ const KNOWN: Record<string, Omit<E2ETarget, 'id'>> = {
   }
 }
 
+// SQLite needs no container: the session creates a fresh file.
+KNOWN.sqlite = {
+  engine: 'SQLite', port: 0, user: '', password: '', database: join(mkdtempSync(join(tmpdir(), 'ost-e2e-sqlite-')), 'e2e.sqlite'),
+  setup: "DROP TABLE IF EXISTS e2e_items; CREATE TABLE e2e_items (id INTEGER PRIMARY KEY, name VARCHAR(50)); INSERT INTO e2e_items VALUES (1, 'one'), (2, 'two');",
+  table: 'e2e_items', path: []
+}
+
 const targets: E2ETarget[] = (process.env.OST_E2E_TARGETS ?? '')
   .split(',')
   .map((s) => s.trim())
@@ -87,10 +94,19 @@ for (const target of targets) {
       await page.getByRole('menuitem', { name: target.engine }).click()
       const field = (label: RegExp) => dialog.locator('label', { hasText: label }).locator('input').first()
       await field(/^Name/).fill(`E2E ${target.engine}`)
-      await field(/Port/).fill(String(target.port))
-      await field(/^User$/).fill(target.user)
-      await field(/^Password$/).fill(target.password)
-      if (target.database) await field(/Database/).fill(target.database)
+      if (target.engine === 'SQLite') {
+        // A file, not a server: no host, port, user, password, SSH or SSL.
+        await expect(field(/Port/)).toHaveCount(0)
+        await expect(dialog.getByRole('button', { name: 'SSH tunnel' })).toHaveCount(0)
+        await field(/^Database file/).fill(target.database)
+        await dialog.getByRole('checkbox', { name: /Create the file/ }).click()
+        await page.screenshot({ path: join(shots, `e2e-${target.id}-session.png`) })
+      } else {
+        await field(/Port/).fill(String(target.port))
+        await field(/^User$/).fill(target.user)
+        await field(/^Password$/).fill(target.password)
+        if (target.database) await field(/Database/).fill(target.database)
+      }
       await dialog.getByRole('button', { name: /^Open$/ }).click()
       await expect(page.getByRole('dialog')).toBeHidden({ timeout: 30_000 })
       await expect(page.getByRole('treeitem', { name: new RegExp(`E2E ${target.engine}`) })).toBeVisible()
@@ -140,7 +156,7 @@ for (const target of targets) {
       await page.getByRole('treeitem', { name: new RegExp(`^${target.table}( |$)`) }).click()
       await page.getByRole('button', { name: /^Structure$/ }).click()
       const partitions = page.getByRole('button', { name: /^Partitions/ })
-      if (target.engine === 'Firebird') await expect(partitions).toHaveCount(0)
+      if (target.engine === 'Firebird' || target.engine === 'SQLite') await expect(partitions).toHaveCount(0)
       else {
         await partitions.click()
         await expect(page.locator('label', { hasText: /^Method/ }).locator('select')).toHaveValue('')
@@ -264,6 +280,72 @@ for (const target of targets) {
       await expect(item(name).getByLabel('Inactive')).toBeVisible({ timeout: 15_000 })
       await page.getByRole('button', { name: /^SQL preview/ }).click()
       await page.screenshot({ path: join(shots, `e2e-${target.id}-trigger-form.png`) })
+      await expect(page.locator('[data-sonner-toast][data-type="error"]')).toHaveCount(0)
+    })
+  })
+}
+
+// SQLite trigger form: one event per trigger, no active state, the old trigger is dropped on save.
+for (const target of targets.filter((t) => t.engine === 'SQLite')) {
+  test.describe(`${target.id} trigger form`, () => {
+    let app: ElectronApplication
+    let page: Page
+    const userData = mkdtempSync(join(tmpdir(), `ost-e2e-${target.id}-trg-`))
+
+    test.beforeAll(async () => {
+      app = await electron.launch({ args: ['.'], env: { ...process.env, OST_USER_DATA: userData } })
+      page = await app.firstWindow()
+      await page.waitForLoadState('domcontentloaded')
+    })
+
+    test.afterAll(async () => {
+      await app?.close()
+      rmSync(userData, { recursive: true, force: true })
+    })
+
+    test('creates and edits a trigger', async () => {
+      const dialog = page.getByRole('dialog')
+      await expect(dialog).toBeVisible()
+      await dialog.getByRole('button', { name: /New session/ }).click()
+      await page.getByRole('menuitem', { name: 'SQLite' }).click()
+      await dialog.locator('label', { hasText: /^Database file/ }).locator('input').first().fill(target.database)
+      await dialog.getByRole('checkbox', { name: /Create the file/ }).click()
+      await dialog.getByRole('button', { name: /^Open$/ }).click()
+      await expect(page.getByRole('dialog')).toBeHidden({ timeout: 30_000 })
+
+      const visible = <T extends ReturnType<typeof page.locator>>(l: T) => l.filter({ visible: true })
+      const item = (n: string) => page.getByRole('treeitem', { name: new RegExp(`^${n}( |$)`) })
+      await expect(item(target.table)).toBeVisible({ timeout: 15_000 })
+      await item(target.table).click({ button: 'right' })
+      await page.getByRole('menuitem', { name: /^New trigger/ }).click()
+      await visible(page.getByLabel('Name', { exact: true })).fill('e2e_form_trg')
+      await visible(page.getByRole('checkbox', { name: 'UPDATE' })).click()
+      await expect(visible(page.getByRole('checkbox', { name: 'INSERT' }))).toHaveAttribute('aria-checked', 'false')
+      await expect(visible(page.getByRole('checkbox', { name: 'Is active' }))).toHaveCount(0)
+      const editor = visible(page.locator('.monaco-editor')).last()
+      await editor.click()
+      await page.keyboard.press('Control+A')
+      await page.keyboard.insertText('BEGIN\n  SELECT NEW.id;\nEND')
+      await visible(page.getByRole('button', { name: 'Save' })).click()
+      const review = page.getByRole('dialog')
+      await expect(review.getByTestId('review-statement')).toContainText('CREATE TRIGGER "e2e_form_trg"')
+      await review.getByRole('button', { name: 'Execute' }).click()
+      await expect(review.getByText('Successful').first()).toBeVisible({ timeout: 15_000 })
+      await review.getByRole('button', { name: 'Close' }).last().click()
+      // Categories other than tables start collapsed.
+      await page.getByRole('treeitem', { name: /^Triggers\s*\(1\)/ }).dblclick({ timeout: 15_000 })
+      await expect(item('e2e_form_trg')).toBeVisible({ timeout: 15_000 })
+
+      // Editing recreates it: DROP + CREATE in one transaction.
+      await expect(visible(page.getByRole('checkbox', { name: 'UPDATE' }))).toHaveAttribute('aria-checked', 'true')
+      await visible(page.getByRole('checkbox', { name: 'DELETE' })).click()
+      await visible(page.getByRole('button', { name: 'Save' })).click()
+      await expect(review.getByRole('row')).toHaveCount(3, { timeout: 15_000 })
+      await page.screenshot({ path: join(shots, `e2e-${target.id}-trigger-review.png`) })
+      await review.getByRole('button', { name: 'Execute' }).click()
+      await expect(review.getByText('Successful').first()).toBeVisible({ timeout: 15_000 })
+      await review.getByRole('button', { name: 'Close' }).last().click()
+      await expect(visible(page.getByRole('checkbox', { name: 'DELETE' }))).toHaveAttribute('aria-checked', 'true')
       await expect(page.locator('[data-sonner-toast][data-type="error"]')).toHaveCount(0)
     })
   })

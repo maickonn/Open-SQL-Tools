@@ -30,6 +30,7 @@ import { commands } from './commands'
 import { resolveShortcut } from '../lib/shortcuts'
 import { api } from '../gateways/api'
 import logo from '../assets/logo.svg'
+import { isFileBased } from '@domain/engineTraits'
 
 export function TitleBar() {
   const { t } = useTranslation()
@@ -80,7 +81,7 @@ export function TitleBar() {
     { label: t('menu.importCsv'), disabled: !sid, onSelect: () => sid && ui.openDialog({ kind: 'importCsv', sessionId: sid }) },
     { separator: true },
     { label: t('menu.findText'), icon: <Search size={14} />, shortcut: sc('findText'), disabled: !sid, onSelect: () => sid && ui.openDialog({ kind: 'findText', sessionId: sid }) },
-    { label: t('menu.userManager'), icon: <Users size={14} />, disabled: !sid, onSelect: () => sid && ui.openDialog({ kind: 'users', sessionId: sid }) },
+    { label: t('menu.userManager'), icon: <Users size={14} />, disabled: !sid || isFileBased(activeSession?.info.engine), onSelect: () => sid && ui.openDialog({ kind: 'users', sessionId: sid }) },
     { separator: true },
     { label: t('menu.settings'), icon: <Settings size={14} />, shortcut: sc('settings'), onSelect: () => ui.openDialog({ kind: 'settings' }) }
   ]

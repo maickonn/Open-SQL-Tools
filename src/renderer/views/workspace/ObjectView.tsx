@@ -111,6 +111,10 @@ function replaceScript(session: SessionState, ref: DbObjectRef, ddl: string): st
     if (kw[ref.kind]) return `DROP ${kw[ref.kind]} IF EXISTS ${target};\nDELIMITER $$\n${ddl.trim().replace(/;\s*$/, '')}$$\nDELIMITER ;`
     if (ref.kind === 'view') return ddl.replace(/^CREATE\s/i, 'CREATE OR REPLACE ')
   }
+  // SQLite has no CREATE OR REPLACE: the saved source drops the old view or trigger first.
+  if (engine === 'sqlite' && (ref.kind === 'view' || ref.kind === 'trigger')) {
+    return `DROP ${ref.kind.toUpperCase()} IF EXISTS "${ref.name.replace(/"/g, '""')}";\n${ddl}`
+  }
   if (engine === 'postgres' && ref.kind === 'trigger') {
     return `DROP TRIGGER IF EXISTS "${ref.name}" ON ${ref.schema ? `"${ref.schema}".` : ''}"${ref.table}";\n${ddl}`
   }

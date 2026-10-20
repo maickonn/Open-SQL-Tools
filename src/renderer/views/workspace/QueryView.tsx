@@ -15,6 +15,7 @@ import { promptDialog } from '../../components/ui/prompts'
 import { uid } from '../../lib/format'
 import { useCompletionSource } from './useCompletionSource'
 import { GridContextMenu } from './GridContextMenu'
+import { isSingleDatabase } from '@domain/engineTraits'
 
 export default function QueryView({ tab, active }: { tab: Tab; active: boolean }) {
   const { t } = useTranslation()
@@ -98,7 +99,7 @@ export default function QueryView({ tab, active }: { tab: Tab; active: boolean }
         <IconButton label={`${t('menu.format')} (Ctrl+Shift+F)`} onClick={() => commands.format()}>
           <AlignLeft size={15} />
         </IconButton>
-        {session.info.engine !== 'firebird' && (
+        {!isSingleDatabase(session.info.engine) && (
           <>
             <div className="mx-1 h-5 w-px bg-border" />
             <span className="text-xs text-muted">{t('query.database')}</span>

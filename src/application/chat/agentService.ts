@@ -5,7 +5,7 @@ import type { LlmProvider } from '@domain/ports/llm'
 import type { ChatRepository } from '@domain/ports/repositories'
 import { agentToolDefinitions, executeAgentTool, type DatabaseToolGateway } from './agentTools'
 
-export const AGENT_SYSTEM_PROMPT = `You are the database assistant built into Open SQL Tools, a desktop SQL client for MySQL, MariaDB, PostgreSQL and Firebird.
+export const AGENT_SYSTEM_PROMPT = `You are the database assistant built into Open SQL Tools, a desktop SQL client for MySQL, MariaDB, PostgreSQL, Firebird and SQLite.
 
 You help the user understand and work with the database they have open: explore the schema, explain data, write and optimize SQL, and diagnose errors.
 

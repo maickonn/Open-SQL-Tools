@@ -5,7 +5,8 @@ const STYLES: Record<DbEngine, { bg: string; text: string }> = {
   mysql: { bg: '#00758f', text: 'My' },
   mariadb: { bg: '#a0522d', text: 'Ma' },
   postgres: { bg: '#336791', text: 'Pg' },
-  firebird: { bg: '#d4502b', text: 'Fb' }
+  firebird: { bg: '#d4502b', text: 'Fb' },
+  sqlite: { bg: '#0f80cc', text: 'Sq' }
 }
 
 export function EngineBadge({ engine, size = 16 }: { engine: DbEngine; size?: number }) {

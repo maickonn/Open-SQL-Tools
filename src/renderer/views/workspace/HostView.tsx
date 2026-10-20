@@ -90,7 +90,7 @@ export function HostView({ tab, active }: { tab: Tab; active: boolean }) {
         <div className="min-w-0">
           <div className="truncate text-sm font-semibold">{session.profile.name}</div>
           <div className="truncate text-xs text-muted">
-            {session.info.label} · {session.info.currentUser} · {session.profile.host}:{session.profile.port}
+            {session.info.label} · {session.info.currentUser} · {session.profile.engine === 'sqlite' ? session.profile.database : `${session.profile.host}:${session.profile.port}`}
           </div>
         </div>
       </div>

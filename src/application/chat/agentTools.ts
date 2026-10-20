@@ -26,7 +26,7 @@ const objectKinds = ['table', 'view', 'materialized_view', 'procedure', 'functio
 export const toolSchemas = {
   list_databases: z.object({}).describe('No arguments'),
   list_objects: z.object({
-    database: z.string().optional().describe('Database name (MySQL/MariaDB/PostgreSQL). Omit for Firebird or the current database.'),
+    database: z.string().optional().describe('Database name (MySQL/MariaDB/PostgreSQL). Omit for Firebird, SQLite or the current database.'),
     schema: z.string().optional().describe('PostgreSQL schema, e.g. "public". Required for PostgreSQL.'),
     kind: z.enum(objectKinds).optional().describe('Only return objects of this kind')
   }),
@@ -59,7 +59,7 @@ export const toolSchemas = {
 export type ToolName = keyof typeof toolSchemas
 
 const descriptions: Record<ToolName, string> = {
-  list_databases: 'List databases (MySQL/MariaDB/PostgreSQL). Firebird connections have a single database.',
+  list_databases: 'List databases (MySQL/MariaDB/PostgreSQL). Firebird and SQLite connections have a single database (SQLite: "main").',
   list_objects: 'List tables, views, routines, triggers, sequences and other objects with row counts and comments.',
   describe_table: 'Columns (types, nullability, defaults), indexes, foreign keys and checks of a table.',
   get_ddl: 'The CREATE statement of an object.',

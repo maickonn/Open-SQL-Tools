@@ -26,8 +26,8 @@ const activeSession = () => {
   return ws.activeSessionId ? ws.sessions[ws.activeSessionId] : undefined
 }
 
-const dialect = (engine: DbEngine | undefined): 'mysql' | 'mariadb' | 'postgresql' | 'sql' =>
-  engine === 'mysql' ? 'mysql' : engine === 'mariadb' ? 'mariadb' : engine === 'postgres' ? 'postgresql' : 'sql'
+const dialect = (engine: DbEngine | undefined): 'mysql' | 'mariadb' | 'postgresql' | 'sqlite' | 'sql' =>
+  engine === 'mysql' ? 'mysql' : engine === 'mariadb' ? 'mariadb' : engine === 'postgres' ? 'postgresql' : engine === 'sqlite' ? 'sqlite' : 'sql'
 
 export const commands = {
   newQuery(sql?: string) {
@@ -72,7 +72,7 @@ export const commands = {
       notify.info(i18n.t('errors.unsupported'))
       return
     }
-    await useQueries.getState().run(tab.id, `EXPLAIN ${sql}`)
+    await useQueries.getState().run(tab.id, session.info.engine === 'sqlite' ? `EXPLAIN QUERY PLAN ${sql}` : `EXPLAIN ${sql}`)
   },
 
   format() {

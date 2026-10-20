@@ -7,6 +7,7 @@ import { useUi, type DialogState } from '../../stores/uiStore'
 import { Button, Checkbox, Dialog, Field, Input, Select, Spinner } from '../../components/ui'
 import { notify } from '../../stores/toast'
 import { copyTable } from '@application/copy/copyTable'
+import { hasBulkTableOptions, isSingleDatabase } from '@domain/engineTraits'
 
 const ROW_FORMATS = ['DYNAMIC', 'COMPACT', 'COMPRESSED', 'REDUNDANT', 'FIXED']
 
@@ -72,8 +73,8 @@ export function BulkEditDialog({ d }: { d: Extract<DialogState, { kind: 'bulkEdi
       footer={
         <>
           <Button onClick={close} disabled={busy}>{t('common.close')}</Button>
-          <Button onClick={() => void run(true)} disabled={busy || !refs.length || engine === 'firebird'}>{t('bulk.preview')}</Button>
-          <Button variant="primary" loading={busy} disabled={!refs.length || engine === 'firebird'} onClick={() => void run(false)}>
+          <Button onClick={() => void run(true)} disabled={busy || !refs.length || !hasBulkTableOptions(engine)}>{t('bulk.preview')}</Button>
+          <Button variant="primary" loading={busy} disabled={!refs.length || !hasBulkTableOptions(engine)} onClick={() => void run(false)}>
             {t('bulk.run', { count: refs.length })}
           </Button>
         </>
@@ -109,7 +110,7 @@ export function BulkEditDialog({ d }: { d: Extract<DialogState, { kind: 'bulkEdi
           </div>
         </div>
         <div className="flex min-w-0 flex-1 flex-col gap-3 overflow-auto p-4">
-          {engine === 'firebird' ? (
+          {!hasBulkTableOptions(engine) ? (
             <div className="text-sm text-muted">{t('bulk.unsupported')}</div>
           ) : isMy ? (
             <div className="grid grid-cols-2 gap-3">
@@ -225,7 +226,7 @@ export function CopyTableDialog({ d }: { d: Extract<DialogState, { kind: 'copyTa
         source,
         ref: d.ref,
         target,
-        targetDatabase: engine === 'firebird' ? undefined : database || undefined,
+        targetDatabase: isSingleDatabase(engine) ? undefined : database || undefined,
         targetSchema: engine === 'postgres' ? schema : undefined,
         newName: name.trim(),
         withData,
@@ -235,7 +236,7 @@ export function CopyTableDialog({ d }: { d: Extract<DialogState, { kind: 'copyTa
       })
       notify.success(t('copy.done', { rows: r.rows, name }))
       if (r.droppedForeignKeys) notify.info(t('copy.fksDropped', { count: r.droppedForeignKeys }))
-      void useWorkspace.getState().loadObjects(target.id, engine === 'firebird' ? undefined : database, engine === 'postgres' ? schema : undefined, true)
+      void useWorkspace.getState().loadObjects(target.id, isSingleDatabase(engine) ? undefined : database, engine === 'postgres' ? schema : undefined, true)
       close()
     } catch (err) {
       notify.error(err)
@@ -270,7 +271,7 @@ export function CopyTableDialog({ d }: { d: Extract<DialogState, { kind: 'copyTa
             ))}
           </Select>
         </Field>
-        {engine !== 'firebird' && (
+        {!isSingleDatabase(engine) && (
           <Field label={t('copy.targetDatabase')}>
             <Select value={database} onChange={(e) => setDatabase(e.target.value)}>
               {(target.databases ?? []).map((x) => (

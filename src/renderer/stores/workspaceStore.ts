@@ -5,6 +5,7 @@ import { connectSessionClient, type SessionClient } from '../gateways/sessionCli
 import { uid } from '../lib/format'
 import { notify } from './toast'
 import i18n from '../i18n'
+import { isSingleDatabase } from '@domain/engineTraits'
 
 export interface SessionState {
   id: string
@@ -116,7 +117,7 @@ export const useWorkspace = create<WorkspaceVM>((set, get) => ({
     }))
     get().addLog(sessionId, 'info', `${profile.name}: ${serverInfo.label} (${serverInfo.versionString})`)
     get().openTab({ sessionId, kind: 'host', title: profile.name }, { preview: true })
-    if (serverInfo.engine === 'firebird') void get().loadObjects(sessionId)
+    if (isSingleDatabase(serverInfo.engine)) void get().loadObjects(sessionId)
     else void get().refreshDatabases(sessionId)
     return sessionId
   },

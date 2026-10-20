@@ -13,6 +13,8 @@ export function canRename(engine: DbEngine, kind: ObjectKind): boolean {
       return ['table', 'view', 'event', 'sequence'].includes(kind)
     case 'mysql':
       return ['table', 'view', 'event'].includes(kind)
+    case 'sqlite':
+      return kind === 'table'
   }
 }
 
@@ -39,6 +41,8 @@ export function creatableKinds(engine: DbEngine): ObjectKind[] {
       return ['table', 'view', 'procedure', 'function', 'trigger', 'event', 'sequence']
     case 'mysql':
       return ['table', 'view', 'procedure', 'function', 'trigger', 'event']
+    case 'sqlite':
+      return ['table', 'view', 'trigger']
   }
 }
 
@@ -63,6 +67,9 @@ export function triggerCapabilities(engine: DbEngine): TriggerCapabilities {
     case 'mysql':
     case 'mariadb':
       return { multipleEvents: false, timings: ['BEFORE', 'AFTER'], events: ['INSERT', 'UPDATE', 'DELETE'], forEach: false, when: false, position: 'readonly', databaseEvents: false, active: false }
+    case 'sqlite':
+      // INSTEAD OF only applies to views; FOR EACH ROW is the only granularity.
+      return { multipleEvents: false, timings: ['BEFORE', 'AFTER', 'INSTEAD OF'], events: ['INSERT', 'UPDATE', 'DELETE'], forEach: false, when: true, position: 'none', databaseEvents: false, active: false }
   }
 }
 

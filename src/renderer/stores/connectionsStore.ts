@@ -3,6 +3,7 @@ import { DEFAULT_PORTS, DEFAULT_USERS, type ConnectionProfile, type ConnectionSe
 import { api } from '../gateways/api'
 import { useWorkspace } from './workspaceStore'
 import { notify } from './toast'
+import { defaultSessionName } from '../lib/format'
 
 export function blankProfile(engine: DbEngine = 'mysql', folder?: string): ConnectionProfile {
   const now = new Date().toISOString()
@@ -11,7 +12,7 @@ export function blankProfile(engine: DbEngine = 'mysql', folder?: string): Conne
     name: '',
     folder,
     engine,
-    host: '127.0.0.1',
+    host: engine === 'sqlite' ? '' : '127.0.0.1',
     port: DEFAULT_PORTS[engine],
     user: DEFAULT_USERS[engine],
     database: engine === 'postgres' ? 'postgres' : '',
@@ -94,6 +95,8 @@ export const useConnections = create<ConnectionsVM>((set, get) => ({
       if (d.user === DEFAULT_USERS[d.engine]) next.user = DEFAULT_USERS[patch.engine]
       if (patch.engine === 'firebird') next.options = { charset: 'UTF8', wireCrypt: 'enabled', ...next.options }
       if (patch.engine === 'postgres' && !next.database) next.database = 'postgres'
+      // A SQLite profile is just a file path: clear the server database name it inherited.
+      if (patch.engine === 'sqlite' && d.engine === 'postgres' && next.database === 'postgres') next.database = ''
     }
     set({ draft: next, dirty: true, testResult: null })
   },
@@ -107,7 +110,7 @@ export const useConnections = create<ConnectionsVM>((set, get) => ({
     if (!draft) return null
     set({ busy: 'save' })
     try {
-      const name = draft.name.trim() || `${draft.user}@${draft.host}`
+      const name = draft.name.trim() || defaultSessionName(draft)
       const saved = await api.invoke('connections:save', { ...draft, name }, secrets)
       await get().load()
       const hasStoredPassword = await api.invoke('connections:hasPassword', saved.id)

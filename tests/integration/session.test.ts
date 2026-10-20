@@ -65,6 +65,23 @@ INSERT INTO ost_items (id, name, price, created, data, note) VALUES
   (2, 'beta', 2.25, NULL, NULL, 'it''s'),
   (3, 'gamma', 3.00, '2025-12-31 23:59:59', NULL, NULL);`
   }
+  if (engine === 'sqlite') {
+    return `DROP TABLE IF EXISTS ost_items_copy;
+DROP TABLE IF EXISTS ost_items;
+CREATE TABLE ost_items (
+  id INTEGER PRIMARY KEY,
+  name VARCHAR(100) NOT NULL,
+  price TEXT DEFAULT '0',
+  created DATETIME NULL,
+  data BLOB NULL,
+  note TEXT NULL
+);
+CREATE INDEX idx_name ON ost_items (name);
+INSERT INTO ost_items (id, name, price, created, data, note) VALUES
+  (1, 'alpha', '1.50', '2024-01-02 03:04:05', X'DEADBEEF', 'first'),
+  (2, 'beta', '2.25', NULL, NULL, 'it''s'),
+  (3, 'gamma', '3.00', '2025-12-31 23:59:59', NULL, NULL);`
+  }
   return `RECREATE TABLE OST_ITEMS (
   ID INTEGER NOT NULL PRIMARY KEY,
   NAME VARCHAR(100) NOT NULL,
@@ -83,12 +100,15 @@ INSERT INTO OST_ITEMS (ID, NAME, PRICE, CREATED, DATA, NOTE) VALUES (3, 'gamma',
 function manyRowsSql(engine: DbEngine): string {
   if (isMy(engine)) return 'SELECT * FROM information_schema.COLUMNS'
   if (engine === 'postgres') return 'SELECT g, g * 2 AS twice FROM generate_series(1, 10000) g'
+  if (engine === 'sqlite') return 'WITH RECURSIVE g(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM g WHERE n < 10000) SELECT n, n * 2 AS twice FROM g'
   return 'SELECT * FROM RDB$FIELDS'
 }
 
 function sleepSql(engine: DbEngine): string | null {
   if (isMy(engine)) return 'SELECT SLEEP(20)'
   if (engine === 'postgres') return 'SELECT pg_sleep(20)'
+  // SQLite has no sleep: an unbounded recursive CTE keeps the statement busy inside SQLite.
+  if (engine === 'sqlite') return 'WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT count(*) FROM c'
   return null
 }
 
@@ -176,13 +196,14 @@ describe.skipIf(targets.length === 0)('session service against live databases', 
       const original = await svc.getTableStructure({ ref })
       const target2 = structuredClone(original)
       target2.columns.push({ name: name(engine, 'qty'), dataType: 'INTEGER', fullType: engine === 'firebird' ? 'INTEGER' : isMy(engine) ? 'int(11)' : 'integer', nullable: true, defaultValue: '0' })
-      target2.columns[5] = { ...target2.columns[5], comment: 'free text' }
+      // SQLite has no column comments.
+      if (engine !== 'sqlite') target2.columns[5] = { ...target2.columns[5], comment: 'free text' }
       const statements = svc.generateTableDDL({ original, target: target2 })
       expect(statements.length).toBeGreaterThan(0)
       await svc.executeStatements({ statements, database: isMy(engine) ? target.database : undefined })
       const after = await svc.getTableStructure({ ref })
       expect(after.columns.map((col) => col.name.toLowerCase())).toContain('qty')
-      expect(after.columns.find((col) => col.name.toLowerCase() === 'note')?.comment).toBe('free text')
+      if (engine !== 'sqlite') expect(after.columns.find((col) => col.name.toLowerCase() === 'note')?.comment).toBe('free text')
     })
 
     it('duplicates a table with its data', async () => {
@@ -247,7 +268,8 @@ describe.skipIf(targets.length === 0)('session service against live databases', 
 
     it('returns host information', async () => {
       const host = await svc.hostInfo()
-      expect(host.processes.rows.length).toBeGreaterThan(0)
+      // SQLite has no server, so no process list.
+      if (engine !== 'sqlite') expect(host.processes.rows.length).toBeGreaterThan(0)
       expect(host.variables.rows.length).toBeGreaterThan(0)
     })
 

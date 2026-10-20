@@ -25,6 +25,7 @@ import type { ExecuteParams, ExecuteSummary, ExportSource, StatementSummary, Wor
 import { toErrorPayload } from '@shared/rpc'
 import type { OpenDatabase, ResultSink, TextWriter } from '@domain/ports/database'
 import { splitSql } from '@domain/sql/splitter'
+import { hasTransactionalDdl, isFileBased, isSingleDatabase } from '@domain/engineTraits'
 import { extractDmlStatements } from '@domain/sql/psqlStatements'
 import { Mutex } from '../util/mutex'
 import { createFormatter } from '../export/formatters'
@@ -100,7 +101,8 @@ export class SessionService {
   async connect(p: { profile: ConnectionProfile; secrets: ConnectionSecrets }): Promise<ServerInfo> {
     this.profile = p.profile
     this.secrets = p.secrets
-    const tunnel = await this.deps.openTunnel(p.profile, p.secrets)
+    // File-based engines (SQLite) open a local file: no tunnel even if the profile kept SSH settings.
+    const tunnel = isFileBased(p.profile.engine) ? null : await this.deps.openTunnel(p.profile, p.secrets)
     this.tunnel = tunnel
     this.endpoint = tunnel ? { host: '127.0.0.1', port: tunnel.localPort } : { host: p.profile.host, port: p.profile.port }
     try {
@@ -498,12 +500,11 @@ export class SessionService {
     return this.require().dialect.triggerStatements(p.original, p.target)
   }
 
-  /** Applies the trigger form; Firebird and PostgreSQL run it in one transaction. */
+  /** Applies the trigger form; engines with transactional DDL run it in one transaction. */
   async saveTrigger(p: { original: TriggerDef | null; target: TriggerDef }): Promise<{ statements: string[]; ref: DbObjectRef }> {
     const db = this.require()
     const statements = db.dialect.triggerStatements(p.original, p.target)
-    const transactional = db.info.engine === 'firebird' || db.info.engine === 'postgres'
-    await this.runStatements(statements, p.target.database, transactional)
+    await this.runStatements(statements, p.target.database, hasTransactionalDdl(db.info.engine))
     return { statements, ref: { database: p.target.database, schema: p.target.schema, name: p.target.name.trim(), kind: 'trigger', table: p.target.table } }
   }
 
@@ -653,6 +654,7 @@ export class SessionService {
     const d = db.dialect
     const engine = db.info.engine
     const isMy = engine === 'mysql' || engine === 'mariadb'
+    const isLite = engine === 'sqlite'
     const writer = await this.deps.createWriter(o.filePath)
     let count = 0
     const write = async (s: string): Promise<void> => {
@@ -661,7 +663,9 @@ export class SessionService {
     try {
       await write(`-- Open SQL Tools dump\n-- Server: ${db.info.label}\n-- Date: ${new Date().toISOString()}\n\n`)
       if (isMy) await write('SET NAMES utf8mb4;\nSET FOREIGN_KEY_CHECKS = 0;\n\n')
-      const databases = engine === 'firebird' ? [''] : o.databases
+      // SQLite: like sqlite3's .dump, the file loads in one transaction without FK checks.
+      if (isLite) await write('PRAGMA foreign_keys = OFF;\nBEGIN TRANSACTION;\n\n')
+      const databases = isSingleDatabase(engine) ? [''] : o.databases
       for (const database of databases) {
         if (ctl.cancelled) break
         if (isMy && database) {
@@ -681,12 +685,20 @@ export class SessionService {
           const ref: DbObjectRef = { database: database || undefined, schema: t.schema, name: t.name, kind: 'table' }
           this.progress(p.operationId, t.name, count)
           if (o.dropTables) await write(`DROP TABLE ${engine === 'firebird' ? '' : 'IF EXISTS '}${d.qualify(ref)};\n`)
+          // SQLite's table DDL includes its indexes and triggers: indexes follow the data and triggers
+          // are written with the other triggers, so they do not fire while the rows are loaded.
+          let afterData: string[] = []
           if (o.createTables) {
             const ddl = await db.inspector.getObjectDDL(ref)
-            await write(ddl.replace(/;?\s*$/, ';') + '\n\n')
+            if (isLite) {
+              const [table, ...rest] = splitSql(ddl, engine).map((s) => s.sql)
+              await write(`${table};\n\n`)
+              afterData = rest.filter((s) => /^CREATE\s+(UNIQUE\s+)?INDEX\b/i.test(s))
+            } else await write(ddl.replace(/;?\s*$/, ';') + '\n\n')
             count++
           }
           if (o.data !== 'none') count += await this.dumpTableData(ref, o, writer, ctl)
+          for (const s of afterData) await write(`${s};\n\n`)
         }
         if (o.includeViews) {
           for (const v of objects.filter((x) => x.kind === 'view')) {
@@ -705,6 +717,7 @@ export class SessionService {
         }
       }
       if (isMy) await write('SET FOREIGN_KEY_CHECKS = 1;\n')
+      if (isLite) await write('COMMIT;\n')
       this.progress(p.operationId, 'dump', count, count, true)
       return { statements: count }
     } catch (err) {
@@ -841,7 +854,7 @@ export class SessionService {
     const matches: { database?: string; schema?: string; table: string; column: string; count: number }[] = []
     const textual = /CHAR|TEXT|CLOB|ENUM|SET|JSON|UUID|BLOB SUB_TYPE TEXT/i
     try {
-      const databases = engine === 'firebird' ? [''] : p.databases
+      const databases = isSingleDatabase(engine) ? [''] : p.databases
       for (const database of databases) {
         const objects =
           engine === 'postgres'
@@ -852,7 +865,8 @@ export class SessionService {
           const ref: DbObjectRef = { database: database || undefined, schema: t.schema, name: t.name, kind: 'table' }
           this.progress(p.operationId, t.name, matches.length)
           const structure = await db.inspector.getTableStructure(ref)
-          const cols = structure.columns.filter((c) => textual.test(c.fullType) || textual.test(c.dataType))
+          // SQLite columns may have no declared type and still hold text.
+          const cols = structure.columns.filter((c) => textual.test(c.fullType) || textual.test(c.dataType) || (engine === 'sqlite' && !c.fullType.trim()))
           if (!cols.length) continue
           const conds = cols.map((c) => this.matchCondition(d.quoteIdent(c.name), p.text, p.matchType, p.caseSensitive, engine))
           const res = await db.metaQuery(`SELECT COUNT(*) FROM ${d.qualify(ref)} WHERE ${conds.join(' OR ')}`)
@@ -870,7 +884,13 @@ export class SessionService {
   private matchCondition(col: string, text: string, type: 'like' | 'exact' | 'regexp', caseSensitive: boolean, engine: DbEngine): string {
     const d = this.require().dialect
     const lit = (s: string): string => d.literal(s)
-    const castText = engine === 'postgres' ? `${col}::text` : engine === 'firebird' ? `CAST(${col} AS VARCHAR(32000))` : col
+    const castText = engine === 'postgres' ? `${col}::text` : engine === 'firebird' ? `CAST(${col} AS VARCHAR(32000))` : engine === 'sqlite' ? `CAST(${col} AS TEXT)` : col
+    if (engine === 'sqlite') {
+      // SQLite has no REGEXP function by default; LIKE ignores ASCII case while instr() and = do not.
+      if (type === 'regexp') throw new Error('SQLite has no regular expression support')
+      if (type === 'exact') return `${castText} = ${lit(text)}${caseSensitive ? '' : ' COLLATE NOCASE'}`
+      if (caseSensitive) return `instr(${castText}, ${lit(text)}) > 0`
+    }
     if (type === 'regexp') {
       if (engine === 'postgres') return `${castText} ${caseSensitive ? '~' : '~*'} ${lit(text)}`
       if (engine === 'firebird') return `${castText} SIMILAR TO ${lit(text)}`

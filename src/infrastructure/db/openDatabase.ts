@@ -12,6 +12,9 @@ import { PgInspector } from './postgres/pgInspector'
 import { FbConnection } from './firebird/fbConnection'
 import { FbDialect } from './firebird/fbDialect'
 import { FbInspector } from './firebird/fbInspector'
+import { SqliteConnection } from './sqlite/sqliteConnection'
+import { SqliteDialect } from './sqlite/sqliteDialect'
+import { SqliteInspector } from './sqlite/sqliteInspector'
 
 export type { OpenDatabase }
 
@@ -31,6 +34,8 @@ function createConnection(profile: ConnectionProfile, secrets: ConnectionSecrets
       return new PgConnection(profile, secrets, endpoint)
     case 'firebird':
       return new FbConnection(profile, secrets, endpoint)
+    case 'sqlite':
+      return new SqliteConnection(profile)
   }
 }
 
@@ -88,6 +93,12 @@ export async function openDatabase(profile: ConnectionProfile, secrets: Connecti
       dialect = new FbDialect(info.version)
       inspector = new FbInspector(metaQuery, dialect as FbDialect, info.version)
       break
+    case 'sqlite':
+      dialect = new SqliteDialect(info.version)
+      inspector = new SqliteInspector(metaQuery, dialect as SqliteDialect)
+      break
+    default:
+      throw new Error(`Unsupported engine: ${info.engine}`)
   }
 
   return {

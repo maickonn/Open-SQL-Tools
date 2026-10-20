@@ -8,8 +8,11 @@ import { EngineBadge } from '../common/EngineBadge'
 import { confirmDialog } from '../../components/ui/prompts'
 import { api } from '../../gateways/api'
 import { notify } from '../../stores/toast'
+import { isFileBased } from '@domain/engineTraits'
+import { defaultSessionName, endpointLabel } from '../../lib/format'
 
-const ENGINES: DbEngine[] = ['mysql', 'mariadb', 'postgres', 'firebird']
+const ENGINES: DbEngine[] = ['mysql', 'mariadb', 'postgres', 'firebird', 'sqlite']
+const SQLITE_EXTENSIONS = ['db', 'sqlite', 'sqlite3', 'db3', 's3db', 'sl3']
 const COLORS = ['', '#ef4444', '#f59e0b', '#22c55e', '#06b6d4', '#3b82f6', '#a855f7', '#ec4899']
 
 export function SessionManagerDialog() {
@@ -20,7 +23,7 @@ export function SessionManagerDialog() {
 
   const groups = useMemo(() => {
     const f = filter.trim().toLowerCase()
-    const list = vm.profiles.filter((p) => !f || p.name.toLowerCase().includes(f) || p.host.toLowerCase().includes(f))
+    const list = vm.profiles.filter((p) => !f || p.name.toLowerCase().includes(f) || endpointLabel(p).toLowerCase().includes(f))
     const map = new Map<string, ConnectionProfile[]>()
     for (const p of list) {
       const k = p.folder ?? ''
@@ -30,6 +33,9 @@ export function SessionManagerDialog() {
   }, [vm.profiles, filter])
 
   const d = vm.draft
+  const fileBased = isFileBased(d?.engine)
+  // SSH/SSL tabs do not exist for file-based engines: fall back to the settings tab.
+  const activeSection = fileBased && (section === 'ssh' || section === 'ssl') ? 'settings' : section
   const set = (patch: Partial<ConnectionProfile>): void => vm.updateDraft(patch)
   const setOpt = (patch: Partial<ConnectionProfile['options']>): void => {
     if (d) set({ options: { ...d.options, ...patch } })
@@ -136,7 +142,7 @@ export function SessionManagerDialog() {
                         {p.name}
                       </div>
                       <div className="truncate text-[11px] text-subtle">
-                        {p.user}@{p.host}:{p.port}
+                        {endpointLabel(p)}
                       </div>
                     </div>
                   </div>
@@ -152,20 +158,20 @@ export function SessionManagerDialog() {
           ) : (
             <>
               <SegmentedTabs
-                value={section}
+                value={activeSection}
                 onChange={setSection}
                 items={[
                   { value: 'settings', label: t('sessions.settings') },
-                  { value: 'ssh', label: t('sessions.ssh') },
-                  { value: 'ssl', label: t('sessions.ssl') },
+                  // A local database file has no network: no SSH tunnel or TLS.
+                  ...(fileBased ? [] : [{ value: 'ssh' as const, label: t('sessions.ssh') }, { value: 'ssl' as const, label: t('sessions.ssl') }]),
                   { value: 'advanced', label: t('sessions.advanced') }
                 ]}
               />
               <div className="min-h-0 flex-1 overflow-auto p-4">
-                {section === 'settings' && (
+                {activeSection === 'settings' && (
                   <div className="grid grid-cols-6 gap-3">
                     <Field label={t('common.name')} className="col-span-4">
-                      <Input value={d.name} onChange={(e) => set({ name: e.target.value })} placeholder={`${d.user}@${d.host}`} autoFocus />
+                      <Input value={d.name} onChange={(e) => set({ name: e.target.value })} placeholder={defaultSessionName(d)} autoFocus />
                     </Field>
                     <Field label={t('sessions.engine')} className="col-span-2">
                       <Select value={d.engine} onChange={(e) => set({ engine: e.target.value as DbEngine })}>
@@ -176,36 +182,55 @@ export function SessionManagerDialog() {
                         ))}
                       </Select>
                     </Field>
-                    <Field label={t('sessions.host')} className="col-span-4">
-                      <Input value={d.host} onChange={(e) => set({ host: e.target.value })} />
-                    </Field>
-                    <Field label={t('sessions.port')} className="col-span-2">
-                      <Input type="number" value={d.port} onChange={(e) => set({ port: Number(e.target.value) || 0 })} />
-                    </Field>
-                    <Field label={t('sessions.user')} className="col-span-3">
-                      <Input value={d.user} onChange={(e) => set({ user: e.target.value })} />
-                    </Field>
-                    <Field label={t('sessions.password')} className="col-span-3" hint={vm.hasStoredPassword && !vm.secrets.password ? t('sessions.passwordSaved') : undefined}>
-                      <Input type="password" value={vm.secrets.password ?? ''} placeholder={vm.hasStoredPassword ? '••••••••' : ''} onChange={(e) => vm.setSecret('password', e.target.value)} />
-                    </Field>
-                    <Field
-                      label={d.engine === 'firebird' ? t('sessions.databaseFb') : d.engine === 'postgres' ? t('sessions.databasePg') : t('sessions.database')}
-                      className="col-span-6"
-                    >
-                      <Input
-                        value={d.engine === 'mysql' || d.engine === 'mariadb' ? (d.databaseFilter?.join(';') ?? d.database ?? '') : (d.database ?? '')}
-                        placeholder={d.engine === 'firebird' ? '/var/lib/firebird/data/app.fdb' : d.engine === 'postgres' ? 'postgres' : 'db1;db2 (empty = all)'}
-                        onChange={(e) => {
-                          if (d.engine === 'mysql' || d.engine === 'mariadb') {
-                            const list = e.target.value.split(';').map((s) => s.trim()).filter(Boolean)
-                            set({ databaseFilter: list.length ? list : undefined, database: list[0] })
-                          } else set({ database: e.target.value })
-                        }}
-                      />
-                    </Field>
-                    <div className="col-span-6">
-                      <Checkbox checked={d.savePassword} onChange={(v) => set({ savePassword: v })} label={t('sessions.savePassword')} />
-                    </div>
+                    {fileBased ? (
+                      <>
+                        <Field label={t('sessions.databaseFile')} className="col-span-6">
+                          <FileInput
+                            value={d.database ?? ''}
+                            save={!!d.options.createIfMissing}
+                            filters={[{ name: t('sessions.sqliteFilter'), extensions: SQLITE_EXTENSIONS }, { name: '*', extensions: ['*'] }]}
+                            onChange={(v) => set({ database: v })}
+                          />
+                        </Field>
+                        <div className="col-span-6 flex gap-6">
+                          <Checkbox checked={!!d.options.createIfMissing} disabled={!!d.options.readOnly} onChange={(v) => setOpt({ createIfMissing: v || undefined })} label={t('sessions.createIfMissing')} />
+                          <Checkbox checked={!!d.options.readOnly} onChange={(v) => setOpt({ readOnly: v || undefined, createIfMissing: v ? undefined : d.options.createIfMissing })} label={t('sessions.readOnly')} />
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <Field label={t('sessions.host')} className="col-span-4">
+                          <Input value={d.host} onChange={(e) => set({ host: e.target.value })} />
+                        </Field>
+                        <Field label={t('sessions.port')} className="col-span-2">
+                          <Input type="number" value={d.port} onChange={(e) => set({ port: Number(e.target.value) || 0 })} />
+                        </Field>
+                        <Field label={t('sessions.user')} className="col-span-3">
+                          <Input value={d.user} onChange={(e) => set({ user: e.target.value })} />
+                        </Field>
+                        <Field label={t('sessions.password')} className="col-span-3" hint={vm.hasStoredPassword && !vm.secrets.password ? t('sessions.passwordSaved') : undefined}>
+                          <Input type="password" value={vm.secrets.password ?? ''} placeholder={vm.hasStoredPassword ? '••••••••' : ''} onChange={(e) => vm.setSecret('password', e.target.value)} />
+                        </Field>
+                        <Field
+                          label={d.engine === 'firebird' ? t('sessions.databaseFb') : d.engine === 'postgres' ? t('sessions.databasePg') : t('sessions.database')}
+                          className="col-span-6"
+                        >
+                          <Input
+                            value={d.engine === 'mysql' || d.engine === 'mariadb' ? (d.databaseFilter?.join(';') ?? d.database ?? '') : (d.database ?? '')}
+                            placeholder={d.engine === 'firebird' ? '/var/lib/firebird/data/app.fdb' : d.engine === 'postgres' ? 'postgres' : 'db1;db2 (empty = all)'}
+                            onChange={(e) => {
+                              if (d.engine === 'mysql' || d.engine === 'mariadb') {
+                                const list = e.target.value.split(';').map((s) => s.trim()).filter(Boolean)
+                                set({ databaseFilter: list.length ? list : undefined, database: list[0] })
+                              } else set({ database: e.target.value })
+                            }}
+                          />
+                        </Field>
+                        <div className="col-span-6">
+                          <Checkbox checked={d.savePassword} onChange={(v) => set({ savePassword: v })} label={t('sessions.savePassword')} />
+                        </div>
+                      </>
+                    )}
                     <Field label={t('sessions.folder')} className="col-span-3">
                       <Input value={d.folder ?? ''} onChange={(e) => set({ folder: e.target.value || undefined })} list="session-folders" />
                     </Field>
@@ -235,7 +260,7 @@ export function SessionManagerDialog() {
                   </div>
                 )}
 
-                {section === 'ssh' && (
+                {activeSection === 'ssh' && (
                   <div className="grid grid-cols-6 gap-3">
                     <div className="col-span-6">
                       <Checkbox checked={d.ssh.enabled} onChange={(v) => set({ ssh: { ...d.ssh, enabled: v } })} label={t('sessions.useSsh')} />
@@ -274,7 +299,7 @@ export function SessionManagerDialog() {
                   </div>
                 )}
 
-                {section === 'ssl' && (
+                {activeSection === 'ssl' && (
                   <div className="grid grid-cols-6 gap-3">
                     <div className="col-span-6 flex gap-6">
                       <Checkbox checked={d.ssl.enabled} onChange={(v) => set({ ssl: { ...d.ssl, enabled: v } })} label={t('sessions.useSsl')} />
@@ -292,17 +317,21 @@ export function SessionManagerDialog() {
                   </div>
                 )}
 
-                {section === 'advanced' && (
+                {activeSection === 'advanced' && (
                   <div className="grid grid-cols-6 gap-3">
-                    <Field label={t('sessions.charset')} className="col-span-2">
-                      <Input value={d.options.charset ?? ''} placeholder={d.engine === 'firebird' ? 'UTF8' : d.engine === 'postgres' ? 'UTF8' : 'utf8mb4'} onChange={(e) => setOpt({ charset: e.target.value || undefined })} />
-                    </Field>
-                    <Field label={t('sessions.timeout')} className="col-span-2">
-                      <Input type="number" value={d.options.connectTimeoutSec ?? 15} onChange={(e) => setOpt({ connectTimeoutSec: Number(e.target.value) || 15 })} />
-                    </Field>
-                    <Field label={t('sessions.keepAlive')} className="col-span-2">
-                      <Input type="number" value={d.options.keepAliveSec ?? 0} onChange={(e) => setOpt({ keepAliveSec: Number(e.target.value) || 0 })} />
-                    </Field>
+                    {!fileBased && (
+                      <>
+                        <Field label={t('sessions.charset')} className="col-span-2">
+                          <Input value={d.options.charset ?? ''} placeholder={d.engine === 'firebird' ? 'UTF8' : d.engine === 'postgres' ? 'UTF8' : 'utf8mb4'} onChange={(e) => setOpt({ charset: e.target.value || undefined })} />
+                        </Field>
+                        <Field label={t('sessions.timeout')} className="col-span-2">
+                          <Input type="number" value={d.options.connectTimeoutSec ?? 15} onChange={(e) => setOpt({ connectTimeoutSec: Number(e.target.value) || 15 })} />
+                        </Field>
+                        <Field label={t('sessions.keepAlive')} className="col-span-2">
+                          <Input type="number" value={d.options.keepAliveSec ?? 0} onChange={(e) => setOpt({ keepAliveSec: Number(e.target.value) || 0 })} />
+                        </Field>
+                      </>
+                    )}
                     {d.engine === 'firebird' && (
                       <>
                         <Field label={t('sessions.role')} className="col-span-2">
@@ -333,7 +362,20 @@ export function SessionManagerDialog() {
   )
 }
 
-export function FileInput({ value, onChange, disabled }: { value: string; onChange(v: string): void; disabled?: boolean }) {
+export function FileInput({
+  value,
+  onChange,
+  disabled,
+  filters,
+  save
+}: {
+  value: string
+  onChange(v: string): void
+  disabled?: boolean
+  filters?: { name: string; extensions: string[] }[]
+  /** Pick a file that may not exist yet (save dialog). */
+  save?: boolean
+}) {
   const { t } = useTranslation()
   return (
     <div className="flex gap-1.5">
@@ -341,7 +383,7 @@ export function FileInput({ value, onChange, disabled }: { value: string; onChan
       <Button
         disabled={disabled}
         onClick={async () => {
-          const f = await api.invoke('dialog:openFile', {})
+          const f = await api.invoke(save ? 'dialog:saveFile' : 'dialog:openFile', { filters, defaultPath: value || undefined })
           if (f) onChange(f)
         }}
       >

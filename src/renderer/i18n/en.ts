@@ -24,7 +24,8 @@ export const en = {
     testOk: 'Connected to {{label}}', importSessions: 'Import…', exportSessions: 'Export…', empty: 'No saved sessions yet',
     filter: 'Filter sessions', exported: '{{count}} sessions exported to {{file}}', imported: '{{count}} sessions imported', engine: 'Network type', host: 'Hostname / IP', port: 'Port', user: 'User', password: 'Password',
     passwordSaved: 'Saved — leave empty to keep', savePassword: 'Save password (encrypted)', database: 'Database(s)',
-    databaseFb: 'Database file (path or alias)', databasePg: 'Database', folder: 'Folder', color: 'Color', settings: 'Settings',
+    databaseFb: 'Database file (path or alias)', databasePg: 'Database', databaseFile: 'Database file',
+    createIfMissing: 'Create the file if it does not exist', readOnly: 'Open read-only', sqliteFilter: 'SQLite databases', folder: 'Folder', color: 'Color', settings: 'Settings',
     ssh: 'SSH tunnel', ssl: 'SSL', advanced: 'Advanced', useSsh: 'Use SSH tunnel', sshHost: 'SSH host', sshPort: 'SSH port',
     sshUser: 'SSH user', sshAuth: 'Authentication', sshPassword: 'SSH password', sshKey: 'Private key file', sshPassphrase: 'Key passphrase',
     sshAgent: 'SSH agent', useSsl: 'Use SSL/TLS', sslVerify: 'Verify server certificate', sslCa: 'CA certificate', sslCert: 'Client certificate',
@@ -103,7 +104,7 @@ export const en = {
     addIndex: 'Add index', addForeignKey: 'Add foreign key', addCheck: 'Add check', indexType: 'Index type', indexColumns: 'Columns',
     expression: 'Expression', condition: 'Condition (WHERE)', refTable: 'Reference table', refColumns: 'Reference columns', onUpdate: 'On UPDATE',
     onDelete: 'On DELETE', engine: 'Engine', autoIncValue: 'Auto increment value', rowFormat: 'Row format', tableName: 'Name',
-    tableComment: 'Comment', systemVersioning: 'System versioning', tablespace: 'Tablespace', preview: 'SQL preview', noChanges: 'No changes',
+    tableComment: 'Comment', systemVersioning: 'System versioning', tablespace: 'Tablespace', withoutRowid: 'WITHOUT ROWID (clustered on the primary key)', strict: 'STRICT (enforce column types)', preview: 'SQL preview', noChanges: 'No changes',
     saved: 'Table saved', newTable: 'New table', primary: 'Primary key', unique: 'Unique', index: 'Index', fulltext: 'Full-text', spatial: 'Spatial',
     descending: 'Descending'
   },
@@ -161,7 +162,7 @@ export const en = {
     title: 'Bulk table editor', menu: 'Bulk table editor…', tables: 'Tables', selectAll: 'Select all', moveTo: 'Move to database',
     moveToSchema: 'Move to schema', engine: 'Change engine', collation: 'Change default collation', convertData: 'Convert existing data (CONVERT TO)',
     rowFormat: 'Change row format', resetAutoIncrement: 'Reset auto increment', tablespace: 'Change tablespace', owner: 'Change owner',
-    preview: 'Preview', run: 'Apply to {{count}} tables', done: '{{ok}} tables changed, {{failed}} failed', unsupported: 'Firebird has no bulk table options.',
+    preview: 'Preview', run: 'Apply to {{count}} tables', done: '{{ok}} tables changed, {{failed}} failed', unsupported: 'This server has no bulk table options.',
     keep: '(unchanged)'
   },
   copy: {
@@ -179,7 +180,7 @@ export const en = {
     title: 'Keyboard shortcuts', action: 'Action', shortcut: 'Shortcut', press: 'Press keys…', reset: 'Reset', resetAll: 'Reset all', conflict: 'Already used by "{{action}}"'
   },
   welcome: {
-    title: 'Welcome to Open SQL Tools', subtitle: 'Fast SQL client for MySQL, MariaDB, PostgreSQL and Firebird.', open: 'Open session manager'
+    title: 'Welcome to Open SQL Tools', subtitle: 'Fast SQL client for MySQL, MariaDB, PostgreSQL, Firebird and SQLite.', open: 'Open session manager'
   }
 }
 
