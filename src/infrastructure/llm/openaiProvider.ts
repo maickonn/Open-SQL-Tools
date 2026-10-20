@@ -5,13 +5,25 @@ import type { LlmProvider, LlmTool, LlmTurnRequest, LlmTurnResult } from '@domai
 type InputItem = OpenAI.Responses.ResponseInputItem
 type FunctionTool = OpenAI.Responses.FunctionTool
 
-function toInput(messages: ChatMessage[]): InputItem[] {
+/**
+ * The SDK stream helper decorates output items with client-side fields (`parsed_arguments` on
+ * function calls, `parsed` on text) that the API rejects when the items are sent back as input.
+ */
+export function replayItem(item: Record<string, unknown>): InputItem {
+  const { parsed_arguments: _args, ...rest } = item
+  if (rest.type === 'message' && Array.isArray(rest.content)) {
+    rest.content = (rest.content as Record<string, unknown>[]).map(({ parsed: _parsed, ...c }) => c)
+  }
+  return rest as unknown as InputItem
+}
+
+export function toInput(messages: ChatMessage[]): InputItem[] {
   const out: InputItem[] = []
   for (const m of messages) {
     if (m.role === 'assistant') {
       // Replay output items verbatim (reasoning with encrypted content, function calls).
       if (m.provider === 'openai' && Array.isArray(m.providerData)) {
-        out.push(...(m.providerData as InputItem[]))
+        out.push(...(m.providerData as Record<string, unknown>[]).map(replayItem))
         continue
       }
       for (const p of m.parts) {
