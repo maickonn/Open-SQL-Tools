@@ -57,6 +57,15 @@ export interface ExecuteSummary {
   cancelled?: boolean
 }
 
+/** A collation usable in the connected database. */
+export interface CollationInfo {
+  charset: string
+  collation: string
+  isDefault: boolean
+  /** Firebird: belongs to the database default character set (used by columns without CHARACTER SET). */
+  databaseCharset?: boolean
+}
+
 export interface HostInfo {
   variables: MaterializedResult
   status: MaterializedResult
@@ -95,7 +104,7 @@ export interface WorkerApi {
   getTableStructure(p: { ref: DbObjectRef }): TableStructure
   getObjectDDL(p: { ref: DbObjectRef }): string
   getRoutineSource(p: { ref: DbObjectRef }): string
-  listCollations(p: void): { charset: string; collation: string; isDefault: boolean }[]
+  listCollations(p: void): CollationInfo[]
   listEngines(p: void): string[]
   dataTypes(p: void): string[]
 

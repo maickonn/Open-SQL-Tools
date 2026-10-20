@@ -19,7 +19,7 @@ import type {
   UserPrivileges
 } from '@shared/model'
 import type { SchemaInspector } from '@domain/ports/database'
-import type { HostInfo } from '@shared/workerApi'
+import type { CollationInfo, HostInfo } from '@shared/workerApi'
 import { groupBy, keyValueResult, num, optStr, queryObjects, str, type QueryFn, type Row } from '../common/queryHelpers'
 import type { FbDialect } from './fbDialect'
 
@@ -525,13 +525,15 @@ export class FbInspector implements SchemaInspector {
     return this.getObjectDDL(ref)
   }
 
-  async listCollations(): Promise<{ charset: string; collation: string; isDefault: boolean }[]> {
+  async listCollations(): Promise<CollationInfo[]> {
     const rows = await queryObjects(
       this.query,
-      `SELECT TRIM(CS.RDB$CHARACTER_SET_NAME) AS CS, TRIM(C.RDB$COLLATION_NAME) AS CO, C.RDB$COLLATION_ID AS ID
+      `SELECT TRIM(CS.RDB$CHARACTER_SET_NAME) AS CS, TRIM(C.RDB$COLLATION_NAME) AS CO, C.RDB$COLLATION_ID AS ID,
+              CASE WHEN CS.RDB$CHARACTER_SET_NAME = (SELECT D.RDB$CHARACTER_SET_NAME FROM RDB$DATABASE D) THEN 1 ELSE 0 END AS DB
          FROM RDB$COLLATIONS C JOIN RDB$CHARACTER_SETS CS ON CS.RDB$CHARACTER_SET_ID = C.RDB$CHARACTER_SET_ID ORDER BY 1, 2`
     )
-    return rows.map((r) => ({ charset: str(r.cs), collation: str(r.co), isDefault: num(r.id) === 0 }))
+    // A column's collation must belong to its character set (the database default when none is given).
+    return rows.map((r) => ({ charset: str(r.cs), collation: str(r.co), isDefault: num(r.id) === 0, databaseCharset: num(r.db) === 1 }))
   }
 
   async listEngines(): Promise<string[]> {

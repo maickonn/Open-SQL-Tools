@@ -16,7 +16,7 @@ import type {
   UserPrivileges
 } from '@shared/model'
 import type { SchemaInspector } from '@domain/ports/database'
-import type { HostInfo } from '@shared/workerApi'
+import type { CollationInfo, HostInfo } from '@shared/workerApi'
 import { splitType } from '@domain/sql/columnType'
 import { parseSqliteTable } from '@domain/sql/sqliteTable'
 import { parseSqliteTrigger } from '@domain/sql/sqliteTrigger'
@@ -192,7 +192,7 @@ export class SqliteInspector implements SchemaInspector {
     return this.getObjectDDL(ref)
   }
 
-  async listCollations(): Promise<{ charset: string; collation: string; isDefault: boolean }[]> {
+  async listCollations(): Promise<CollationInfo[]> {
     const rows = await this.rows('SELECT name FROM pragma_collation_list ORDER BY name')
     return rows.map((r) => ({ charset: '', collation: text(r.name), isDefault: text(r.name) === 'BINARY' }))
   }

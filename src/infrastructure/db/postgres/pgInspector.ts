@@ -19,7 +19,7 @@ import type {
   UserPrivileges
 } from '@shared/model'
 import type { SchemaInspector } from '@domain/ports/database'
-import type { HostInfo } from '@shared/workerApi'
+import type { CollationInfo, HostInfo } from '@shared/workerApi'
 import { bool, keyValueResult, num, optStr, queryObjects, str, type QueryFn } from '../common/queryHelpers'
 import type { PgDialect } from './pgDialect'
 
@@ -525,10 +525,13 @@ export class PgInspector implements SchemaInspector {
     return ref.kind === 'procedure' ? `CALL ${name}(${args.join(', ')});` : `SELECT * FROM ${name}(${args.join(', ')});`
   }
 
-  async listCollations(): Promise<{ charset: string; collation: string; isDefault: boolean }[]> {
+  async listCollations(): Promise<CollationInfo[]> {
     const rows = await queryObjects(
       this.query,
-      `SELECT collname, pg_encoding_to_char(collencoding) AS enc FROM pg_collation ORDER BY collname`
+      // Only collations for the database encoding (or any encoding, -1) can be used in COLLATE.
+      `SELECT collname, pg_encoding_to_char(collencoding) AS enc FROM pg_collation
+        WHERE collencoding IN (-1, (SELECT encoding FROM pg_database WHERE datname = current_database()))
+        ORDER BY collname`
     )
     return rows.map((r) => ({ charset: str(r.enc) || 'any', collation: str(r.collname), isDefault: str(r.collname) === 'default' }))
   }

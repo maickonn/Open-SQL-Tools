@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ColumnDef, IndexDef, TableStructure } from '@shared/model'
-import { typeArguments } from '@domain/sql/typeArguments'
+import { isCollatable, sanitizeTypeArguments, typeArguments } from '@domain/sql/typeArguments'
 import { MariaDbDialect, MySqlDialect } from '@infrastructure/db/mysql-family/mysqlDialect'
 import { PgDialect } from '@infrastructure/db/postgres/pgDialect'
 import { FbDialect } from '@infrastructure/db/firebird/fbDialect'
@@ -20,6 +20,28 @@ describe('type arguments per engine', () => {
     expect(typeArguments('mysql', 'INT')).toBe('optional')
     expect(typeArguments('mysql', 'varchar')).toBe('required')
     expect(typeArguments('sqlite', 'DATE')).toBe('optional')
+  })
+})
+
+describe('Length/Set and collation fields', () => {
+  it('keeps only the characters a type argument may hold', () => {
+    expect(sanitizeTypeArguments('postgres', 'varchar', '1a0 0')).toBe('100')
+    expect(sanitizeTypeArguments('firebird', 'NUMERIC', '10, 2,3x')).toBe('10,23')
+    expect(sanitizeTypeArguments('mysql', 'DECIMAL', '(10,2)')).toBe('10,2')
+    expect(sanitizeTypeArguments('mariadb', 'FLOAT', '7,4')).toBe('7,4')
+    expect(sanitizeTypeArguments('mysql', 'VARCHAR', '10,2')).toBe('102')
+    expect(sanitizeTypeArguments('mysql', 'ENUM', "'a','b c'")).toBe("'a','b c'")
+    expect(sanitizeTypeArguments('postgres', 'enum', "'a'")).toBe('')
+  })
+
+  it('offers collations only for text types', () => {
+    expect(isCollatable('mysql', 'VARCHAR')).toBe(true)
+    expect(isCollatable('mysql', 'INT')).toBe(false)
+    expect(isCollatable('postgres', 'text')).toBe(true)
+    expect(isCollatable('postgres', 'integer')).toBe(false)
+    expect(isCollatable('firebird', 'BLOB SUB_TYPE TEXT')).toBe(true)
+    expect(isCollatable('firebird', 'BLOB SUB_TYPE BINARY')).toBe(false)
+    expect(isCollatable('sqlite', 'INTEGER')).toBe(true)
   })
 })
 

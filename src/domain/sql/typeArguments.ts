@@ -41,3 +41,41 @@ export function typeArguments(engine: DbEngine, baseType: string): TypeArguments
   if (REQUIRED[e]?.has(base)) return 'required'
   return 'optional'
 }
+
+/** Types whose arguments are precision and scale ("10,2"). */
+const PRECISION_SCALE = set('numeric, decimal, dec, fixed, number')
+
+/** MySQL ENUM/SET take a list of quoted values instead of numbers. */
+const VALUE_LIST = set('enum, set')
+
+/**
+ * Keeps only what the Length/Set field may hold for a type: a value list for MySQL ENUM/SET,
+ * "precision,scale" for NUMERIC/DECIMAL (and MySQL FLOAT), digits otherwise.
+ */
+export function sanitizeTypeArguments(engine: DbEngine, baseType: string, input: string): string {
+  const base = baseType.trim().replace(/\s+/g, ' ').toUpperCase()
+  const e = family(engine)
+  if (e === 'mysql' && VALUE_LIST.has(base)) return input
+  if (PRECISION_SCALE.has(base) || (e === 'mysql' && base === 'FLOAT')) {
+    const [first, ...rest] = input.replace(/[^\d,]/g, '').split(',')
+    return rest.length ? `${first},${rest.join('')}` : first
+  }
+  return input.replace(/\D/g, '')
+}
+
+/** Text types a COLLATE clause applies to (SQLite accepts it on any column). */
+export function isCollatable(engine: DbEngine, baseType: string): boolean {
+  const base = baseType.trim().replace(/\s+/g, ' ').toUpperCase()
+  switch (family(engine)) {
+    case 'sqlite':
+      return true
+    case 'mysql':
+      return /CHAR|TEXT|ENUM|^SET$/.test(base)
+    case 'postgres':
+      return /^(CHAR|CHARACTER|VARCHAR|CHARACTER VARYING|BPCHAR|TEXT|CITEXT|NAME)$/.test(base)
+    case 'firebird':
+      return /^(CHAR|CHARACTER|VARCHAR|CHARACTER VARYING|NCHAR|NATIONAL CHAR|BLOB SUB_TYPE TEXT|BLOB SUB_TYPE 1)$/.test(base)
+    default:
+      return false
+  }
+}

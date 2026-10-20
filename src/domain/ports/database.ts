@@ -17,7 +17,7 @@ import type {
   TableStructure,
   UserPrivileges
 } from '@shared/model'
-import type { HostInfo } from '@shared/workerApi'
+import type { CollationInfo, HostInfo } from '@shared/workerApi'
 
 /** Receives a streamed result set. Rows arrive as columnar chunks: columns[c][r]. */
 export interface ResultSink {
@@ -71,7 +71,7 @@ export interface SchemaInspector {
   getTableStructure(ref: DbObjectRef): Promise<TableStructure>
   getObjectDDL(ref: DbObjectRef): Promise<string>
   getRoutineSource(ref: DbObjectRef): Promise<string>
-  listCollations(): Promise<{ charset: string; collation: string; isDefault: boolean }[]>
+  listCollations(): Promise<CollationInfo[]>
   listEngines(): Promise<string[]>
   countRows(ref: DbObjectRef, where?: string): Promise<number>
   hostInfo(): Promise<HostInfo>

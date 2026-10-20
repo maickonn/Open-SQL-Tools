@@ -3,7 +3,8 @@ import { useTranslation } from 'react-i18next'
 import { ArrowDown, ArrowUp, Key, Plus, Save, Trash2, Undo2 } from 'lucide-react'
 import type { CheckDef, ColumnDef, DbEngine, FkAction, ForeignKeyDef, IndexDef, IndexType, PartitionMethod, Partitioning, TableStructure } from '@shared/model'
 import { joinType, splitType } from '@domain/sql/columnType'
-import { typeArguments } from '@domain/sql/typeArguments'
+import { isCollatable, sanitizeTypeArguments, typeArguments } from '@domain/sql/typeArguments'
+import type { CollationInfo } from '@shared/workerApi'
 import type { SessionState } from '../../stores/workspaceStore'
 import { useWorkspace } from '../../stores/workspaceStore'
 import { Badge, Button, Checkbox, Field, IconButton, Input, SegmentedTabs, Select, cx } from '../../components/ui'
@@ -29,7 +30,7 @@ export function StructureEditor({ session, structure, isNew, onSaved }: { sessio
   const isMy = engine === 'mysql' || engine === 'mariadb'
   // SQLite keeps no table or column comments; collations exist per column (BINARY, NOCASE, RTRIM).
   const hasComments = engine !== 'sqlite'
-  const hasCollations = isMy || engine === 'postgres' || engine === 'sqlite'
+  const hasCollations = isMy || engine === 'postgres' || engine === 'sqlite' || engine === 'firebird'
   const [draft, setDraft] = useState<TableStructure>(() => structuredClone(structure))
   const [section, setSection] = useState<Section>('columns')
   const [selected, setSelected] = useState(0)
@@ -38,17 +39,15 @@ export function StructureEditor({ session, structure, isNew, onSaved }: { sessio
   const [review, setReview] = useState<{ statements: string[]; name: string; saved: boolean } | null>(null)
   const [types, setTypes] = useState<string[]>([])
   const [engines, setEngines] = useState<string[]>([])
-  const [collations, setCollations] = useState<{ charset: string; collation: string }[]>([])
+  const [collations, setCollations] = useState<CollationInfo[]>([])
 
   useEffect(() => setDraft(structuredClone(structure)), [structure])
 
   useEffect(() => {
     void session.client.call('dataTypes', undefined).then(setTypes)
-    if (isMy) {
-      void session.client.call('listEngines', undefined).then(setEngines).catch(() => undefined)
-      void session.client.call('listCollations', undefined).then(setCollations).catch(() => undefined)
-    }
-  }, [session, isMy])
+    if (isMy) void session.client.call('listEngines', undefined).then(setEngines).catch(() => undefined)
+    if (hasCollations) void session.client.call('listCollations', undefined).then(setCollations).catch(() => undefined)
+  }, [session, isMy, hasCollations])
 
   const dirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(structure) || isNew, [draft, structure, isNew])
 
@@ -56,7 +55,21 @@ export function StructureEditor({ session, structure, isNew, onSaved }: { sessio
     setDraft((d) => ({ ...d, columns: d.columns.map((c, j) => (j === i ? { ...c, ...patch } : c)) }))
 
   const setColType = (i: number, base: string, args: string, suffix: string): void =>
-    setCol(i, { fullType: joinType(base, args, suffix), dataType: base.toUpperCase(), unsigned: /unsigned/i.test(suffix) })
+    setDraft((d) => ({
+      ...d,
+      columns: d.columns.map((c, j) =>
+        j === i
+          ? {
+              ...c,
+              fullType: joinType(base, args, suffix),
+              dataType: base.toUpperCase(),
+              unsigned: /unsigned/i.test(suffix),
+              // A collation only applies to text types.
+              collation: isCollatable(engine, base) ? c.collation : undefined
+            }
+          : c
+      )
+    }))
 
   const moveCol = (i: number, dir: -1 | 1): void => {
     const j = i + dir
@@ -207,7 +220,7 @@ export function StructureEditor({ session, structure, isNew, onSaved }: { sessio
                               value={rule === 'none' ? '' : ty.args}
                               disabled={rule === 'none'}
                               placeholder={rule === 'required' ? t('structure.lengthRequired') : undefined}
-                              onChange={(e) => setColType(i, ty.base, e.target.value, ty.suffix)}
+                              onChange={(e) => setColType(i, ty.base, sanitizeTypeArguments(engine, ty.base, e.target.value), ty.suffix)}
                             />
                           )
                         })()}
@@ -255,7 +268,14 @@ export function StructureEditor({ session, structure, isNew, onSaved }: { sessio
                       )}
                       {hasCollations && (
                         <td>
-                          <Input className="h-7 text-xs" list={`coll-${session.id}`} value={c.collation ?? ''} onChange={(e) => setCol(i, { collation: e.target.value || undefined })} />
+                          <CollationSelect
+                            engine={engine}
+                            collations={collations}
+                            value={c.collation}
+                            charset={c.charset}
+                            disabled={!isCollatable(engine, ty.base) || (engine === 'firebird' && !isNew && structure.columns.some((o) => o.name === c.originalName))}
+                            onChange={(collation) => setCol(i, { collation })}
+                          />
                         </td>
                       )}
                     </tr>
@@ -263,11 +283,6 @@ export function StructureEditor({ session, structure, isNew, onSaved }: { sessio
                 })}
               </tbody>
             </table>
-            <datalist id={`coll-${session.id}`}>
-              {collations.map((c) => (
-                <option key={c.collation} value={c.collation} />
-              ))}
-            </datalist>
           </div>
         )}
 
@@ -486,6 +501,66 @@ function ListEditor<T>({ items, onChange, create, render, addLabel }: { items: T
         </Button>
       </div>
     </div>
+  )
+}
+
+/**
+ * Collations the column can use: the database's compatible ones (PostgreSQL filters by encoding on
+ * the server), restricted to the column's character set where the engine requires it (MySQL with an
+ * explicit charset; Firebird, whose columns default to the database character set).
+ */
+function CollationSelect({
+  engine,
+  collations,
+  value,
+  charset,
+  disabled,
+  onChange
+}: {
+  engine: DbEngine
+  collations: CollationInfo[]
+  value?: string
+  charset?: string
+  disabled?: boolean
+  onChange(collation: string | undefined): void
+}) {
+  const { t } = useTranslation()
+  const options = useMemo(() => {
+    const cs = charset?.toUpperCase()
+    if (engine === 'firebird') {
+      const own = collations.filter((c) => (cs ? c.charset.toUpperCase() === cs : c.databaseCharset))
+      return own.length ? own : collations
+    }
+    if ((engine === 'mysql' || engine === 'mariadb') && cs) return collations.filter((c) => c.charset.toUpperCase() === cs)
+    return collations
+  }, [engine, collations, charset])
+  const groups = useMemo(() => {
+    const map = new Map<string, CollationInfo[]>()
+    for (const c of options) map.set(c.charset, [...(map.get(c.charset) ?? []), c])
+    return [...map.entries()]
+  }, [options])
+  const known = !value || options.some((c) => c.collation === value)
+  const grouped = engine !== 'postgres' && engine !== 'sqlite' && groups.length > 1
+  return (
+    <Select className="h-7 text-xs" value={value ?? ''} disabled={disabled} onChange={(e) => onChange(e.target.value || undefined)}>
+      <option value="">{t('common.default')}</option>
+      {!known && <option value={value}>{value}</option>}
+      {grouped
+        ? groups.map(([cs, list]) => (
+            <optgroup key={cs} label={cs}>
+              {list.map((c) => (
+                <option key={c.collation} value={c.collation}>
+                  {c.collation}
+                </option>
+              ))}
+            </optgroup>
+          ))
+        : options.map((c) => (
+            <option key={`${c.charset}:${c.collation}`} value={c.collation}>
+              {c.collation}
+            </option>
+          ))}
+    </Select>
   )
 }
 

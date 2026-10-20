@@ -20,7 +20,7 @@ import type {
   UserPrivileges
 } from '@shared/model'
 import type { SchemaInspector } from '@domain/ports/database'
-import type { HostInfo } from '@shared/workerApi'
+import type { CollationInfo, HostInfo } from '@shared/workerApi'
 import { bool, groupBy, num, optStr, queryObjects, str, type QueryFn } from '../common/queryHelpers'
 import type { MySqlDialect } from './mysqlDialect'
 
@@ -419,7 +419,7 @@ export class MySqlInspector implements SchemaInspector {
     return this.getObjectDDL(ref)
   }
 
-  async listCollations(): Promise<{ charset: string; collation: string; isDefault: boolean }[]> {
+  async listCollations(): Promise<CollationInfo[]> {
     const rows = await queryObjects(this.query, 'SHOW COLLATION')
     return rows
       .filter((r) => r.charset !== null)
