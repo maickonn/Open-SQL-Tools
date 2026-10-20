@@ -142,7 +142,7 @@ export const en = {
   },
   chat: {
     title: 'AI assistant', placeholder: 'Ask about your database…', send: 'Send', stop: 'Stop', newChat: 'New chat', conversations: 'Conversations',
-    noKey: 'Add an API key in Preferences → AI assistant to use the assistant.', thinking: 'Thinking', toolCall: 'Tool: {{name}}',
+    noKey: 'Add an API key in Preferences → AI assistant to use the assistant.', thinking: 'Thinking…', toolCall: 'Tool: {{name}}',
     approvalTitle: 'The assistant wants to run these statements', approve: 'Run', decline: 'Decline', approved: 'Approved', declined: 'Declined',
     attachEditor: 'Include editor SQL', noSession: 'No connection selected', insertSql: 'Open in editor', runSql: 'Run',
     deleteConversation: 'Delete conversation', empty: 'Ask anything about the connected database: schema, data, query tuning, errors.',

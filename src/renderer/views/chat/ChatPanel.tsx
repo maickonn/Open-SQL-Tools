@@ -3,13 +3,15 @@ import { useTranslation } from 'react-i18next'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Bot, Brain, ChevronRight, Copy, Plus, Send, ShieldAlert, Square, SquareTerminal, Trash2, User, Wrench, X } from 'lucide-react'
-import { AI_MODELS, resolveAiModel, type AiProviderId, type ChatMessage, type ChatPart } from '@shared/model'
-import { useChat, type PendingApproval } from '../../stores/chatStore'
+import { AI_MODELS, resolveAiModel, type ChatMessage, type ChatPart } from '@shared/model'
+import { IDLE, inScope, lastModel, useChat, type PendingApproval } from '../../stores/chatStore'
 import { useWorkspace } from '../../stores/workspaceStore'
 import { useSettings } from '../../stores/settingsStore'
 import { useUi } from '../../stores/uiStore'
 import { Badge, Button, Checkbox, DropdownMenu, Empty, IconButton, Select, Spinner, cx } from '../../components/ui'
 import { editors } from '../commands'
+
+const NO_MESSAGES: ChatMessage[] = []
 
 export function ChatPanel() {
   const { t } = useTranslation()
@@ -20,9 +22,15 @@ export function ChatPanel() {
   const [text, setText] = useState('')
   const [attachEditor, setAttachEditor] = useState(true)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const conversation = chat.conversations.find((c) => c.id === chat.activeId)
-  const provider: AiProviderId = conversation?.provider ?? chat.draftModel?.provider ?? settings.ai.defaultProvider
-  const model = resolveAiModel(provider, conversation ? conversation.model : chat.draftModel?.model)
+  // Each connection has its own conversations, so contexts of different sessions never mix.
+  const scope = session?.profile.id ?? ''
+  const activeId = chat.scope === scope ? (chat.activeByScope[scope] ?? null) : null
+  const conversation = chat.conversations.find((c) => c.id === activeId)
+  const conversations = useMemo(() => chat.conversations.filter((c) => inScope(c, scope)), [chat.conversations, scope])
+  const messages = (activeId && chat.messages[activeId]) || NO_MESSAGES
+  const live = (activeId && chat.live[activeId]) || IDLE
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const model = useMemo(() => (conversation ? resolveAiModel(conversation.provider, conversation.model) : lastModel().model), [conversation, settings.ai])
   const anyKey = chat.hasKey.anthropic || chat.hasKey.openai
 
   useEffect(() => {
@@ -31,25 +39,28 @@ export function ChatPanel() {
   }, [])
 
   useEffect(() => {
+    void useChat.getState().setScope(scope)
+  }, [scope])
+
+  useEffect(() => {
     const el = scrollRef.current
     if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 200) el.scrollTop = el.scrollHeight
-  }, [chat.messages, chat.streamingText, chat.streamingThinking, chat.approvals])
+  }, [messages, live.streamingText, live.approvals])
 
   // Tool results are stored in user messages; index them by call id for rendering next to the call.
   const results = useMemo(() => {
     const m = new Map<string, Extract<ChatPart, { type: 'tool_result' }>>()
-    for (const msg of chat.messages) for (const p of msg.parts) if (p.type === 'tool_result') m.set(p.callId, p)
+    for (const msg of messages) for (const p of msg.parts) if (p.type === 'tool_result') m.set(p.callId, p)
     return m
-  }, [chat.messages])
+  }, [messages])
 
   const send = (): void => {
     const value = text.trim()
-    if (!value || chat.running) return
+    if (!value || live.running) return
     setText('')
     const editorSql = attachEditor && activeTab?.kind === 'query' ? editors.get(activeTab.id)?.getValue() : undefined
     void chat.send(value, {
       sessionId: session?.id,
-      connectionId: session?.profile.id,
       database: activeTab?.database ?? session?.info.currentDatabase,
       editorContext: editorSql
     })
@@ -61,9 +72,9 @@ export function ChatPanel() {
         <Bot size={15} className="text-accent" />
         <DropdownMenu
           items={[
-            ...chat.conversations.slice(0, 40).map((c) => ({ label: c.title, checked: c.id === chat.activeId, onSelect: () => void chat.select(c.id) })),
-            ...(chat.conversations.length ? [{ separator: true }] : []),
-            { label: t('chat.newChat'), icon: <Plus size={14} />, onSelect: () => void chat.newConversation() }
+            ...conversations.slice(0, 40).map((c) => ({ label: c.title, checked: c.id === activeId, onSelect: () => void chat.select(c.id) })),
+            ...(conversations.length ? [{ separator: true }] : []),
+            { label: t('chat.newChat'), icon: <Plus size={14} />, onSelect: () => chat.newConversation() }
           ]}
           trigger={
             <button type="button" className="min-w-0 flex-1 truncate rounded-md px-1.5 py-1 text-left text-[13px] font-medium hover:bg-hover">
@@ -71,7 +82,7 @@ export function ChatPanel() {
             </button>
           }
         />
-        <IconButton label={t('chat.newChat')} onClick={() => void chat.newConversation()}>
+        <IconButton label={t('chat.newChat')} onClick={() => chat.newConversation()}>
           <Plus size={15} />
         </IconButton>
         {conversation && (
@@ -115,40 +126,44 @@ export function ChatPanel() {
               {t('menu.settings')}
             </Button>
           </Empty>
-        ) : !chat.messages.length && !chat.running ? (
+        ) : !messages.length && !live.running ? (
           <Empty icon={<Bot size={28} />} title={t('chat.title')}>
             <p className="max-w-64 text-xs">{t('chat.empty')}</p>
           </Empty>
         ) : (
           <div className="flex flex-col gap-3">
-            {chat.messages.map((m) => (
+            {messages.map((m) => (
               <Message key={m.id} message={m} results={results} sessionId={session?.id} database={activeTab?.database} />
             ))}
-            {chat.running && (chat.streamingThinking || chat.streamingText) && (
+            {live.running && live.streamingText && (
               <div className="flex gap-2">
                 <Avatar role="assistant" />
                 <div className="min-w-0 flex-1">
-                  {chat.streamingThinking && <Thinking text={chat.streamingThinking} open />}
-                  {chat.streamingText && <Markdown text={chat.streamingText} sessionId={session?.id} database={activeTab?.database} />}
+                  <Markdown text={live.streamingText} sessionId={session?.id} database={activeTab?.database} />
                 </div>
               </div>
             )}
-            {Object.values(chat.tools)
+            {Object.values(live.tools)
               .filter((tc) => tc.output === undefined)
               .map((tc) => (
                 <div key={tc.callId} className="ml-8 flex items-center gap-2 text-xs text-muted">
                   <Spinner size={12} /> {t('chat.toolCall', { name: tc.name })}
                 </div>
               ))}
-            {chat.approvals.map((a) => (
+            {live.approvals.map((a) => (
               <Approval key={a.callId} approval={a} />
             ))}
-            {chat.running && !chat.streamingText && !chat.streamingThinking && !Object.values(chat.tools).some((x) => x.output === undefined) && (
-              <div className="ml-8">
-                <Spinner />
+            {live.running && !live.streamingText && !Object.values(live.tools).some((x) => x.output === undefined) && (
+              <div className="ml-8 flex items-center gap-2 text-xs text-muted">
+                <Spinner size={12} />
+                {live.thinking && (
+                  <>
+                    <Brain size={12} /> {t('chat.thinking')}
+                  </>
+                )}
               </div>
             )}
-            {chat.error && <div className="rounded-md border border-danger/40 bg-danger-soft px-3 py-2 text-xs text-danger">{chat.error}</div>}
+            {live.error && <div className="rounded-md border border-danger/40 bg-danger-soft px-3 py-2 text-xs text-danger">{live.error}</div>}
           </div>
         )}
       </div>
@@ -173,7 +188,7 @@ export function ChatPanel() {
             disabled={!anyKey}
             className="max-h-48 min-h-[44px] flex-1 resize-none bg-transparent px-1 text-[13px] outline-none! placeholder:text-subtle"
           />
-          {chat.running ? (
+          {live.running ? (
             <IconButton label={t('chat.stop')} onClick={() => void chat.stop()}>
               <Square size={14} className="text-danger" />
             </IconButton>
@@ -209,12 +224,13 @@ function Message({ message, results, sessionId, database }: { message: ChatMessa
       </div>
     )
   }
+  // Reasoning is never shown; skip turns that only reasoned.
+  if (!message.parts.some((p) => p.type === 'text' || p.type === 'tool_call')) return null
   return (
     <div className="flex gap-2">
       <Avatar role="assistant" />
       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
         {message.parts.map((p, i) => {
-          if (p.type === 'thinking') return <Thinking key={i} text={p.text} />
           if (p.type === 'text') return <Markdown key={i} text={p.text} sessionId={sessionId} database={database} />
           if (p.type === 'tool_call') {
             const r = results.get(p.id)
@@ -235,19 +251,6 @@ function Message({ message, results, sessionId, database }: { message: ChatMessa
         })}
       </div>
     </div>
-  )
-}
-
-function Thinking({ text, open }: { text: string; open?: boolean }) {
-  const { t } = useTranslation()
-  return (
-    <details open={open} className="group text-xs text-muted">
-      <summary className="flex cursor-pointer list-none items-center gap-1.5">
-        <ChevronRight size={12} className="transition-transform group-open:rotate-90" />
-        <Brain size={12} /> {t('chat.thinking')}
-      </summary>
-      <div className="mt-1 whitespace-pre-wrap border-l-2 border-border pl-3 italic">{text}</div>
-    </details>
   )
 }
 

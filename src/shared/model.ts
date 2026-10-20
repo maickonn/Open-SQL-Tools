@@ -525,6 +525,8 @@ export interface AppSettings {
   restoreTabs: boolean
   ai: {
     defaultProvider: AiProviderId
+    /** Model last picked in the chat; new conversations start with it. */
+    lastModel?: string
     effort: 'low' | 'medium' | 'high'
     /** Max rows returned to the model per query. */
     maxRowsToModel: number
