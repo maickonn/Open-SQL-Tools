@@ -168,11 +168,6 @@ export function StructureEditor({ session, structure, isNew, onSaved }: { sessio
                 <ArrowDown size={14} />
               </IconButton>
             </div>
-            <datalist id={`types-${session.id}`}>
-              {types.map((ty) => (
-                <option key={ty} value={ty} />
-              ))}
-            </datalist>
             <table className="w-full border-collapse text-xs">
               <thead className="sticky top-0 z-10 bg-panel text-left text-muted">
                 <tr className="[&>th]:border-b [&>th]:border-border [&>th]:px-1.5 [&>th]:py-1.5 [&>th]:font-medium">
@@ -205,7 +200,7 @@ export function StructureEditor({ session, structure, isNew, onSaved }: { sessio
                         <Input className="h-7 font-mono text-xs" value={c.name} onChange={(e) => setCol(i, { name: e.target.value })} />
                       </td>
                       <td>
-                        <Input className="h-7 font-mono text-xs" list={`types-${session.id}`} value={ty.base} onChange={(e) => setColType(i, e.target.value, ty.args, ty.suffix)} disabled={!!c.generated && engine === 'firebird'} />
+                        <TypeSelect types={types} base={ty.base} onChange={(base, args) => setColType(i, base, args, ty.suffix)} disabled={!!c.generated && engine === 'firebird'} />
                       </td>
                       <td>
                         <Input className="h-7 font-mono text-xs" value={ty.args} onChange={(e) => setColType(i, ty.base, e.target.value, ty.suffix)} />
@@ -485,6 +480,33 @@ function ListEditor<T>({ items, onChange, create, render, addLabel }: { items: T
         </Button>
       </div>
     </div>
+  )
+}
+
+/**
+ * Column type picker limited to the dialect's types (no free text). A type read from the server
+ * that is not in the list stays selectable so existing columns keep their type.
+ */
+function TypeSelect({ types, base, onChange, disabled }: { types: string[]; base: string; onChange(base: string, args: string): void; disabled?: boolean }) {
+  const current = types.find((t) => splitType(t).base.toUpperCase() === base.toUpperCase() && !splitType(t).args) ?? types.find((t) => splitType(t).base.toUpperCase() === base.toUpperCase())
+  return (
+    <Select
+      className="h-7 font-mono text-xs"
+      value={current ?? base}
+      disabled={disabled}
+      onChange={(e) => {
+        // A new type starts without the old length/precision; entries such as DECFLOAT(16) bring their own.
+        const picked = splitType(e.target.value)
+        onChange(picked.base, picked.args)
+      }}
+    >
+      {!current && <option value={base}>{base}</option>}
+      {types.map((t) => (
+        <option key={t} value={t}>
+          {t}
+        </option>
+      ))}
+    </Select>
   )
 }
 
