@@ -36,7 +36,7 @@ export class SessionManager {
   constructor(private readonly onClosed: (sessionId: string, reason?: string) => void) {}
 
   private spawn(): { child: UtilityProcess; rpc: RpcEndpoint<WorkerApi, WorkerEvents> } {
-    const child = utilityProcess.fork(join(__dirname, 'connectionWorker.js'), [], { serviceName: 'Open SQL Tool database session', stdio: 'inherit' })
+    const child = utilityProcess.fork(join(__dirname, 'connectionWorker.js'), [], { serviceName: 'Open SQL Tools database session', stdio: 'inherit' })
     const { port1, port2 } = new MessageChannelMain()
     child.postMessage({ type: 'attach' }, [port1])
     return { child, rpc: new RpcEndpoint<WorkerApi, WorkerEvents>(wrap(port2)) }

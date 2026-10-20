@@ -1,6 +1,6 @@
 {
-  "name": "open-sql-tool",
-  "productName": "Open SQL Tool",
+  "name": "open-sql-tools",
+  "productName": "Open SQL Tools",
   "version": "0.1.0",
   "description": "Modern desktop SQL client for Firebird, MySQL, MariaDB and PostgreSQL with an agentic AI chat.",
   "main": "./out/main/index.js",

@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Open SQL Tool is an Electron + TypeScript desktop SQL client aiming at feature parity with HeidiSQL (MySQL 5.7+, MariaDB 10.2+, PostgreSQL 15+, Firebird 2.5+) plus an agentic AI chat (Anthropic/OpenAI). Application performance is a primary requirement.
+Open SQL Tools is an Electron + TypeScript desktop SQL client aiming at feature parity with HeidiSQL (MySQL 5.7+, MariaDB 10.2+, PostgreSQL 15+, Firebird 2.5+) plus an agentic AI chat (Anthropic/OpenAI). Application performance is a primary requirement.
 
 ## Conventions
 

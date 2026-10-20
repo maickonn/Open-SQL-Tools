@@ -1,6 +1,6 @@
 /** English UI strings. */
 export const en = {
-  app: { name: 'Open SQL Tool' },
+  app: { name: 'Open SQL Tools' },
   common: {
     ok: 'OK', cancel: 'Cancel', save: 'Save', delete: 'Delete', close: 'Close', apply: 'Apply', discard: 'Discard', refresh: 'Refresh',
     add: 'Add', remove: 'Remove', edit: 'Edit', copy: 'Copy', duplicate: 'Duplicate', rename: 'Rename', search: 'Search', filter: 'Filter',
@@ -179,7 +179,7 @@ export const en = {
     title: 'Keyboard shortcuts', action: 'Action', shortcut: 'Shortcut', press: 'Press keys…', reset: 'Reset', resetAll: 'Reset all', conflict: 'Already used by "{{action}}"'
   },
   welcome: {
-    title: 'Welcome to Open SQL Tool', subtitle: 'Fast SQL client for MySQL, MariaDB, PostgreSQL and Firebird.', open: 'Open session manager'
+    title: 'Welcome to Open SQL Tools', subtitle: 'Fast SQL client for MySQL, MariaDB, PostgreSQL and Firebird.', open: 'Open session manager'
   }
 }
 

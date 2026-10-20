@@ -1,4 +1,4 @@
-# Open SQL Tool
+# Open SQL Tools
 
 A fast, modern desktop SQL client in the spirit of HeidiSQL, for **MySQL 5.7+**, **MariaDB 10.2+**, **PostgreSQL 15+** and **Firebird 2.5+**, with a built-in AI assistant (Anthropic and OpenAI) that can inspect and query your database. Dark theme by default, light theme available.
 

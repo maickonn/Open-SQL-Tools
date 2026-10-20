@@ -1,5 +1,5 @@
 appId: dev.opensqltool.app
-productName: Open SQL Tool
+productName: Open SQL Tools
 directories:
   output: release
   buildResources: resources

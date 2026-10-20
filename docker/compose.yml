@@ -1,4 +1,4 @@
-# Disposable test databases for Open SQL Tool. No volumes: every start is clean.
+# Disposable test databases for Open SQL Tools. No volumes: every start is clean.
 # Start only the servers you are testing (the whole matrix overwhelms Docker Desktop):
 #
 #   npm run test:db -- mysql97 postgres18      # start, run integration tests, stop

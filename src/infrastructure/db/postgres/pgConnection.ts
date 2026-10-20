@@ -98,7 +98,7 @@ export class PgConnection implements DbConnection {
       user: p.user,
       password: this.secrets.password ?? '',
       database,
-      application_name: p.options.applicationName || 'Open SQL Tool',
+      application_name: p.options.applicationName || 'Open SQL Tools',
       connectionTimeoutMillis: (p.options.connectTimeoutSec ?? 15) * 1000,
       keepAlive: true,
       types: typeOverrides

@@ -12,6 +12,8 @@ import { createMainWindow } from './window'
 
 // Tests run with an isolated profile directory.
 if (process.env.OST_USER_DATA) app.setPath('userData', process.env.OST_USER_DATA)
+// Keep the profile directory from before the rename to Open SQL Tools (settings, connections, history).
+else app.setPath('userData', join(app.getPath('appData'), 'Open SQL Tool'))
 
 // One instance: a second launch focuses the existing window.
 if (!process.env.OST_USER_DATA && !app.requestSingleInstanceLock()) app.quit()

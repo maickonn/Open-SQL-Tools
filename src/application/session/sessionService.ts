@@ -659,7 +659,7 @@ export class SessionService {
       await writer.write(s)
     }
     try {
-      await write(`-- Open SQL Tool dump\n-- Server: ${db.info.label}\n-- Date: ${new Date().toISOString()}\n\n`)
+      await write(`-- Open SQL Tools dump\n-- Server: ${db.info.label}\n-- Date: ${new Date().toISOString()}\n\n`)
       if (isMy) await write('SET NAMES utf8mb4;\nSET FOREIGN_KEY_CHECKS = 0;\n\n')
       const databases = engine === 'firebird' ? [''] : o.databases
       for (const database of databases) {
