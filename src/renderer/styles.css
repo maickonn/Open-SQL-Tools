@@ -139,6 +139,20 @@ textarea,
   -webkit-app-region: no-drag;
 }
 
+/* Clickable controls use the hand cursor (Tailwind's preflight resets buttons to the default arrow). */
+@layer base {
+  button:not(:disabled),
+  [role='button']:not([aria-disabled='true']),
+  [role='tab'],
+  [role='checkbox']:not([aria-disabled='true']),
+  [role='radio']:not([aria-disabled='true']),
+  [role='switch']:not([aria-disabled='true']),
+  summary,
+  select:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -1px;
