@@ -36,6 +36,8 @@ export function DataView({ session, refObj, tabId, active, structure }: { sessio
   const [valueEdit, setValueEdit] = useState<{ row: number; col: number } | null>(null)
   const [selection, setSelection] = useState<number[]>([])
   const loaded = useRef(false)
+  /** Filter + sort of the last full load; a reload happens only when they change. */
+  const loadedKey = useRef<string | null>(null)
   const editable = refObj.kind === 'table'
 
   const keyColumns = useMemo(() => {
@@ -51,6 +53,7 @@ export function DataView({ session, refObj, tabId, active, structure }: { sessio
     async (opts?: { append?: boolean; all?: boolean }) => {
       setLoading(true)
       try {
+        if (!opts?.append) loadedKey.current = JSON.stringify([appliedWhere, sort])
         const offset = opts?.append ? result.rowCount : 0
         const limit = opts?.all ? Number.MAX_SAFE_INTEGER : settings.dataPageSize
         const sql = await session.client.call('tableDataSql', { ref: refObj, where: appliedWhere || undefined, orderBy: sort, offset, limit: Math.min(limit, 2_147_483_647) })
@@ -93,13 +96,10 @@ export function DataView({ session, refObj, tabId, active, structure }: { sessio
     }
   }, [active, load])
 
-  // Reload when filter or sort change (after the first load).
-  const first = useRef(true)
+  // Reload when filter or sort change after the first load. Comparing with what was loaded (instead
+  // of skipping the first run) keeps StrictMode's double effect run from issuing a second SELECT.
   useEffect(() => {
-    if (first.current) {
-      first.current = false
-      return
-    }
+    if (!loaded.current || loadedKey.current === JSON.stringify([appliedWhere, sort])) return
     void load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appliedWhere, sort])
