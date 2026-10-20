@@ -21,7 +21,8 @@ export function ChatPanel() {
   const [attachEditor, setAttachEditor] = useState(true)
   const scrollRef = useRef<HTMLDivElement>(null)
   const conversation = chat.conversations.find((c) => c.id === chat.activeId)
-  const provider: AiProviderId = conversation?.provider ?? settings.ai.defaultProvider
+  const provider: AiProviderId = conversation?.provider ?? chat.draftModel?.provider ?? settings.ai.defaultProvider
+  const model = resolveAiModel(provider, conversation ? conversation.model : chat.draftModel?.model)
   const anyKey = chat.hasKey.anthropic || chat.hasKey.openai
 
   useEffect(() => {
@@ -83,11 +84,11 @@ export function ChatPanel() {
         </IconButton>
       </div>
 
-      {conversation && (
+      {anyKey && (
         <div className="flex shrink-0 items-center gap-1.5 border-b border-border px-2 py-1.5">
           <Select
             className="h-7 min-w-0 flex-1 text-xs"
-            value={resolveAiModel(provider, conversation.model)}
+            value={model}
             onChange={(e) => {
               const m = AI_MODELS.find((x) => x.id === e.target.value)
               if (m) void chat.setModel(m.provider, m.id)
@@ -170,7 +171,7 @@ export function ChatPanel() {
             rows={3}
             placeholder={t('chat.placeholder')}
             disabled={!anyKey}
-            className="max-h-48 min-h-[44px] flex-1 resize-none bg-transparent px-1 text-[13px] outline-none placeholder:text-subtle"
+            className="max-h-48 min-h-[44px] flex-1 resize-none bg-transparent px-1 text-[13px] outline-none! placeholder:text-subtle"
           />
           {chat.running ? (
             <IconButton label={t('chat.stop')} onClick={() => void chat.stop()}>

@@ -33,6 +33,8 @@ interface ChatVM {
   tools: Record<string, ToolActivity>
   hasKey: Record<AiProviderId, boolean>
   error: string | null
+  /** Model picked before the first message, used when the conversation gets created. */
+  draftModel: { provider: AiProviderId; model: string } | null
 
   toggle(open?: boolean): void
   init(): Promise<void>
@@ -62,6 +64,7 @@ export const useChat = create<ChatVM>((set, get) => ({
   tools: {},
   hasKey: { anthropic: false, openai: false },
   error: null,
+  draftModel: null,
 
   toggle(open) {
     set((s) => ({ open: open ?? !s.open }))
@@ -90,10 +93,10 @@ export const useChat = create<ChatVM>((set, get) => ({
   },
 
   async newConversation(provider, model) {
-    const ai = useSettings.getState().settings.ai
-    const p = provider ?? ai.defaultProvider
-    const c = await api.invoke('chat:create', { provider: p, model: resolveAiModel(p, model) })
-    set((s) => ({ conversations: [c, ...s.conversations] }))
+    const draft = get().draftModel
+    const p = provider ?? draft?.provider ?? useSettings.getState().settings.ai.defaultProvider
+    const c = await api.invoke('chat:create', { provider: p, model: resolveAiModel(p, model ?? (draft?.provider === p ? draft.model : undefined)) })
+    set((s) => ({ conversations: [c, ...s.conversations], draftModel: null }))
     await get().select(c.id)
     return c.id
   },
@@ -129,7 +132,10 @@ export const useChat = create<ChatVM>((set, get) => ({
 
   async setModel(provider, model) {
     const id = get().activeId
-    if (!id) return
+    if (!id) {
+      set({ draftModel: { provider, model } })
+      return
+    }
     const c = await api.invoke('chat:update', id, { provider, model })
     set((s) => ({ conversations: s.conversations.map((x) => (x.id === id ? c : x)) }))
   }
