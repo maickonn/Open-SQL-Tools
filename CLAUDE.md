@@ -8,6 +8,7 @@ Open SQL Tools is an Electron + TypeScript desktop SQL client aiming at feature 
 
 - All code, identifiers, comments and commit messages must be written in English. The UI is English-only; every user-visible string still goes through i18next (`src/renderer/i18n/en.ts`), never hardcoded in components.
 - Never add Docker volumes, and never start the whole database matrix (Docker Desktop crashes). Start only the services being tested and stop them afterwards — the `test:db` / `test:e2e:db` scripts do this.
+- Keep the task/todo list current: mark each task complete as soon as it is done and start the next one right away, instead of updating the list in batches at the end.
 - Supported AI models are a fixed list (`AI_MODELS` in `src/shared/model.ts`); `resolveAiModel` maps anything else to the provider default. Don't reintroduce free-form model ids or API model listing.
 
 ## Commands
