@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Bot,
@@ -19,7 +20,7 @@ import {
   Users,
   Check
 } from 'lucide-react'
-import { DropdownMenu, IconButton, cx, type MenuItem } from '../components/ui'
+import { IconButton, Menubar, cx, type MenuItem } from '../components/ui'
 import { useConnections } from '../stores/connectionsStore'
 import { useWorkspace } from '../stores/workspaceStore'
 import { useUi } from '../stores/uiStore'
@@ -29,19 +30,6 @@ import { commands } from './commands'
 import { resolveShortcut } from '../lib/shortcuts'
 import { api } from '../gateways/api'
 import logo from '../assets/logo.svg'
-
-function MenuButton({ label, items }: { label: string; items: MenuItem[] }) {
-  return (
-    <DropdownMenu
-      items={items}
-      trigger={
-        <button type="button" className="no-drag h-7 rounded-md px-2.5 text-[13px] text-muted hover:bg-hover hover:text-fg data-[state=open]:bg-hover data-[state=open]:text-fg">
-          {label}
-        </button>
-      }
-    />
-  )
-}
 
 export function TitleBar() {
   const { t } = useTranslation()
@@ -54,6 +42,9 @@ export function TitleBar() {
   const theme = resolveTheme(settings.theme)
   const sid = activeSession?.id
   const sc = (id: string): string => resolveShortcut(id, settings.shortcuts)
+  // The drag region swallows clicks before the page sees them, so it is disabled while a menu is open
+  // to let a click anywhere on the title bar close the menu.
+  const [menuOpen, setMenuOpen] = useState(false)
 
   const fileMenu: MenuItem[] = [
     { label: t('menu.sessionManager'), icon: <Database size={14} />, shortcut: sc('sessionManager'), onSelect: () => useConnections.getState().openDialog() },
@@ -115,13 +106,19 @@ export function TitleBar() {
   ]
 
   return (
-    <header className={cx('drag flex h-9 shrink-0 items-center gap-1 border-b border-border bg-bg pr-[140px]', isMac ? 'pl-20' : 'pl-2')}>
+    <header className={cx(!menuOpen && 'drag', 'flex h-9 shrink-0 items-center gap-1 border-b border-border bg-bg pr-[140px]', isMac ? 'pl-20' : 'pl-2')}>
       <img src={logo} alt="" className="mr-1 h-5 w-5" draggable={false} />
-      <MenuButton label={t('menu.file')} items={fileMenu} />
-      <MenuButton label={t('menu.query')} items={queryMenu} />
-      <MenuButton label={t('menu.tools')} items={toolsMenu} />
-      <MenuButton label={t('menu.view')} items={viewMenu} />
-      <MenuButton label={t('menu.help')} items={helpMenu} />
+      <Menubar
+        className="no-drag"
+        onOpenChange={setMenuOpen}
+        menus={[
+          { label: t('menu.file'), items: fileMenu },
+          { label: t('menu.query'), items: queryMenu },
+          { label: t('menu.tools'), items: toolsMenu },
+          { label: t('menu.view'), items: viewMenu },
+          { label: t('menu.help'), items: helpMenu }
+        ]}
+      />
 
       <div className="no-drag ml-3 flex items-center gap-0.5 border-l border-border pl-2">
         <IconButton label={t('menu.sessionManager')} onClick={() => useConnections.getState().openDialog()}>

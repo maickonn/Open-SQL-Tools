@@ -1,6 +1,6 @@
 import { forwardRef, useId, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react'
 import { clsx } from 'clsx'
-import { ContextMenu as RCM, Dialog as RDialog, DropdownMenu as RDM, Tooltip as RTooltip } from 'radix-ui'
+import { ContextMenu as RCM, Dialog as RDialog, DropdownMenu as RDM, Menubar as RMB, Tooltip as RTooltip } from 'radix-ui'
 import { Check, ChevronRight, Loader2, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
@@ -227,7 +227,7 @@ const itemClass =
   'relative flex h-7 cursor-default select-none items-center gap-2 rounded-md pl-7 pr-2 text-[13px] outline-none data-[highlighted]:bg-accent data-[highlighted]:text-accent-fg data-[disabled]:opacity-40'
 const contentClass = 'z-50 min-w-[200px] rounded-lg border border-border bg-panel p-1 shadow-pop'
 
-function renderItems(items: MenuItem[], P: typeof RDM | typeof RCM): ReactNode {
+function renderItems(items: MenuItem[], P: typeof RDM | typeof RCM | typeof RMB): ReactNode {
   return items.map((it, i) => {
     if (it.separator) return <P.Separator key={i} className="my-1 h-px bg-border" />
     if (it.items) {
@@ -266,6 +266,26 @@ export function DropdownMenu({ trigger, items, align = 'start' }: { trigger: Rea
         </RDM.Content>
       </RDM.Portal>
     </RDM.Root>
+  )
+}
+
+/** Application menu bar: once a menu is open, hovering another trigger switches to it. */
+export function Menubar({ menus, className, onOpenChange }: { menus: { label: ReactNode; items: MenuItem[] }[]; className?: string; onOpenChange?(open: boolean): void }) {
+  return (
+    <RMB.Root className={cx('flex items-center gap-1', className)} onValueChange={(v) => onOpenChange?.(v !== '')}>
+      {menus.map((m, i) => (
+        <RMB.Menu key={i}>
+          <RMB.Trigger className="h-7 rounded-md px-2.5 text-[13px] text-muted outline-none hover:bg-hover hover:text-fg data-[highlighted]:bg-hover data-[state=open]:bg-hover data-[state=open]:text-fg">
+            {m.label}
+          </RMB.Trigger>
+          <RMB.Portal>
+            <RMB.Content className={contentClass} sideOffset={4} align="start">
+              {renderItems(m.items, RMB)}
+            </RMB.Content>
+          </RMB.Portal>
+        </RMB.Menu>
+      ))}
+    </RMB.Root>
   )
 }
 
