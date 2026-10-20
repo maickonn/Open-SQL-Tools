@@ -2,19 +2,24 @@
 
 A fast, modern desktop SQL client in the spirit of HeidiSQL, for **MySQL 5.7+**, **MariaDB 10.2+**, **PostgreSQL 15+**, **Firebird 2.5+** and **SQLite** (database files, using the SQLite bundled with Electron), with a built-in AI assistant (Anthropic and OpenAI) that can inspect and query your database. Dark theme by default, light theme available.
 
+This application was written with the help of [Claude Code](https://claude.com/claude-code).
+
 ## Features
 
 - **Session manager**: SQLite database files (create if missing, open read-only), folders, colors, SSH tunnels (password, key, agent), SSL/TLS, MariaDB `ed25519`/`parsec` accounts, startup scripts, keep-alive, import/export of sessions. Passwords and API keys are encrypted with the OS keychain (Electron `safeStorage`).
-- **Object tree**: databases, schemas, tables, views, materialized views, procedures, functions, packages, triggers, events, sequences/generators, domains, exceptions and types, with filtering and context actions (create, drop, rename, duplicate, empty, maintenance).
-- **Host tab**: process list (kill process or query), server variables, status and command statistics.
+- **Object tree**: databases, schemas, tables, views, materialized views, procedures, functions, packages, triggers, events, sequences/generators, domains, exceptions and types, grouped by kind with counts (like IBExpert), with filtering. Context actions per kind: create from a template, edit, drop, rename, duplicate, empty, maintenance, run a routine, activate/deactivate triggers and events (selected ones or all), and inactive objects are marked in the tree.
+- **Object views**: Dependencies tab (objects used by and using the selected one), Operations / plan tab for Firebird procedures and triggers (each DML statement with its execution plan), and editable grids for generators/sequences (current value) and Firebird exceptions (message).
+- **Trigger form**: name, table, position, active state, timing and events in fields, with only the body in the editor; the app writes the `CREATE`/`ALTER` for each engine. Saving first shows the statements in a review window and runs nothing until you confirm.
+- **Host tab**: process list (kill process or query), server variables, status and command statistics (SQLite: pragmas and compile options).
 - **SQL editor** (Monaco): multiple tabs, dialect-aware highlighting, autocomplete from the live catalog, run all / current statement / selection, multiple result sets, error markers, EXPLAIN, formatter, query history, snippets, open/save files, transaction control (auto-commit, commit, rollback).
 - **Data tab**: canvas-rendered grid (millions of rows), WHERE filter, sorting, paging, inline editing with insert/update/delete posted as SQL, NULL handling, value editor for long text, JSON and binary data, copy as TSV/CSV/SQL/Markdown/JSON.
-- **Table editor**: columns, indexes, foreign keys, check constraints, table options and partitions (MySQL/MariaDB `PARTITION BY`, PostgreSQL declarative partitions) with a live preview of the generated `CREATE`/`ALTER` SQL. On SQLite, changes `ALTER TABLE` cannot make are applied by rebuilding the table in one transaction, keeping data, indexes, triggers, views and foreign keys.
+- **Table editor**: columns (types picked from the engine's list), indexes, foreign keys, check constraints, table options and partitions (MySQL/MariaDB `PARTITION BY`, PostgreSQL declarative partitions) with a live preview of the generated `CREATE`/`ALTER` SQL. On SQLite, changes `ALTER TABLE` cannot make are applied by rebuilding the table in one transaction, keeping data, indexes, triggers, views and foreign keys.
 - **Bulk table editor**: move tables to another database/schema, change engine, collation (optionally converting data), row format, tablespace or owner for many tables at once.
 - **Copy table**: to another database, schema or server of the same engine family, with or without data (server-side `INSERT … SELECT` when possible, streamed otherwise).
+- **Menus**: File, Query, Tools, View and Help work like a desktop menu bar: once one is open, hovering another switches to it.
 - **Keyboard shortcuts**: every action can be rebound in Preferences → Keyboard shortcuts (with conflict detection).
 - **Tools**: export grids (CSV, TSV, Excel XLSX, JSON, SQL, HTML, XML, Markdown, LaTeX), SQL dump of databases, run SQL files, CSV import, find text on server, user manager.
-- **AI assistant**: streaming chat with tool use. Reads schema and data freely (inside a read-only transaction); any statement that changes data or schema needs your explicit approval.
+- **AI assistant**: streaming chat with tool use. Reads schema and data freely (inside a read-only transaction); any statement that changes data or schema needs your explicit approval. Supported models: Claude Opus 5.5, Claude Sonnet 5.5, Claude Haiku 5.5, GPT 6.1 Sol and GPT 6.0 Luna; new chats start with the last model picked. Each connection keeps its own conversations, so contexts never mix. While the model reasons, the chat shows "Thinking…" without the reasoning text.
 
 ## Architecture
 
@@ -40,10 +45,14 @@ Performance design:
 - Results stream from the worker straight to the renderer over a dedicated `MessagePort` as **columnar chunks**; the grid reads cells on demand and never copies rows into React state.
 - Each session keeps a second connection for catalog browsing, kills and AI reads, so a long query never freezes the object tree.
 - Monaco, the AI chat and the tool dialogs load lazily.
+- Catalog queries are combined into as few round trips as possible, which matters over SSH tunnels and WAN links.
+- SQLite connections run in their own child process, so a long statement can be cancelled by stopping that process.
+
+Settings, saved sessions, query history and chats live in the app's profile folder (`%APPDATA%\Open SQL Tools` on Windows, `~/Library/Application Support/Open SQL Tools` on macOS, `~/.config/Open SQL Tools` on Linux).
 
 ## Development
 
-Requirements: Node.js 22.12+ and Docker (for test databases).
+Requirements: Node.js 22.12+ and Docker (for the server test databases; SQLite tests need no container).
 
 ```bash
 npm install
