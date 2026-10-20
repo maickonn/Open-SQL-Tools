@@ -7,6 +7,12 @@ files:
   - out/**
   - package.json
   - '!**/*.map'
+# Next to the executable, beside Electron's LICENSE.electron.txt and LICENSES.chromium.html.
+extraFiles:
+  - from: LICENSE
+    to: LICENSE.txt
+  - from: out/THIRD_PARTY_NOTICES.txt
+    to: THIRD_PARTY_NOTICES.txt
 asarUnpack:
   - '**/node_modules/cpu-features/**'
 win:

@@ -87,3 +87,7 @@ Other scripts:
 The `tools` profile adds `sshd` (port 2222, user/password `tunnel`, throwaway key `docker/sshd/test_key`; reach databases by service name, e.g. `mysql97:3306`) and `postgres18ssl` (port 35428, TLS on).
 
 Credentials: MySQL/MariaDB `root`/`test`, PostgreSQL `postgres`/`test`, Firebird `SYSDBA`/`masterkey`. Each server has a `testdb` database (Firebird: `/var/lib/firebird/data/testdb.fdb`).
+
+## License
+
+[MIT](LICENSE). The packaged app ships `THIRD_PARTY_NOTICES.txt`, generated at build time with the licenses of every bundled or installed dependency, next to Electron's `LICENSE.electron.txt` and `LICENSES.chromium.html`.

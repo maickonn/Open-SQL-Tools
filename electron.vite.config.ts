@@ -2,6 +2,7 @@ import { resolve } from 'node:path'
 import { defineConfig } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import { thirdPartyNotices } from './scripts/thirdPartyNotices.mjs'
 
 const alias = {
   '@shared': resolve(__dirname, 'src/shared'),
@@ -14,6 +15,7 @@ const alias = {
 export default defineConfig({
   main: {
     resolve: { alias },
+    plugins: [thirdPartyNotices()],
     build: {
       rollupOptions: {
         input: {
@@ -28,6 +30,7 @@ export default defineConfig({
   },
   preload: {
     resolve: { alias },
+    plugins: [thirdPartyNotices()],
     build: {
       rollupOptions: { input: { index: resolve(__dirname, 'src/preload/index.ts') } }
     }
@@ -35,7 +38,7 @@ export default defineConfig({
   renderer: {
     root: resolve(__dirname, 'src/renderer'),
     resolve: { alias },
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), thirdPartyNotices(['tailwindcss', '@fontsource-variable/inter', '@fontsource-variable/jetbrains-mono'])],
     build: {
       rollupOptions: { input: { index: resolve(__dirname, 'src/renderer/index.html') } }
     }
