@@ -44,7 +44,7 @@ test('the SQL editor has a context menu', async () => {
   await expect(editorText(page)).toContainText('answer')
 
   await menu(page, 'Run')
-  await expect(page.getByText('42').first()).toBeVisible({ timeout: 15_000 })
+  await expect(page.getByRole('button', { name: 'Result #1 1' })).toBeVisible({ timeout: 15_000 })
   await expect(page.locator('[data-sonner-toast][data-type="error"]')).toHaveCount(0)
   await app.close()
 })

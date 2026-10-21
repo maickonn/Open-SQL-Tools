@@ -1,4 +1,5 @@
-import { format as formatSql } from 'sql-formatter'
+import { format as sqlFormatter } from 'sql-formatter'
+import { formatSql } from '@domain/sql/format'
 import { statementAtOffset } from '@domain/sql/splitter'
 import type { DbEngine } from '@shared/model'
 import { api } from '../gateways/api'
@@ -83,9 +84,12 @@ export const commands = {
     if (!editor) return
     try {
       const sel = editor.getSelection()
-      const opts = { language: dialect(session?.info.engine), keywordCase: 'upper' as const, tabWidth: 2 }
-      if (sel) editor.insert(formatSql(sel.text, opts))
-      else editor.setValue(formatSql(editor.getValue(), opts))
+      const engine = session?.info.engine ?? 'mysql'
+      // Queries and DML follow the house style; DDL and routine bodies use sql-formatter with the same indentation.
+      const fallback = (sql: string): string => sqlFormatter(sql, { language: dialect(engine), keywordCase: 'upper', tabWidth: 4 })
+      const format = (sql: string): string => formatSql(sql, engine, fallback)
+      if (sel) editor.insert(format(sel.text))
+      else editor.setValue(format(editor.getValue()))
     } catch (err) {
       notify.error(err)
     }
