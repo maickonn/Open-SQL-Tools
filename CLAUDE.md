@@ -10,6 +10,7 @@ Open SQL Tools is an Electron + TypeScript desktop SQL client aiming at feature 
 - Never add Docker volumes, and never start the whole database matrix (Docker Desktop crashes). Start only the services being tested and stop them afterwards — the `test:db` / `test:e2e:db` scripts do this.
 - Keep the task/todo list current: mark each task complete as soon as it is done and start the next one right away, instead of updating the list in batches at the end.
 - Supported AI models are a fixed list (`AI_MODELS` in `src/shared/model.ts`); `resolveAiModel` maps anything else to the provider default. Don't reintroduce free-form model ids or API model listing.
+- When asked to change the version, also add a `## [x.y.z]` section to `CHANGELOG.md` listing what is new since the previous version (user-facing changes, from `git log v<previous>..HEAD` plus anything under `## [Unreleased]`, which is then left empty). The release workflow fails without that section, and the update splash shows its first items.
 
 ## Commands
 
