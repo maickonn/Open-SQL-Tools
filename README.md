@@ -95,7 +95,7 @@ Credentials: MySQL/MariaDB `root`/`test`, PostgreSQL `postgres`/`test`, Firebird
 
 GitHub Actions ([`ci.yml`](.github/workflows/ci.yml)) runs on every push to `main` and every pull request: typecheck, unit tests and build, then one job per database server in `docker/compose.yml` (integration tests, plus the Electron end-to-end flow for SQLite, `firebird5`, `mysql97`, `mariadb118` and `postgres18`), the SSH/TLS connectivity tests and a Windows installer build.
 
-To release, bump the version and push the tag:
+To release, write the user-facing changes under `## [Unreleased]` in [`CHANGELOG.md`](CHANGELOG.md), rename that heading to the new version (e.g. `## [0.1.1]`) and commit, then bump the version and push the tag:
 
 ```bash
 npm version patch
@@ -105,9 +105,9 @@ npm version patch
 git push --follow-tags
 ```
 
-[`release.yml`](.github/workflows/release.yml) checks that the tag matches `package.json`, creates a draft GitHub release with generated notes and uploads the Windows installer and its update feed (`latest.yml`). Test the installer, then publish the draft.
+[`release.yml`](.github/workflows/release.yml) checks that the tag matches `package.json`, creates a draft GitHub release with that version's `CHANGELOG.md` section as its notes (it fails if the section is missing) and uploads the Windows installer and its update feed (`latest.yml`). Test the installer, then publish the draft.
 
-Installed Windows builds check the published releases on startup (a small splash: update available, download progress, restart to install) and open normally when offline or up to date; the check can be turned off in Preferences. Linux and macOS builds are not published yet.
+Installed Windows builds check the published releases on startup (a small splash: update available with the first changelog items, download progress, restart to install) and open normally when offline or up to date; the check can be turned off in Preferences. Linux and macOS builds are not published yet.
 
 ## License
 
