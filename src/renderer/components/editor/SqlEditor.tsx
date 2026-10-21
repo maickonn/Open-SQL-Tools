@@ -1,7 +1,12 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
+import { useTranslation } from 'react-i18next'
+import { ClipboardPaste, Copy, FileSearch, Play, PlayCircle, Redo2, Scissors, TextSelect, TextQuote, Trash2, Undo2, WandSparkles } from 'lucide-react'
 import type { DbEngine } from '@shared/model'
 import { useSettings } from '../../stores/settingsStore'
-import { actionForEvent } from '../../lib/shortcuts'
+import { actionForEvent, resolveShortcut } from '../../lib/shortcuts'
+import { api } from '../../gateways/api'
+import { PointMenu } from '../ui/PointMenu'
+import type { MenuItem } from '../ui'
 import type { SqlCatalog } from '../../lib/sqlCatalog'
 import { defineThemes, languageFor, monaco } from './monaco'
 import { registerSqlIntellisense, setSqlCatalog, updateDiagnostics } from './sqlIntellisense'
@@ -28,7 +33,7 @@ export interface SqlEditorProps {
   /** Ctrl+Shift+Enter / Shift+F9 */
   onRunCurrent?(): void
   onSave?(): void
-  /** Other editor-scope shortcuts (runSelection, explain…). */
+  /** Other editor-scope shortcuts and menu commands (runSelection, explain, format…). */
   onShortcut?(actionId: string): void
   minimap?: boolean
   lineNumbers?: boolean
@@ -49,6 +54,8 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
   const diagnosticsTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   callbacks.current = { onChange, onRun, onRunCurrent, onSave, onShortcut }
   const settings = useSettings((s) => s.settings)
+  const { t } = useTranslation()
+  const [menu, setMenu] = useState<{ x: number; y: number; hasSelection: boolean; canPaste: boolean } | null>(null)
 
   useEffect(() => {
     defineThemes()
@@ -182,7 +189,77 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
     }
   }))
 
-  return <div ref={host} className="h-full w-full" />
+  /** Right click: like VS Code, a click outside the selection moves the cursor there first. */
+  const openMenu = (e: ReactMouseEvent): void => {
+    const ed = editorRef.current
+    if (!ed) return
+    e.preventDefault()
+    const target = ed.getTargetAtClientPoint(e.clientX, e.clientY)
+    const sel = ed.getSelection()
+    if (target?.position && (!sel || sel.isEmpty() || !sel.containsPosition(target.position))) ed.setPosition(target.position)
+    const hasSelection = !(ed.getSelection()?.isEmpty() ?? true)
+    setMenu({ x: e.clientX, y: e.clientY, hasSelection, canPaste: false })
+    if (!readOnly) void api.invoke('edit:canPaste').then((canPaste) => setMenu((m) => (m ? { ...m, canPaste } : m)))
+  }
+
+  /** Runs after the menu closed and the editor has the focus back (clipboard commands act on the focused field). */
+  const afterMenu = (fn: (ed: monaco.editor.IStandaloneCodeEditor) => void): void => {
+    setTimeout(() => {
+      const ed = editorRef.current
+      if (!ed) return
+      ed.focus()
+      fn(ed)
+    }, 0)
+  }
+  const clipboard = (command: 'cut' | 'copy' | 'paste') => () => afterMenu(() => void api.invoke('edit:command', command))
+  const key = (id: string): string | undefined => resolveShortcut(id, settings.shortcuts) || undefined
+  const mod = api.platform === 'darwin' ? '⌘' : 'Ctrl+'
+
+  const items: MenuItem[] = []
+  if (menu) {
+    const cb = callbacks.current
+    if (cb.onRun) items.push({ label: t('menu.runAll'), icon: <Play size={14} />, shortcut: key('run'), onSelect: () => cb.onRun?.() })
+    if (cb.onRunCurrent) items.push({ label: t('menu.runCurrent'), icon: <PlayCircle size={14} />, shortcut: key('runCurrent'), onSelect: () => cb.onRunCurrent?.() })
+    if (cb.onShortcut) {
+      items.push({ label: t('menu.runSelection'), icon: <TextQuote size={14} />, shortcut: key('runSelection'), disabled: !menu.hasSelection, onSelect: () => cb.onShortcut?.('runSelection') })
+      items.push({ label: t('menu.explain'), icon: <FileSearch size={14} />, shortcut: key('explain'), onSelect: () => cb.onShortcut?.('explain') })
+    }
+    if (items.length) items.push({ separator: true })
+    if (!readOnly) {
+      items.push({ label: t('edit.undo'), icon: <Undo2 size={14} />, shortcut: `${mod}Z`, onSelect: () => afterMenu((ed) => ed.trigger('menu', 'undo', null)) })
+      items.push({ label: t('edit.redo'), icon: <Redo2 size={14} />, shortcut: api.platform === 'darwin' ? '⇧⌘Z' : 'Ctrl+Y', onSelect: () => afterMenu((ed) => ed.trigger('menu', 'redo', null)) })
+      items.push({ separator: true })
+      items.push({ label: t('edit.cut'), icon: <Scissors size={14} />, shortcut: `${mod}X`, disabled: !menu.hasSelection, onSelect: clipboard('cut') })
+    }
+    items.push({ label: t('edit.copy'), icon: <Copy size={14} />, shortcut: `${mod}C`, disabled: !menu.hasSelection, onSelect: clipboard('copy') })
+    if (!readOnly) {
+      items.push({ label: t('edit.paste'), icon: <ClipboardPaste size={14} />, shortcut: `${mod}V`, disabled: !menu.canPaste, onSelect: clipboard('paste') })
+      items.push({
+        label: t('edit.delete'),
+        icon: <Trash2 size={14} />,
+        disabled: !menu.hasSelection,
+        onSelect: () => afterMenu((ed) => ed.executeEdits('menu', [{ range: ed.getSelection()!, text: '' }]))
+      })
+    }
+    items.push({ separator: true })
+    items.push({
+      label: t('edit.selectAll'),
+      icon: <TextSelect size={14} />,
+      shortcut: `${mod}A`,
+      onSelect: () => afterMenu((ed) => ed.getModel() && ed.setSelection(ed.getModel()!.getFullModelRange()))
+    })
+    if (cb.onShortcut && !readOnly) {
+      items.push({ separator: true })
+      items.push({ label: t('menu.format'), icon: <WandSparkles size={14} />, shortcut: key('format'), onSelect: () => cb.onShortcut?.('format') })
+    }
+  }
+
+  return (
+    <>
+      <div ref={host} className="h-full w-full" onContextMenu={openMenu} />
+      <PointMenu at={menu} items={items} onClose={() => setMenu(null)} />
+    </>
+  )
 })
 
 export default SqlEditor

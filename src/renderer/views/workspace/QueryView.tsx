@@ -144,6 +144,7 @@ export default function QueryView({ tab, active }: { tab: Tab; active: boolean }
                 onShortcut={(id) => {
                   if (id === 'runSelection') void commands.run('selection')
                   else if (id === 'explain') void commands.explain()
+                  else if (id === 'format') commands.format()
                 }}
               />
             </Panel>
