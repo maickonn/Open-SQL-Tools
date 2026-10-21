@@ -217,6 +217,16 @@ describe.skipIf(targets.length === 0)('session service against live databases', 
       await svc.objectAction({ ref: { ...ref, name: copyName }, action: 'drop' })
     })
 
+    // The driver widens NONE columns for UTF8 connections; past 64 KB a row crashed Firebird 2.5.
+    it.skipIf(engine !== 'firebird')('reads wide CHARACTER SET NONE columns over a UTF8 connection', async () => {
+      await svc.query({ sql: 'RECREATE TABLE OST_WIDE (ID INTEGER, BIG VARCHAR(32765) CHARACTER SET NONE, MID VARCHAR(2000) CHARACTER SET NONE, N NUMERIC(15,3))' })
+      await svc.query({ sql: "INSERT INTO OST_WIDE VALUES (1, 'big', 'mid', 1.5)" })
+      const res = await svc.query({ sql: 'SELECT * FROM OST_WIDE' })
+      expect(res.rows[0].slice(1, 3)).toEqual(['big', 'mid'])
+      expect(svc.serverInfo().engine).toBe('firebird')
+      await svc.query({ sql: 'DROP TABLE OST_WIDE' })
+    })
+
     it('rejects writes in read-only queries (agent mode)', async () => {
       await expect(
         svc.query({ sql: `UPDATE ${q(engine, 'ost_items')} SET ${q(engine, 'name')} = 'x'`, readOnly: true, database: isMy(engine) ? target.database : undefined })

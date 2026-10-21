@@ -1,4 +1,5 @@
 import Firebird from 'node-firebird'
+import FbWire from 'node-firebird/lib/wire/connection.js'
 import type { ColumnMetadata, Database, Options, Transaction } from 'node-firebird'
 import type { EventEmitter } from 'node:events'
 import type { ColumnMeta, ConnectionProfile, ConnectionSecrets, ServerInfo, TypeCategory } from '@shared/model'
@@ -78,6 +79,49 @@ function readBinaryBlob(fn: (tx: Transaction, cb: (err: unknown, name: string, e
     })
   })
 }
+
+/** A fetched row travels as one message, whose length the wire protocol stores in 16 bits. */
+const MAX_MESSAGE = 0xffff
+const MAX_STRING = 32765
+
+interface WireVar {
+  type: number
+  length: number
+  /** Set by the driver when it widened a column for the connection charset. */
+  nativeLength?: number
+}
+
+/** Upper bound of a column's share of the message: data, null indicator and alignment. */
+const varSize = (v: WireVar): number => ((v.type & ~1) === T.VARYING ? v.length + 2 : (v.type & ~1) === T.TEXT ? v.length : 16) + 2 + 7
+
+/**
+ * node-firebird widens CHAR/VARCHAR columns of charset NONE (and others the server doesn't
+ * transliterate) to 4 bytes per character under a UTF8 connection, capped at 64 KB per column.
+ * A VARCHAR(32765) NONE then becomes 65532 bytes and the row message overflows the protocol's
+ * 64 KB: Firebird 2.5 rejects it on its own (-804) and crashes when other columns follow.
+ * Keeps each widened column within the string limit and the whole row within a message, giving
+ * back the widening of the largest columns first (they never shrink below their native length).
+ */
+function fitOutputMessage(output: WireVar[] | undefined): void {
+  if (!output?.length) return
+  const widened = output.filter((v) => v.nativeLength !== undefined && v.length > v.nativeLength)
+  if (!widened.length) return
+  for (const v of widened) v.length = Math.max(v.nativeLength!, Math.min(v.length, MAX_STRING))
+  let excess = output.reduce((sum, v) => sum + varSize(v), 0) - MAX_MESSAGE
+  for (const v of widened.sort((a, b) => b.length - b.nativeLength! - (a.length - a.nativeLength!))) {
+    if (excess <= 0) break
+    const give = Math.min(excess, v.length - v.nativeLength!)
+    v.length -= give
+    excess -= give
+  }
+}
+
+// The fetch request carries the output message format built from statement.output.
+const wireFetch = FbWire.prototype.fetch
+FbWire.prototype.fetch = function (this: FbWire, statement: { output?: WireVar[] }, ...rest: unknown[]) {
+  fitOutputMessage(statement.output)
+  return (wireFetch as (...args: unknown[]) => void).call(this, statement, ...rest)
+} as typeof wireFetch
 
 /** Lock wait for user statements; forms and tree actions pass a shorter one. */
 const DEFAULT_LOCK_TIMEOUT_SEC = 30
