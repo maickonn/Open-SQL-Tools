@@ -357,7 +357,7 @@ function contextItems(row: Row, t: (k: string, o?: Record<string, unknown>) => s
     items.push({
       label: t('tree.newMenu'),
       icon: <Plus size={14} />,
-      items: creatableKinds(engine).map((kind) => {
+      items: creatableKinds(engine, session.info.capabilities).map((kind) => {
         const Icon = KIND_ICONS[kind] ?? FileCode2
         return { label: t(groupLabel(kind, session)), icon: <Icon size={14} />, onSelect: () => void newObject(session, kind, database, schema ?? (engine === 'postgres' ? 'public' : undefined), undefined, t) }
       })
@@ -365,7 +365,7 @@ function contextItems(row: Row, t: (k: string, o?: Record<string, unknown>) => s
   }
 
   if (row.type === 'group') {
-    if (creatableKinds(engine).includes(row.kind)) items.push(newItem(row.kind))
+    if (creatableKinds(engine, session.info.capabilities).includes(row.kind)) items.push(newItem(row.kind))
     if (hasListView(engine, row.kind)) {
       items.push({ label: t('tree.openList'), icon: <ListOrdered size={14} />, onSelect: () => openList(session, row.kind as 'sequence' | 'exception', database, schema, t) })
     }
@@ -384,8 +384,8 @@ function contextItems(row: Row, t: (k: string, o?: Record<string, unknown>) => s
       ws.openTab({ sessionId: sid, kind: 'object', title: ref.name, ref, database, schema, view })
     }
     items.push({ separator: true })
-    if (creatableKinds(engine).includes(kind)) items.push(newItem(kind, kind === 'trigger' ? ref.table : undefined))
-    if (kind === 'table' && creatableKinds(engine).includes('trigger')) items.push({ ...newItem('trigger', ref.name), icon: <Zap size={14} /> })
+    if (creatableKinds(engine, session.info.capabilities).includes(kind)) items.push(newItem(kind, kind === 'trigger' ? ref.table : undefined))
+    if (kind === 'table' && creatableKinds(engine, session.info.capabilities).includes('trigger')) items.push({ ...newItem('trigger', ref.name), icon: <Zap size={14} /> })
     if (kind === 'table') items.push({ label: t('tree.editStructure'), icon: <Pencil size={14} />, onSelect: () => open('structure') })
     else if (hasListView(engine, kind)) items.push({ label: t('tree.editObject', { kind: kindLabel(kind) }), icon: <Pencil size={14} />, onSelect: () => openList(session, kind, database, schema, t) })
     else items.push({ label: t('tree.editObject', { kind: kindLabel(kind) }), icon: <Pencil size={14} />, onSelect: () => open(kind === 'trigger' ? 'trigger' : 'ddl') })

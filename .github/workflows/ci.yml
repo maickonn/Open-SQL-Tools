@@ -25,12 +25,12 @@ jobs:
     name: Typecheck, unit tests, build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: npm
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: ${{ env.ELECTRON_CACHE_PATHS }}
           key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
@@ -38,7 +38,7 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: out
           path: out
@@ -92,12 +92,12 @@ jobs:
           - target: postgres18
             e2e: tests/e2e/engines.spec.ts
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: npm
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: ${{ env.ELECTRON_CACHE_PATHS }}
           key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
@@ -109,7 +109,7 @@ jobs:
         run: npx vitest run --project integration
         env:
           DB_TARGETS: ${{ matrix.target }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         if: matrix.e2e
         with:
           name: out
@@ -123,7 +123,7 @@ jobs:
         env:
           OST_E2E_TARGETS: ${{ matrix.target }}
           OST_E2E_MYSQL_PORT: 33097
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         if: failure() && matrix.e2e
         with:
           name: e2e-${{ matrix.target }}
@@ -138,12 +138,12 @@ jobs:
     needs: check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: npm
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: ${{ env.ELECTRON_CACHE_PATHS }}
           key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
@@ -156,12 +156,12 @@ jobs:
     needs: check
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: npm
-      - uses: actions/cache@v4
+      - uses: actions/cache@v5
         with:
           path: ${{ env.ELECTRON_CACHE_PATHS }}
           key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}

@@ -18,5 +18,7 @@ describe('object capabilities', () => {
     expect(hasListView('postgres', 'sequence')).toBe(true)
     expect(creatableKinds('mysql')).not.toContain('sequence')
     expect(creatableKinds('firebird')).toContain('exception')
+    expect(creatableKinds('mariadb', ['events'])).not.toContain('sequence')
+    expect(creatableKinds('mariadb', ['events', 'sequences'])).toContain('sequence')
   })
 })

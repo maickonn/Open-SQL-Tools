@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import type { DbEngine, DbObjectRef } from '@shared/model'
+import type { Capability, DbEngine, DbObjectRef } from '@shared/model'
 import { SessionService } from '@application/session/sessionService'
 import { openDatabase } from '@infrastructure/db/openDatabase'
 import { createFileWriter, readTextFile } from '@infrastructure/fs/fileWriter'
@@ -47,6 +47,8 @@ const FB_CLEANUP = `DROP TRIGGER OBJ_T_AUDIT; DROP PROCEDURE OBJ_P; DROP TABLE O
 
 function fixtureFor(target: Target): Fixture {
   const engine: DbEngine = target.engine
+  // MariaDB has sequences since 10.3.
+  const sequences = engine === 'mariadb' && target.id !== 'mariadb102'
   switch (engine) {
     case 'firebird':
       return {
@@ -87,16 +89,16 @@ function fixtureFor(target: Target): Fixture {
           CREATE TRIGGER obj_t_audit AFTER INSERT ON obj_t FOR EACH ROW INSERT INTO obj_log VALUES (NEW.id, NEW.name);
           CREATE PROCEDURE obj_p(IN p_id INT) SELECT name FROM obj_t WHERE id = p_id;
           CREATE EVENT obj_e ON SCHEDULE EVERY 1 DAY DO DELETE FROM obj_log WHERE id < 0;
-          ${engine === 'mariadb' ? 'CREATE SEQUENCE obj_gen;' : ''}`,
-        cleanup: `DROP EVENT IF EXISTS obj_e; DROP PROCEDURE IF EXISTS obj_p; DROP TABLE IF EXISTS obj_log, obj_t;${engine === 'mariadb' ? ' DROP SEQUENCE IF EXISTS obj_gen;' : ''}`,
+          ${sequences ? 'CREATE SEQUENCE obj_gen;' : ''}`,
+        cleanup: `DROP EVENT IF EXISTS obj_e; DROP PROCEDURE IF EXISTS obj_p; DROP TABLE IF EXISTS obj_log, obj_t;${sequences ? ' DROP SEQUENCE IF EXISTS obj_gen;' : ''}`,
         table: 'obj_t',
         trigger: { database: 'testdb', name: 'obj_t_audit', kind: 'trigger', table: 'obj_t' },
         routine: { database: 'testdb', name: 'obj_p', kind: 'procedure' },
-        sequence: engine === 'mariadb' ? 'obj_gen' : undefined,
+        sequence: sequences ? 'obj_gen' : undefined,
         event: 'obj_e',
         templateCleanup:
           'DROP VIEW IF EXISTS new_view; DROP PROCEDURE IF EXISTS new_procedure; DROP FUNCTION IF EXISTS new_function; DROP TRIGGER IF EXISTS obj_t_bi; DROP EVENT IF EXISTS new_event; ' +
-          (engine === 'mariadb' ? 'DROP SEQUENCE IF EXISTS new_sequence;' : '')
+          (sequences ? 'DROP SEQUENCE IF EXISTS new_sequence;' : '')
       }
     case 'sqlite':
       return {
@@ -122,8 +124,10 @@ describe.skipIf(!targets.length)('object utilities', () => {
     }
     const objects = () => svc.listObjects({ database: fx.database, schema: fx.schema })
 
+    let capabilities: Capability[] = []
+
     beforeAll(async () => {
-      await svc.connect({ profile: profileFor(target), secrets: { password: target.password } })
+      capabilities = (await svc.connect({ profile: profileFor(target), secrets: { password: target.password } })).capabilities
       await run(fx.templateCleanup, false)
       await run(fx.cleanup, false)
       await run(fx.setup)
@@ -277,7 +281,7 @@ describe.skipIf(!targets.length)('object utilities', () => {
 
     it('creates every kind of object from its template', async () => {
       const failures: string[] = []
-      const kinds = creatableKinds(target.engine).filter((k) => k !== 'table' && !(k === 'function' && target.id === 'firebird25'))
+      const kinds = creatableKinds(target.engine, capabilities).filter((k) => k !== 'table' && !(k === 'function' && target.id === 'firebird25'))
       for (const kind of kinds) {
         const sql = svc.createTemplate({ kind, database: fx.database, schema: fx.schema, table: fx.table })
         const r = await svc.execute({ queryId: `tpl-${kind}`, sql, maxRows: 10, database: fx.database })

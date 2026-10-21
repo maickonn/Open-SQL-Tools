@@ -422,7 +422,8 @@ export class MySqlInspector implements SchemaInspector {
   async listCollations(): Promise<CollationInfo[]> {
     const rows = await queryObjects(this.query, 'SHOW COLLATION')
     return rows
-      .filter((r) => r.charset !== null)
+      // The binary charset turns a text column into a byte string (and older servers reject COLLATE binary).
+      .filter((r) => r.charset !== null && str(r.charset) !== 'binary')
       .map((r) => ({ charset: str(r.charset), collation: str(r.collation), isDefault: str(r.default) === 'Yes' }))
   }
 

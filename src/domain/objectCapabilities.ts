@@ -1,4 +1,4 @@
-import type { DbEngine, ObjectKind } from '@shared/model'
+import type { Capability, DbEngine, ObjectKind } from '@shared/model'
 
 const isMySqlFamily = (engine: DbEngine): boolean => engine === 'mysql' || engine === 'mariadb'
 
@@ -30,8 +30,14 @@ export function hasOperations(engine: DbEngine, kind: ObjectKind): boolean {
   return engine === 'firebird' && (kind === 'trigger' || kind === 'procedure' || kind === 'function')
 }
 
-/** Object kinds that can be created from a template, per engine. */
-export function creatableKinds(engine: DbEngine): ObjectKind[] {
+/** Object kinds that can be created from a template, per engine (and server, when its capabilities are given). */
+export function creatableKinds(engine: DbEngine, capabilities?: Capability[]): ObjectKind[] {
+  const kinds = engineKinds(engine)
+  // MariaDB 10.2 has no sequences.
+  return capabilities && !capabilities.includes('sequences') ? kinds.filter((k) => k !== 'sequence') : kinds
+}
+
+function engineKinds(engine: DbEngine): ObjectKind[] {
   switch (engine) {
     case 'firebird':
       return ['table', 'view', 'procedure', 'function', 'trigger', 'sequence', 'exception', 'domain']

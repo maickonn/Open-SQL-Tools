@@ -123,7 +123,7 @@ for (const target of targets) {
 
       // Open the table data from the tree.
       for (const node of target.path) await page.getByRole('treeitem', { name: new RegExp(`^${node}$`) }).dblclick()
-      const item = page.getByRole('treeitem', { name: new RegExp(target.table) })
+      const item = page.getByRole('treeitem', { name: new RegExp(`^${target.table}( |$)`) })
       await expect(item).toBeVisible({ timeout: 15_000 })
       await item.dblclick()
       await expect(page.getByText(/2 of 2 rows/)).toBeVisible({ timeout: 20_000 })

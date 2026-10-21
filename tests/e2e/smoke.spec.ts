@@ -71,7 +71,7 @@ test('edits table data through the grid and switches theme', async () => {
 
   // Expand testdb and open the table data.
   await page.getByRole('treeitem', { name: /^testdb$/ }).dblclick()
-  const item = page.getByRole('treeitem', { name: /e2e_items/ })
+  const item = page.getByRole('treeitem', { name: /^e2e_items( |$)/ })
   await expect(item).toBeVisible({ timeout: 10_000 })
   await item.dblclick()
   await expect(page.getByText(/2 of 2 rows/)).toBeVisible({ timeout: 15_000 })
