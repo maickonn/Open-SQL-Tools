@@ -4,6 +4,14 @@ User-facing changes per release. Add entries under **Unreleased** as you go; bef
 
 ## [Unreleased]
 
+## [0.1.3]
+
+- SQL IntelliSense: context-aware completion of tables, columns, aliases, functions and routines
+- Hover shows column types and keys; signature help for functions and procedures
+- Warnings for unknown tables and columns while typing
+- Right-click menu in SQL editors (run, clipboard, format)
+- Format SQL uses a cleaner layout: one item per line, joins with ON below, 4-space indentation
+
 ## [0.1.2]
 
 - Firebird 2.5 no longer crashes when a query reads very wide CHARACTER SET NONE columns
