@@ -167,7 +167,13 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
       ed.executeEdits('insert', [{ range: ed.getSelection()!, text, forceMoveMarkers: true }])
       ed.focus()
     },
-    setValue: (text) => editorRef.current?.setValue(text),
+    setValue: (text) => {
+      const ed = editorRef.current
+      if (!ed) return
+      ed.setValue(text)
+      // setValue keeps the scroll offset: a long one-liner scrolled right would hide the new text.
+      ed.setScrollPosition({ scrollLeft: 0, scrollTop: 0 })
+    },
     focus: () => editorRef.current?.focus(),
     markError: (range) => {
       const ed = editorRef.current

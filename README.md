@@ -4,6 +4,8 @@
 
 A fast, modern desktop SQL client in the spirit of HeidiSQL, for **MySQL 5.7+**, **MariaDB 10.2+**, **PostgreSQL 15+**, **Firebird 2.5+** and **SQLite** (database files, using the SQLite bundled with Electron), with a built-in AI assistant (Anthropic and OpenAI) that can inspect and query your database. Dark theme by default, light theme available.
 
+![Open SQL Tools demo: object tree, data grid, IntelliSense, SQL formatting, results, AI agent and themes](docs/demo.gif)
+
 This application was written with the help of [Claude Code](https://claude.com/claude-code).
 
 ## Features
@@ -74,6 +76,7 @@ Other scripts:
 | `npm run build && OST_E2E_TARGETS=sqlite npx playwright test tests/e2e/engines.spec.ts` | The same flow for SQLite (no container) |
 | `npm run test:e2e` | Builds and drives the real Electron app with Playwright (set `OST_E2E_MYSQL_PORT=33097` with `mysql97` running for the connected scenario) |
 | `npm run package` | Builds installers with electron-builder |
+| `npm run demo` | Builds the app and records `docs/demo.gif` from a scripted storyboard (`scripts/demo`, needs `ffmpeg` on the PATH; the AI scene uses a scripted provider, `OST_DEMO_AI=1`) |
 | `OST_SPLASH_PREVIEW=update npm run dev` | Shows the startup update splash with a fake release (`offline` and `latest` show the other outcomes) |
 
 ### Test databases

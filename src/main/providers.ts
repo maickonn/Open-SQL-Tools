@@ -3,6 +3,10 @@ import type { LlmProvider } from '@domain/ports/llm'
 import { secretKeys, type SecretStore } from '@domain/ports/repositories'
 import { AnthropicProvider } from '@infrastructure/llm/anthropicProvider'
 import { OpenAIProvider } from '@infrastructure/llm/openaiProvider'
+import { DemoProvider } from '@infrastructure/llm/demoProvider'
+
+/** OST_DEMO_AI=1 swaps every provider for the scripted one used to record the README demo. */
+export const demoAi = (): boolean => process.env.OST_DEMO_AI === '1'
 
 /** Lazily builds provider clients from the API keys in the secret store. */
 export class ProviderRegistry {
@@ -13,6 +17,7 @@ export class ProviderRegistry {
   async get(id: AiProviderId): Promise<LlmProvider> {
     const cached = this.cache.get(id)
     if (cached) return cached
+    if (demoAi()) return new DemoProvider(id)
     const key = await this.secrets.get(secretKeys.aiKey(id))
     if (!key) throw new Error(id === 'anthropic' ? 'Set your Anthropic API key in Settings → AI.' : 'Set your OpenAI API key in Settings → AI.')
     const provider = id === 'anthropic' ? new AnthropicProvider(key) : new OpenAIProvider(key)

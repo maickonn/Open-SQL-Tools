@@ -10,7 +10,7 @@ import type { AgentService } from '@application/chat/agentService'
 import type { UpdateService } from '@application/update/updateService'
 import type { SqliteStore } from '@infrastructure/persistence/sqliteStore'
 import type { SessionManager } from './sessions/sessionManager'
-import type { ProviderRegistry } from './providers'
+import { demoAi, type ProviderRegistry } from './providers'
 import { applyTitleBarTheme } from './window'
 
 export interface IpcServices {
@@ -98,7 +98,7 @@ export function registerIpc(s: IpcServices): void {
     else await s.secrets.delete(secretKeys.aiKey(provider))
     s.providers.invalidate(provider)
   })
-  handle('ai:hasKey', (_e, provider) => s.secrets.has(secretKeys.aiKey(provider)))
+  handle('ai:hasKey', async (_e, provider) => demoAi() || (await s.secrets.has(secretKeys.aiKey(provider))))
 
   handle('chat:conversations', () => s.store.listConversations())
   handle('chat:create', (_e, init) => s.agent.createConversation(init))

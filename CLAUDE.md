@@ -25,6 +25,7 @@ npm run test:e2e:db -- postgres18 firebird5    # build + Playwright Electron flo
 DB_TARGETS=sqlite npx vitest run --project integration                       # SQLite integration tests (temp files, no Docker)
 OST_E2E_TARGETS=sqlite npx playwright test tests/e2e/engines.spec.ts         # SQLite E2E after npm run build
 npm run package             # electron-builder installers
+npm run demo                # build + record docs/demo.gif (scripts/demo: Playwright storyboard, CDP frames, ffmpeg)
 ```
 
 - Integration tests (`tests/integration`) select servers through `DB_TARGETS` (comma-separated compose service names, see `tests/integration/targets.ts`); tests for servers that aren't reachable are skipped. The `sqlite` target needs no container and is always available; `sqlite.test.ts` covers the SQLite-only behaviour (file options, table rebuilds, dumps). `PERF=1` enables the benchmarks: `perf.test.ts` (1M-row streaming) and `sshPerf.test.ts` (object-tree browsing through the `sshd` tunnel with simulated latency, `PERF_RTT_MS`, default 60; prints timings in round trips). `connectivity.test.ts` needs the `tools` profile services (`sshd`, `postgres18ssl`).
@@ -142,6 +143,10 @@ Heavy pieces (Monaco, chat, tool dialogs) are lazy-loaded. Monaco is bundled loc
 ### Auto update
 
 Windows installs check GitHub releases on startup (`electron-builder.yml` `publish`). `application/update/updateService.ts` drives the splash (check with a timeout, available, cancellable download, ready, failed) over the `UpdateSource` port (`domain/ports/updater.ts`); `infrastructure/update/electronUpdateSource.ts` adapts `electron-updater` (no auto download, silent NSIS install on restart). `main/index.ts` shows the splash (`renderer/splash.html`, a second renderer entry) before creating the main window, only when packaged on Windows, `checkForUpdates` is on and `OST_USER_DATA` is unset. `OST_SPLASH_PREVIEW=update|offline|latest` uses `PreviewUpdateSource` to show it in dev.
+
+### README demo
+
+`scripts/demo/record.mjs` seeds a SQLite shop database (`seed.mjs`), drives the built app through a fixed storyboard, draws captions, title cards and a cursor with an injected DOM layer (`overlay.mjs`), captures frames with CDP `Page.startScreencast` and encodes `docs/demo.gif` with ffmpeg. `OST_DEMO_AI=1` replaces every AI provider with `infrastructure/llm/demoProvider.ts` (a scripted `run_select` turn answered from the real result) and makes `ai:hasKey` report true. Re-record after UI changes that the storyboard touches; `DEMO_DEBUG=1` prints scene timings and saves a screenshot per scene in `out/demo`.
 
 ### AI agent
 

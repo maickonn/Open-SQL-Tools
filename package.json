@@ -27,7 +27,8 @@
     "db:up": "docker compose -f docker/compose.yml up -d --wait",
     "db:stop": "docker compose -f docker/compose.yml stop",
     "postinstall": "node node_modules/electron/install.js",
-    "test:e2e:db": "node scripts/test-e2e-db.mjs"
+    "test:e2e:db": "node scripts/test-e2e-db.mjs",
+    "demo": "npm run build && node scripts/demo/record.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.135.0",

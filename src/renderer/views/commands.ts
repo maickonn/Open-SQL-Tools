@@ -90,6 +90,7 @@ export const commands = {
       const format = (sql: string): string => formatSql(sql, engine, fallback)
       if (sel) editor.insert(format(sel.text))
       else editor.setValue(format(editor.getValue()))
+      editor.focus()
     } catch (err) {
       notify.error(err)
     }
