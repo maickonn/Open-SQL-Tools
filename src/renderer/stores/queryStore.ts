@@ -144,7 +144,8 @@ export const useQueries = create<QueryVM>((set, get) => ({
       const summary = await runScript(session.client, sql, {
         queryId,
         database: state.database,
-        maxRows: settings.maxRowsQuery,
+        // Query tabs fetch every row: limiting the result is up to the SQL.
+        maxRows: Number.MAX_SAFE_INTEGER,
         onResult: (rs) => {
           results.push(rs)
           set((s) => ({ tabs: { ...s.tabs, [tabId]: { ...s.tabs[tabId], results: [...results] } } }))

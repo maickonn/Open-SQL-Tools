@@ -60,7 +60,7 @@ export function DataView({ session, refObj, tabId, active, structure }: { sessio
         let page: ResultSet | null = null
         const summary = await runScript(session.client, sql, {
           database: refObj.database,
-          maxRows: opts?.all ? settings.maxRowsQuery : settings.dataPageSize,
+          maxRows: opts?.all ? Number.MAX_SAFE_INTEGER : settings.dataPageSize,
           onResult: (rs) => {
             page = rs
             if (!opts?.append) setResult(rs)
@@ -85,7 +85,7 @@ export function DataView({ session, refObj, tabId, active, structure }: { sessio
         setLoading(false)
       }
     },
-    [session, refObj, appliedWhere, sort, settings.dataPageSize, settings.maxRowsQuery, result]
+    [session, refObj, appliedWhere, sort, settings.dataPageSize, result]
   )
 
   useEffect(() => {

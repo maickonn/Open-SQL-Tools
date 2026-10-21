@@ -529,8 +529,6 @@ export interface AppSettings {
   editorFontSize: number
   editorFontFamily: string
   gridFontSize: number
-  /** Max rows fetched per result in query tabs. */
-  maxRowsQuery: number
   /** Rows per page in the Data tab. */
   dataPageSize: number
   /** Text shown for NULL. */
@@ -556,7 +554,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   editorFontSize: 13,
   editorFontFamily: "'JetBrains Mono', 'Cascadia Code', Consolas, monospace",
   gridFontSize: 12,
-  maxRowsQuery: 100_000,
   dataPageSize: 1_000,
   nullText: '(NULL)',
   autocommit: true,

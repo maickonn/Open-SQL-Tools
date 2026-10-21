@@ -68,9 +68,6 @@ export function SettingsDialog({ section: initial }: { section?: string }) {
               <Field label={t('settings.fontFamily')}>
                 <Input value={settings.editorFontFamily} onChange={(e) => set({ editorFontFamily: e.target.value })} />
               </Field>
-              <Field label={t('settings.maxRows')}>
-                <Input type="number" min={1} value={settings.maxRowsQuery} onChange={(e) => set({ maxRowsQuery: Math.max(1, Number(e.target.value) || 1) })} />
-              </Field>
             </div>
           )}
           {section === 'grid' && (

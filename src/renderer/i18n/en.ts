@@ -137,7 +137,7 @@ export const en = {
   },
   settings: {
     title: 'Preferences', general: 'General', editor: 'SQL editor', grid: 'Data grid', ai: 'AI assistant',
-    theme: 'Theme', fontSize: 'Font size', fontFamily: 'Font family', maxRows: 'Max rows per query result', pageSize: 'Rows per page (Data tab)',
+    theme: 'Theme', fontSize: 'Font size', fontFamily: 'Font family', pageSize: 'Rows per page (Data tab)',
     nullText: 'NULL display text', autocommit: 'Auto-commit by default', confirmDangerous: 'Confirm before running data-changing scripts',
     restoreTabs: 'Restore query tabs on start', checkForUpdates: 'Check for updates on start', anthropicKey: 'Anthropic API key', openaiKey: 'OpenAI API key', keySaved: 'Key saved',
     keyMissing: 'Not set', defaultProvider: 'Default provider', effort: 'Reasoning effort', low: 'Low', medium: 'Medium',
