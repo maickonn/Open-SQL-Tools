@@ -13,7 +13,7 @@ import { api } from '../../gateways/api'
 import { notify } from '../../stores/toast'
 import { promptDialog } from '../../components/ui/prompts'
 import { uid } from '../../lib/format'
-import { useCompletionSource } from './useCompletionSource'
+import { useSqlCatalog } from './useSqlCatalog'
 import { GridContextMenu } from './GridContextMenu'
 import { isSingleDatabase } from '@domain/engineTraits'
 
@@ -67,7 +67,7 @@ export default function QueryView({ tab, active }: { tab: Tab; active: boolean }
     if (resultCount === 1) setView(0)
   }, [resultCount])
 
-  const completion = useCompletionSource(session, state?.database)
+  const catalog = useSqlCatalog(session, state?.database)
 
   if (!session || !state) return null
   const databases = session.databases ?? []
@@ -136,7 +136,7 @@ export default function QueryView({ tab, active }: { tab: Tab; active: boolean }
                 ref={setEditor}
                 value={state.sql}
                 engine={session.info.engine}
-                completion={completion}
+                catalog={catalog}
                 onChange={(v) => useQueries.getState().setSql(tab.id, v)}
                 onRun={() => void commands.run('all')}
                 onRunCurrent={() => void commands.run('current')}

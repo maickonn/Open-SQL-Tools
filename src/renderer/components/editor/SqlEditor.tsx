@@ -2,7 +2,9 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
 import type { DbEngine } from '@shared/model'
 import { useSettings } from '../../stores/settingsStore'
 import { actionForEvent } from '../../lib/shortcuts'
-import { defineThemes, languageFor, monaco, registerCompletion, setCompletionSource, type CompletionSource } from './monaco'
+import type { SqlCatalog } from '../../lib/sqlCatalog'
+import { defineThemes, languageFor, monaco } from './monaco'
+import { registerSqlIntellisense, setSqlCatalog, updateDiagnostics } from './sqlIntellisense'
 
 export interface SqlEditorHandle {
   getValue(): string
@@ -19,7 +21,8 @@ export interface SqlEditorProps {
   onChange?(value: string): void
   engine?: DbEngine
   readOnly?: boolean
-  completion?: CompletionSource | null
+  /** Catalog for IntelliSense (completion, hover, signature help, unknown name warnings). */
+  catalog?: SqlCatalog | null
   /** Ctrl+Enter / F9 */
   onRun?(): void
   /** Ctrl+Shift+Enter / Shift+F9 */
@@ -34,19 +37,22 @@ export interface SqlEditorProps {
 let themeObserver: MutationObserver | null = null
 
 export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function SqlEditor(
-  { value, onChange, engine, readOnly, completion, onRun, onRunCurrent, onSave, onShortcut, minimap = false, lineNumbers = true },
+  { value, onChange, engine, readOnly, catalog, onRun, onRunCurrent, onSave, onShortcut, minimap = false, lineNumbers = true },
   ref
 ) {
   const host = useRef<HTMLDivElement>(null)
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
   const decorations = useRef<monaco.editor.IEditorDecorationsCollection | null>(null)
   const callbacks = useRef({ onChange, onRun, onRunCurrent, onSave, onShortcut })
+  const catalogRef = useRef(catalog ?? null)
+  catalogRef.current = catalog ?? null
+  const diagnosticsTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   callbacks.current = { onChange, onRun, onRunCurrent, onSave, onShortcut }
   const settings = useSettings((s) => s.settings)
 
   useEffect(() => {
     defineThemes()
-    registerCompletion()
+    registerSqlIntellisense()
     if (!themeObserver) {
       themeObserver = new MutationObserver(() => defineThemes())
       themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
@@ -71,6 +77,8 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
       smoothScrolling: true,
       quickSuggestions: { other: true, comments: false, strings: false },
       suggestOnTriggerCharacters: true,
+      // Suggestions come from the catalog, not from words already typed in the document.
+      wordBasedSuggestions: 'off',
       bracketPairColorization: { enabled: true }
     })
     editorRef.current = editor
@@ -78,6 +86,11 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
     const sub = editor.onDidChangeModelContent(() => {
       decorations.current?.clear()
       callbacks.current.onChange?.(editor.getValue())
+      clearTimeout(diagnosticsTimer.current)
+      diagnosticsTimer.current = setTimeout(() => {
+        const model = editor.getModel()
+        if (model) void updateDiagnostics(model, catalogRef.current)
+      }, 500)
     })
     const K = monaco.KeyMod
     const C = monaco.KeyCode
@@ -97,7 +110,8 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
     return () => {
       sub.dispose()
       keySub.dispose()
-      setCompletionSource(editor.getModel()?.uri.toString() ?? '', null)
+      clearTimeout(diagnosticsTimer.current)
+      setSqlCatalog(editor.getModel()?.uri.toString() ?? '', null)
       editor.getModel()?.dispose()
       editor.dispose()
     }
@@ -120,9 +134,11 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
   }, [value])
 
   useEffect(() => {
-    const uri = editorRef.current?.getModel()?.uri.toString()
-    if (uri) setCompletionSource(uri, completion ?? null)
-  }, [completion])
+    const model = editorRef.current?.getModel()
+    if (!model) return
+    setSqlCatalog(model.uri.toString(), catalog ?? null)
+    void updateDiagnostics(model, catalog ?? null)
+  }, [catalog])
 
   useImperativeHandle(ref, () => ({
     getValue: () => editorRef.current?.getValue() ?? '',

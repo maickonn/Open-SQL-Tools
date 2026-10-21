@@ -181,6 +181,15 @@ export const en = {
   keys: {
     title: 'Keyboard shortcuts', action: 'Action', shortcut: 'Shortcut', press: 'Press keys…', reset: 'Reset', resetAll: 'Reset all', conflict: 'Already used by "{{action}}"'
   },
+  intellisense: {
+    unknownTable: 'Unknown table or view: {{name}}',
+    unknownColumn: 'Column {{name}} not found in {{table}}',
+    columnOf: 'Column of {{table}}',
+    columns: '{{count}} columns',
+    primaryKey: 'primary key',
+    procedure: 'Stored procedure',
+    function: 'Function'
+  },
   update: {
     checking: 'Checking for updates…',
     available: 'Update available',

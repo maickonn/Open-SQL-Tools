@@ -1,5 +1,7 @@
 import type {
   BulkTableOperations,
+  CatalogColumn,
+  CatalogRoutine,
   CellValue,
   ColumnMeta,
   ConnectionProfile,
@@ -101,6 +103,8 @@ export interface WorkerApi {
   listDatabases(p: void): string[]
   listSchemas(p: { database?: string }): string[]
   listObjects(p: { database?: string; schema?: string }): DbObjectInfo[]
+  listColumns(p: { database?: string; schema?: string }): CatalogColumn[]
+  listRoutines(p: { database?: string; schema?: string }): CatalogRoutine[]
   getTableStructure(p: { ref: DbObjectRef }): TableStructure
   getObjectDDL(p: { ref: DbObjectRef }): string
   getRoutineSource(p: { ref: DbObjectRef }): string

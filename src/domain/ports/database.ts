@@ -1,5 +1,7 @@
 import type {
   BulkTableOperations,
+  CatalogColumn,
+  CatalogRoutine,
   CellValue,
   ColumnMeta,
   DbObjectInfo,
@@ -68,6 +70,10 @@ export interface SchemaInspector {
   listDatabases(): Promise<string[]>
   listSchemas(database?: string): Promise<string[]>
   listObjects(database?: string, schema?: string): Promise<DbObjectInfo[]>
+  /** Columns of every table and view of a database/schema in one round trip. */
+  listColumns(database?: string, schema?: string): Promise<CatalogColumn[]>
+  /** Procedures and functions with their parameters, in one round trip. */
+  listRoutines(database?: string, schema?: string): Promise<CatalogRoutine[]>
   getTableStructure(ref: DbObjectRef): Promise<TableStructure>
   getObjectDDL(ref: DbObjectRef): Promise<string>
   getRoutineSource(ref: DbObjectRef): Promise<string>

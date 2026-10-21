@@ -19,6 +19,7 @@ import type {
   TableStructure,
   UserPrivileges
 } from '@shared/model'
+import type { CatalogColumn, CatalogRoutine } from '@shared/model'
 import type { SchemaInspector } from '@domain/ports/database'
 import type { CollationInfo, HostInfo } from '@shared/workerApi'
 import { bool, groupBy, num, optStr, queryObjects, str, type QueryFn } from '../common/queryHelpers'
@@ -224,6 +225,44 @@ export class MySqlInspector implements SchemaInspector {
       return raw
     }
     return this.dialect.quoteString(raw)
+  }
+
+  async listColumns(database?: string): Promise<CatalogColumn[]> {
+    if (!database) return []
+    const rows = await queryObjects(
+      this.query,
+      `SELECT TABLE_NAME AS tbl, COLUMN_NAME AS name, COLUMN_TYPE AS type, IS_NULLABLE AS nullable, COLUMN_KEY AS ckey, COLUMN_COMMENT AS comment
+         FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = ${this.lit(database)}
+        ORDER BY TABLE_NAME, ORDINAL_POSITION`
+    )
+    return rows.map((r) => ({ table: str(r.tbl), name: str(r.name), type: str(r.type), nullable: str(r.nullable) === 'YES', primaryKey: str(r.ckey) === 'PRI', comment: optStr(r.comment) }))
+  }
+
+  async listRoutines(database?: string): Promise<CatalogRoutine[]> {
+    if (!database) return []
+    const rows = await queryObjects(
+      this.query,
+      `SELECT r.ROUTINE_NAME AS name, r.ROUTINE_TYPE AS kind, r.DTD_IDENTIFIER AS returns,
+              p.PARAMETER_NAME AS pname, p.DTD_IDENTIFIER AS ptype, p.PARAMETER_MODE AS pmode
+         FROM information_schema.ROUTINES r
+         LEFT JOIN information_schema.PARAMETERS p
+           ON p.SPECIFIC_SCHEMA = r.ROUTINE_SCHEMA AND p.SPECIFIC_NAME = r.SPECIFIC_NAME AND p.ORDINAL_POSITION > 0
+        WHERE r.ROUTINE_SCHEMA = ${this.lit(database)}
+        ORDER BY r.ROUTINE_NAME, p.ORDINAL_POSITION`
+    )
+    return [...groupBy(rows, (r) => str(r.name)).values()].map((group) => {
+      const r = group[0]
+      const kind = str(r.kind) === 'PROCEDURE' ? ('procedure' as const) : ('function' as const)
+      return {
+        name: str(r.name),
+        kind,
+        returns: kind === 'function' ? optStr(r.returns) : undefined,
+        params: group
+          .filter((p) => p.pname !== null)
+          .map((p) => ({ name: str(p.pname), type: str(p.ptype), mode: optStr(p.pmode) as 'IN' | 'OUT' | 'INOUT' | undefined }))
+      }
+    })
   }
 
   async getTableStructure(ref: DbObjectRef): Promise<TableStructure> {

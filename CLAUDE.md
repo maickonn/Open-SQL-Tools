@@ -41,7 +41,8 @@ src/
     workerApi.ts, rpc.ts      typed renderer ⇄ DB worker RPC over MessagePort
   domain/                     pure logic + ports
     ports/                    database.ts (DbConnection, SchemaInspector, SqlDialect), llm.ts, repositories.ts
-    sql/                      splitter.ts (per-dialect script splitting), classifier.ts (read-only vs dangerous)
+    sql/                      splitter.ts (per-dialect script splitting), classifier.ts (read-only vs dangerous),
+                              intellisense/ (lexer, statement context, dialect keywords/functions, diagnostics)
     serverVersion.ts          version → capability flags
   application/                use cases
     session/sessionService.ts everything a DB session does (runs inside the worker)
@@ -130,6 +131,8 @@ Driver quirks the code depends on:
 - Single-database engines (Firebird, SQLite) address objects without a database; use the helpers in `domain/engineTraits.ts` (`isSingleDatabase`, `isFileBased`, `hasTransactionalDdl`, `hasBulkTableOptions`) instead of comparing engine names.
 
 `domain/sql/splitter.ts` splits scripts per dialect (MySQL `DELIMITER`, Firebird `SET TERM` and PSQL blocks, PostgreSQL dollar quoting, SQLite trigger bodies and `[identifiers]`); `classifier.ts` decides which statements are read-only vs dangerous (used for confirmation dialogs and AI approval).
+
+Editor IntelliSense: `domain/sql/intellisense` is pure (no Monaco) and unit-tested: `analyzeStatement` finds the row sources (tables, aliases, CTEs, derived tables) and what fits at the cursor, `diagnose` flags only certain errors (unknown tables, `alias.column`). The catalog comes from the batch RPCs `listColumns`/`listRoutines` (one query per schema, cached in `renderer/lib/sqlCatalog.ts` until DDL, a tree refresh or session close). `components/editor/sqlIntellisense.ts` registers the Monaco providers; `monaco.ts` imports the suggest/hover/parameter-hints contributions explicitly because `editor.api` is the bare editor.
 
 ### Renderer details
 

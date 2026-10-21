@@ -18,6 +18,7 @@ import type {
   TableStructure,
   UserPrivileges
 } from '@shared/model'
+import type { CatalogColumn, CatalogRoutine } from '@shared/model'
 import type { SchemaInspector } from '@domain/ports/database'
 import type { CollationInfo, HostInfo } from '@shared/workerApi'
 import { groupBy, keyValueResult, num, optStr, queryObjects, str, type QueryFn, type Row } from '../common/queryHelpers'
@@ -265,6 +266,66 @@ export class FbInspector implements SchemaInspector {
     return `${prefix}.RDB$FIELD_TYPE AS F_TYPE, ${prefix}.RDB$FIELD_SUB_TYPE AS F_SUB_TYPE, ${prefix}.RDB$FIELD_SCALE AS F_SCALE,
             ${prefix}.RDB$FIELD_PRECISION AS F_PRECISION, ${prefix}.RDB$CHARACTER_LENGTH AS F_CHAR_LEN,
             ${prefix}.RDB$FIELD_LENGTH AS F_LENGTH, ${prefix}.RDB$SEGMENT_LENGTH AS F_SEGMENT`
+  }
+
+  async listColumns(): Promise<CatalogColumn[]> {
+    // Descriptions are BLOBs (one extra round trip per value): left out of the batch.
+    const rows = await queryObjects(
+      this.query,
+      `SELECT TRIM(RF.RDB$RELATION_NAME) AS TBL, TRIM(RF.RDB$FIELD_NAME) AS NAME, ${this.fieldColumns('F')},
+              COALESCE(RF.RDB$NULL_FLAG, F.RDB$NULL_FLAG, 0) AS NN,
+              (SELECT COUNT(*) FROM RDB$RELATION_CONSTRAINTS RC
+                 JOIN RDB$INDEX_SEGMENTS S ON S.RDB$INDEX_NAME = RC.RDB$INDEX_NAME
+                WHERE RC.RDB$RELATION_NAME = RF.RDB$RELATION_NAME AND RC.RDB$CONSTRAINT_TYPE = 'PRIMARY KEY'
+                  AND S.RDB$FIELD_NAME = RF.RDB$FIELD_NAME) AS PK
+         FROM RDB$RELATION_FIELDS RF
+         JOIN RDB$FIELDS F ON F.RDB$FIELD_NAME = RF.RDB$FIELD_SOURCE
+         JOIN RDB$RELATIONS R ON R.RDB$RELATION_NAME = RF.RDB$RELATION_NAME
+        WHERE COALESCE(R.RDB$SYSTEM_FLAG, 0) = 0
+        ORDER BY RF.RDB$RELATION_NAME, RF.RDB$FIELD_POSITION`
+    )
+    return rows.map((r) => ({ table: str(r.tbl), name: str(r.name), type: fbTypeName(r).full, nullable: num(r.nn) !== 1, primaryKey: (num(r.pk) ?? 0) > 0 }))
+  }
+
+  async listRoutines(): Promise<CatalogRoutine[]> {
+    // Procedures, plus PSQL functions on 3+ (not UDFs), with their parameters in one query.
+    // RET marks a function's return argument; PTYPE 1 is a procedure output parameter.
+    const v3 = this.version >= V3
+    const functions = v3
+      ? `UNION ALL
+         SELECT TRIM(FN.RDB$FUNCTION_NAME), 'function', TRIM(A.RDB$ARGUMENT_NAME), 0, A.RDB$ARGUMENT_POSITION,
+                CASE WHEN A.RDB$ARGUMENT_POSITION = FN.RDB$RETURN_ARGUMENT THEN 1 ELSE 0 END, TRIM(A.RDB$FIELD_SOURCE), ${this.fieldColumns('F')}
+           FROM RDB$FUNCTIONS FN
+           LEFT JOIN RDB$FUNCTION_ARGUMENTS A ON A.RDB$FUNCTION_NAME = FN.RDB$FUNCTION_NAME AND A.RDB$PACKAGE_NAME IS NULL
+           LEFT JOIN RDB$FIELDS F ON F.RDB$FIELD_NAME = A.RDB$FIELD_SOURCE
+          WHERE COALESCE(FN.RDB$SYSTEM_FLAG, 0) = 0 AND FN.RDB$MODULE_NAME IS NULL AND FN.RDB$PACKAGE_NAME IS NULL`
+      : ''
+    const rows = await queryObjects(
+      this.query,
+      `SELECT * FROM (
+         SELECT TRIM(P.RDB$PROCEDURE_NAME) AS NAME, CAST('procedure' AS VARCHAR(9)) AS KIND, TRIM(PP.RDB$PARAMETER_NAME) AS PNAME,
+                PP.RDB$PARAMETER_TYPE AS PTYPE, PP.RDB$PARAMETER_NUMBER AS POS, 0 AS RET, TRIM(PP.RDB$FIELD_SOURCE) AS SRC, ${this.fieldColumns('F')}
+           FROM RDB$PROCEDURES P
+           LEFT JOIN RDB$PROCEDURE_PARAMETERS PP ON PP.RDB$PROCEDURE_NAME = P.RDB$PROCEDURE_NAME${v3 ? ' AND PP.RDB$PACKAGE_NAME IS NULL' : ''}
+           LEFT JOIN RDB$FIELDS F ON F.RDB$FIELD_NAME = PP.RDB$FIELD_SOURCE
+          WHERE COALESCE(P.RDB$SYSTEM_FLAG, 0) = 0${v3 ? ' AND P.RDB$PACKAGE_NAME IS NULL' : ''}
+         ${functions}
+       ) R
+       ORDER BY NAME, PTYPE, POS`
+    )
+    return [...groupBy(rows, (r) => `${str(r.kind)}:${str(r.name)}`).values()].map((group) => {
+      const r = group[0]
+      const args = group.filter((p) => optStr(p.src))
+      const ret = args.find((p) => num(p.ret) === 1)
+      return {
+        name: str(r.name),
+        kind: str(r.kind) === 'function' ? ('function' as const) : ('procedure' as const),
+        returns: ret ? this.paramType(ret) : undefined,
+        params: args
+          .filter((p) => num(p.ret) !== 1)
+          .map((p) => ({ name: str(p.pname), type: this.paramType(p), mode: num(p.ptype) === 1 ? ('OUT' as const) : ('IN' as const) }))
+      }
+    })
   }
 
   async getTableStructure(ref: DbObjectRef): Promise<TableStructure> {

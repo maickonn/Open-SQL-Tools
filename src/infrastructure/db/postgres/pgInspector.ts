@@ -18,6 +18,7 @@ import type {
   TableStructure,
   UserPrivileges
 } from '@shared/model'
+import type { CatalogColumn, CatalogRoutine } from '@shared/model'
 import type { SchemaInspector } from '@domain/ports/database'
 import type { CollationInfo, HostInfo } from '@shared/workerApi'
 import { bool, keyValueResult, num, optStr, queryObjects, str, type QueryFn } from '../common/queryHelpers'
@@ -137,6 +138,51 @@ export class PgInspector implements SchemaInspector {
       }
     }
     return out
+  }
+
+  async listColumns(database?: string, schema?: string): Promise<CatalogColumn[]> {
+    await this.ensureDatabase(database)
+    if (!schema) return []
+    const rows = await queryObjects(
+      this.query,
+      `SELECT c.relname AS tbl, a.attname AS name, format_type(a.atttypid, a.atttypmod) AS type, a.attnotnull AS notnull,
+              EXISTS (SELECT 1 FROM pg_index i WHERE i.indrelid = c.oid AND i.indisprimary AND a.attnum = ANY (i.indkey)) AS pk,
+              col_description(c.oid, a.attnum) AS comment
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+         JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+        WHERE n.nspname = ${this.lit(schema)} AND c.relkind IN ('r', 'p', 'v', 'm', 'f')
+        ORDER BY c.relname, a.attnum`
+    )
+    return rows.map((r) => ({ table: str(r.tbl), name: str(r.name), type: str(r.type), nullable: !bool(r.notnull), primaryKey: bool(r.pk), comment: optStr(r.comment) }))
+  }
+
+  async listRoutines(database?: string, schema?: string): Promise<CatalogRoutine[]> {
+    await this.ensureDatabase(database)
+    if (!schema) return []
+    // Arguments as name|mode|type, in order (modes: i, o, b = inout, v = variadic, t = table column).
+    const rows = await queryObjects(
+      this.query,
+      `SELECT p.proname AS name, p.prokind AS kind, pg_get_function_result(p.oid) AS result,
+              (SELECT string_agg(COALESCE(p.proargnames[u.i], '') || '|' || COALESCE(p.proargmodes[u.i]::text, 'i') || '|' || format_type(u.t, NULL), '${SEP}' ORDER BY u.i)
+                 FROM unnest(COALESCE(p.proallargtypes, p.proargtypes::oid[])) WITH ORDINALITY AS u(t, i)) AS args
+         FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = ${this.lit(schema)} AND p.prokind IN ('f', 'p')
+          AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.objid = p.oid AND d.deptype = 'e')
+        ORDER BY p.proname`
+    )
+    const modes: Record<string, 'IN' | 'OUT' | 'INOUT'> = { i: 'IN', o: 'OUT', b: 'INOUT', v: 'IN' }
+    return rows.map((r) => ({
+      name: str(r.name),
+      kind: str(r.kind) === 'p' ? ('procedure' as const) : ('function' as const),
+      returns: optStr(r.result),
+      params: str(r.args)
+        .split(SEP)
+        .filter(Boolean)
+        .map((a) => a.split('|'))
+        .filter(([, mode]) => mode !== 't')
+        .map(([name, mode, type]) => ({ name, type, mode: modes[mode] }))
+    }))
   }
 
   async getTableStructure(ref: DbObjectRef): Promise<TableStructure> {

@@ -312,6 +312,14 @@ export class SessionService {
     return this.require().inspector.listObjects(p.database, p.schema)
   }
 
+  listColumns(p: { database?: string; schema?: string }) {
+    return this.require().inspector.listColumns(p.database, p.schema)
+  }
+
+  listRoutines(p: { database?: string; schema?: string }) {
+    return this.require().inspector.listRoutines(p.database, p.schema)
+  }
+
   getTableStructure(p: { ref: DbObjectRef }): Promise<TableStructure> {
     return this.require().inspector.getTableStructure(p.ref)
   }

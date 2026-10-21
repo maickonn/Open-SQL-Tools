@@ -568,6 +568,24 @@ export const DEFAULT_SETTINGS: AppSettings = {
   shortcuts: {}
 }
 
+/** A column of the batch catalog the SQL editor's IntelliSense reads (one query per schema). */
+export interface CatalogColumn {
+  table: string
+  name: string
+  type: string
+  nullable: boolean
+  primaryKey: boolean
+  comment?: string
+}
+
+/** A stored procedure or function with its parameters, for signature help. */
+export interface CatalogRoutine {
+  name: string
+  kind: 'procedure' | 'function'
+  params: { name: string; type: string; mode?: 'IN' | 'OUT' | 'INOUT' }[]
+  returns?: string
+}
+
 /** Public repository; releases (and the update feed) live under it. */
 export const REPOSITORY_URL = 'https://github.com/maickonn/Open-SQL-Tools'
 

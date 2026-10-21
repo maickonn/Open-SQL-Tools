@@ -6,6 +6,7 @@ import { uid } from '../lib/format'
 import { notify } from './toast'
 import i18n from '../i18n'
 import { isSingleDatabase } from '@domain/engineTraits'
+import { invalidateCatalog } from '../lib/sqlCatalog'
 
 export interface SessionState {
   id: string
@@ -126,6 +127,7 @@ export const useWorkspace = create<WorkspaceVM>((set, get) => ({
     const s = get().sessions[sessionId]
     if (!s) return
     s.client.close()
+    invalidateCatalog(sessionId)
     await api.invoke('session:close', sessionId).catch(() => undefined)
     set((st) => {
       const sessions = { ...st.sessions }
@@ -172,6 +174,8 @@ export const useWorkspace = create<WorkspaceVM>((set, get) => ({
     const key = objectsKey(sessionId, database, schema)
     const current = get().objects[key]
     if (!force && current && current.status !== 'error') return
+    // A forced reload follows DDL or a manual refresh: the editor's catalog is stale too.
+    if (force) invalidateCatalog(sessionId)
     const s = get().sessions[sessionId]
     if (!s) return
     set((st) => ({ objects: { ...st.objects, [key]: { status: 'loading' } } }))

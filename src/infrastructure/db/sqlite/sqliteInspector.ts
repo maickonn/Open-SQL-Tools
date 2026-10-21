@@ -15,6 +15,7 @@ import type {
   TriggerDef,
   UserPrivileges
 } from '@shared/model'
+import type { CatalogColumn, CatalogRoutine } from '@shared/model'
 import type { SchemaInspector } from '@domain/ports/database'
 import type { CollationInfo, HostInfo } from '@shared/workerApi'
 import { splitType } from '@domain/sql/columnType'
@@ -70,6 +71,21 @@ export class SqliteInspector implements SchemaInspector {
         ORDER BY type, name COLLATE NOCASE`
     )
     return rows.map((r) => ({ database: database && database !== 'main' ? database : undefined, name: text(r.name), kind: text(r.type) as ObjectKind }))
+  }
+
+  async listColumns(database?: string): Promise<CatalogColumn[]> {
+    const s = this.lit(database || 'main')
+    const rows = await this.rows(
+      `SELECT m.name AS tbl, p.name AS name, p.type AS type, p."notnull" AS nn, p.pk AS pk
+         FROM ${this.master(database)} m JOIN pragma_table_xinfo(m.name, ${s}) p
+        WHERE m.type IN ('table', 'view') AND m.name NOT LIKE 'sqlite\\_%' ESCAPE '\\'
+        ORDER BY m.name, p.cid`
+    )
+    return rows.map((r) => ({ table: text(r.tbl), name: text(r.name), type: text(r.type), nullable: Number(r.nn) !== 1, primaryKey: Number(r.pk) > 0 }))
+  }
+
+  async listRoutines(): Promise<CatalogRoutine[]> {
+    return []
   }
 
   async getTableStructure(ref: DbObjectRef): Promise<TableStructure> {
