@@ -4,6 +4,10 @@ User-facing changes per release. Add entries under **Unreleased** as you go; bef
 
 ## [Unreleased]
 
+## [0.1.5]
+
+- New, sharper application icon (crisp at every size on Windows)
+
 ## [0.1.4]
 
 - AI chat supports GPT 5.6 Terra
