@@ -23,7 +23,7 @@ asarUnpack:
   - '**/node_modules/cpu-features/**'
 win:
   target: [nsis]
-  icon: resources/icon.png
+  icon: resources/icon.ico
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true

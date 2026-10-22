@@ -26,6 +26,7 @@ DB_TARGETS=sqlite npx vitest run --project integration                       # S
 OST_E2E_TARGETS=sqlite npx playwright test tests/e2e/engines.spec.ts         # SQLite E2E after npm run build
 npm run package             # electron-builder installers
 npm run demo                # build + record docs/demo.gif (scripts/demo: Playwright storyboard, CDP frames, ffmpeg)
+node scripts/render-icon.mjs   # resources/icon.svg → icon.png (1024), icon.ico (16–256) and renderer assets/logo.svg
 ```
 
 - Integration tests (`tests/integration`) select servers through `DB_TARGETS` (comma-separated compose service names, see `tests/integration/targets.ts`); tests for servers that aren't reachable are skipped. The `sqlite` target needs no container and is always available; `sqlite.test.ts` covers the SQLite-only behaviour (file options, table rebuilds, dumps). `PERF=1` enables the benchmarks: `perf.test.ts` (1M-row streaming) and `sshPerf.test.ts` (object-tree browsing through the `sshd` tunnel with simulated latency, `PERF_RTT_MS`, default 60; prints timings in round trips). `connectivity.test.ts` needs the `tools` profile services (`sshd`, `postgres18ssl`).
