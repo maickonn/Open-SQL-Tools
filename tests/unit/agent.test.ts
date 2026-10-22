@@ -135,6 +135,7 @@ describe('supported AI models', () => {
   it('keeps supported models and falls back to the provider default otherwise', () => {
     expect(resolveAiModel('anthropic', 'claude-haiku-5-5')).toBe('claude-haiku-5-5')
     expect(resolveAiModel('openai', 'gpt-6-luna')).toBe('gpt-6-luna')
+    expect(resolveAiModel('openai', 'gpt-5.6-terra')).toBe('gpt-5.6-terra')
     expect(resolveAiModel('openai', 'gpt-6-astra')).toBe('gpt-6.1-sol')
     expect(resolveAiModel('anthropic', 'gpt-6.1-sol')).toBe('claude-opus-5-5')
     expect(resolveAiModel('anthropic', undefined)).toBe('claude-opus-5-5')

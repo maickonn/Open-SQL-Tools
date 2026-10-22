@@ -23,7 +23,7 @@ This application was written with the help of [Claude Code](https://claude.com/c
 - **Menus**: File, Query, Tools, View and Help work like a desktop menu bar: once one is open, hovering another switches to it.
 - **Keyboard shortcuts**: every action can be rebound in Preferences → Keyboard shortcuts (with conflict detection).
 - **Tools**: export grids (CSV, TSV, Excel XLSX, JSON, SQL, HTML, XML, Markdown, LaTeX), SQL dump of databases, run SQL files, CSV import, find text on server, user manager.
-- **AI assistant**: streaming chat with tool use. Reads schema and data freely (inside a read-only transaction); any statement that changes data or schema needs your explicit approval. Supported models: Claude Opus 5.5, Claude Sonnet 5.5, Claude Haiku 5.5, GPT 6.1 Sol and GPT 6.0 Luna; new chats start with the last model picked. Each connection keeps its own conversations, so contexts never mix. While the model reasons, the chat shows "Thinking…" without the reasoning text.
+- **AI assistant**: streaming chat with tool use. Reads schema and data freely (inside a read-only transaction); any statement that changes data or schema needs your explicit approval. Supported models: Claude Opus 5.5, Claude Sonnet 5.5, Claude Haiku 5.5, GPT 6.1 Sol, GPT 5.6 Terra and GPT 6.0 Luna; new chats start with the last model picked. Each connection keeps its own conversations, so contexts never mix. While the model reasons, the chat shows "Thinking…" without the reasoning text.
 
 ## Architecture
 

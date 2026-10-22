@@ -4,6 +4,8 @@ User-facing changes per release. Add entries under **Unreleased** as you go; bef
 
 ## [Unreleased]
 
+- AI chat supports GPT 5.6 Terra
+
 ## [0.1.3]
 
 - SQL IntelliSense: context-aware completion of tables, columns, aliases, functions and routines

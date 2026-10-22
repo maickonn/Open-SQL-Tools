@@ -512,6 +512,7 @@ export const AI_MODELS: readonly AiModel[] = [
   { id: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5', provider: 'anthropic' },
   { id: 'claude-haiku-5-5', name: 'Claude Haiku 5.5', provider: 'anthropic' },
   { id: 'gpt-6.1-sol', name: 'GPT 6.1 Sol', provider: 'openai' },
+  { id: 'gpt-5.6-terra', name: 'GPT 5.6 Terra', provider: 'openai' },
   { id: 'gpt-6-luna', name: 'GPT 6.0 Luna', provider: 'openai' }
 ]
 
