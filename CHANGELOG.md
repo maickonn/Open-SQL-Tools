@@ -4,7 +4,10 @@ User-facing changes per release. Add entries under **Unreleased** as you go; bef
 
 ## [Unreleased]
 
+## [0.1.4]
+
 - AI chat supports GPT 5.6 Terra
+- Format SQL keeps the formatted text in view and the focus in the editor
 
 ## [0.1.3]
 
