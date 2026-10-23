@@ -1,7 +1,7 @@
 {
   "name": "open-sql-tools",
   "productName": "Open SQL Tools",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Modern desktop SQL client for Firebird, MySQL, MariaDB, PostgreSQL and SQLite with an agentic AI chat.",
   "main": "./out/main/index.js",
   "author": "Maickonn Richard",
