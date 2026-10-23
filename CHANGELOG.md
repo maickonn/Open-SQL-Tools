@@ -4,6 +4,11 @@ User-facing changes per release. Add entries under **Unreleased** as you go; bef
 
 ## [Unreleased]
 
+## [0.3.1]
+
+- Installation instructions for Windows and macOS, including how to open the unsigned macOS app the first time (System Settings → Privacy & Security → Open Anyway)
+- Open SQL Tools is supported on Windows and macOS only; Linux packages are no longer built
+
 ## [0.3.0]
 
 - macOS: Apple Silicon disk image in the releases; on startup the app tells when a new version is out and **Download** opens its release page
