@@ -1,5 +1,6 @@
 import type { CellValue } from '@shared/model'
 import { toHex } from '@shared/bytes'
+import { blobLabel, detectFileType } from '@domain/fileType'
 
 export function formatBytes(n: number | undefined): string {
   if (n === undefined || n === null) return ''
@@ -21,7 +22,12 @@ export function formatNumber(n: number | undefined, locale?: string): string {
 /** Text shown in a grid cell. Long values are cut for display only. */
 export function displayValue(v: CellValue, nullText: string): string {
   if (v === null) return nullText
-  if (v instanceof Uint8Array) return v.length > 64 ? `0x${toHex(v.subarray(0, 64))}…` : `0x${toHex(v)}`
+  if (v instanceof Uint8Array) {
+    // Files read better as their type and size; other bytes (UUIDs, hashes…) as hex.
+    const type = detectFileType(v)
+    if (type) return blobLabel(type.label)
+    return v.length > 64 ? `0x${toHex(v.subarray(0, 64))}…` : `0x${toHex(v)}`
+  }
   const s = String(v)
   return s.length > 1000 ? s.slice(0, 1000) + '…' : s
 }

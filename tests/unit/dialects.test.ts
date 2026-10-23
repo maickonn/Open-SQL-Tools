@@ -270,11 +270,11 @@ describe('large objects loaded on demand', () => {
     const fb = new FbDialect(20500)
     const ref = { name: 'DOCS', kind: 'table' as const }
     const lazy = [
-      { column: 'NOTES', kind: 'text' as const },
+      { column: 'NOTES', kind: 'text' as const, charset: 'WIN1252' },
       { column: 'PHOTO', kind: 'binary' as const }
     ]
     expect(fb.selectTableData({ ref, offset: 0, limit: 100, columns: ['ID', 'NOTES', 'PHOTO'], lazy })).toBe(
-      'SELECT FIRST 100 SKIP 0 ID, CASE WHEN CHAR_LENGTH(NOTES) > 256 THEN CAST(SUBSTRING(NOTES FROM 1 FOR 256) AS VARCHAR(256)) || ASCII_CHAR(1) ELSE CAST(NOTES AS VARCHAR(256)) END AS NOTES, OCTET_LENGTH(PHOTO) AS PHOTO FROM DOCS'
+      'SELECT FIRST 100 SKIP 0 ID, CASE WHEN CHAR_LENGTH(NOTES) > 256 THEN CAST(SUBSTRING(NOTES FROM 1 FOR 256) AS VARCHAR(256) CHARACTER SET WIN1252) || ASCII_CHAR(1) ELSE CAST(NOTES AS VARCHAR(256) CHARACTER SET WIN1252) END AS NOTES, OCTET_LENGTH(PHOTO) AS PHOTO FROM DOCS'
     )
     expect(fb.selectByKey(ref, ['PHOTO'], { ID: 7 })).toBe('SELECT PHOTO FROM DOCS WHERE ID = 7')
     const my = new MySqlDialect(80400)

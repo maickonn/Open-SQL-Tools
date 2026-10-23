@@ -106,17 +106,17 @@ export abstract class BaseDialect implements SqlDialect {
 
   protected selectList(req: TableDataRequest): string {
     if (!req.columns?.length) return '*'
-    const lazy = new Map(req.lazy?.map((l) => [l.column, l.kind]))
+    const lazy = new Map(req.lazy?.map((l) => [l.column, l]))
     return req.columns
       .map((c) => {
-        const kind = lazy.get(c)
-        return kind ? `${this.lobPreview(this.quoteIdent(c), kind)} AS ${this.quoteIdent(c)}` : this.quoteIdent(c)
+        const l = lazy.get(c)
+        return l ? `${this.lobPreview(this.quoteIdent(c), l.kind, l.charset)} AS ${this.quoteIdent(c)}` : this.quoteIdent(c)
       })
       .join(', ')
   }
 
   /** Grid stand-in for a LOB column: its size, or its first characters plus LOB_CUT_MARK when cut. */
-  protected lobPreview(column: string, kind: LobKind): string {
+  protected lobPreview(column: string, kind: LobKind, charset?: string): string {
     if (kind === 'binary') return `OCTET_LENGTH(${column})`
     return `CASE WHEN CHAR_LENGTH(${column}) > ${LOB_PREVIEW_CHARS} THEN CONCAT(LEFT(${column}, ${LOB_PREVIEW_CHARS}), CHAR(1 USING utf8mb4)) ELSE ${column} END`
   }

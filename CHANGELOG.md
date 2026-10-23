@@ -5,6 +5,8 @@ User-facing changes per release. Add entries under **Unreleased** as you go; bef
 ## [Unreleased]
 
 - Value editor previews images and PDFs stored in BLOBs (also images kept in text BLOBs) and exports any value to a file
+- Binary values show in the grid as their file type, e.g. (PNG), or (BLOB) when the type is unknown
+- Firebird text BLOB previews keep the column charset (accents no longer break in databases with charset NONE)
 - Data tab loads large objects (BLOB, TEXT, bytea) on demand: tables with heavy BLOB columns open in a fraction of the time
 - Firebird BLOBs are read in 64 KB requests instead of 1 KB, so queries returning BLOBs no longer stall the session
 

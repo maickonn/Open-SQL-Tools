@@ -434,7 +434,7 @@ export interface TableDataRequest {
   /** Columns to select (empty = all). */
   columns?: string[]
   /** Large-object columns (listed in `columns`) selected as a preview instead of the value. */
-  lazy?: { column: string; kind: LobKind }[]
+  lazy?: { column: string; kind: LobKind; charset?: string }[]
 }
 
 /** Text LOBs come as their first characters, binary LOBs as their size in bytes. */

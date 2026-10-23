@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Check, ChevronsDown, Filter, Plus, RefreshCw, Trash2, Undo2, X, Ban, Pencil } from 'lucide-react'
 import type { CellValue, DbObjectRef, LobKind, RowChange, TableDataRequest, TableStructure } from '@shared/model'
 import { LOB_CUT_MARK, lobKind } from '@domain/lob'
+import { binaryText, blobLabel } from '@domain/fileType'
 import type { SessionState } from '../../stores/workspaceStore'
 import { useSettings } from '../../stores/settingsStore'
 import { ResultGrid, selectedRows, type GridOverlay, type RowStatus } from '../../components/grid/ResultGrid'
@@ -13,7 +14,6 @@ import { Badge, Button, IconButton, Input, Spinner, Tooltip } from '../../compon
 import { notify } from '../../stores/toast'
 import { exportSources } from '../commands'
 import { ValueEditorDialog } from './ValueEditorDialog'
-import { formatBytes } from '../../lib/format'
 
 interface Edits {
   updates: Map<number, Map<number, CellValue>>
@@ -71,11 +71,21 @@ export function DataView({
     if (!structure || !keyColumns) return []
     return structure.columns.flatMap((c) => {
       const kind = lobKind(session.info.engine, c)
-      return kind && !keyColumns.includes(c.name) ? [{ column: c.name, kind }] : []
+      return kind && !keyColumns.includes(c.name) ? [{ column: c.name, kind, charset: c.charset }] : []
     })
   }, [structure, keyColumns, session.info.engine])
   /** LOB columns of the loaded result (by index) holding previews instead of values. */
   const [lazyCols, setLazyCols] = useState<Map<number, LobKind>>(() => new Map())
+  /** Every LOB column of the result (by index), loaded lazily or not: binary content shows as a label. */
+  const lobCols = useMemo(() => {
+    const map = new Map<number, { kind: LobKind; charset?: string }>()
+    for (const c of structure?.columns ?? []) {
+      const kind = lobKind(session.info.engine, c)
+      const index = kind ? result.columns.findIndex((r) => r.name === c.name) : -1
+      if (kind && index >= 0) map.set(index, { kind, charset: c.charset })
+    }
+    return map
+  }, [structure, result, session.info.engine])
   /** Full LOB values fetched so far, by `row:col`. */
   const fetched = useRef(new Map<string, CellValue>())
 
@@ -166,18 +176,34 @@ export function DataView({
       status: (row): RowStatus => (row >= baseRows ? 'inserted' : edits.deletes.has(row) ? 'deleted' : edits.updates.has(row) ? 'modified' : undefined),
       cellEdited: (row, col) => row < baseRows && !!edits.updates.get(row)?.has(col),
       placeholder: (row, col) => {
-        const kind = row < baseRows ? lazyCols.get(col) : undefined
-        if (!kind || fetched.current.has(`${row}:${col}`)) return undefined
-        const v = result.get(col, row)
+        const lob = lobCols.get(col)
+        if (!lob) return undefined
+        const edited = row >= baseRows ? edits.inserts[row - baseRows]?.get(col) : edits.updates.get(row)?.get(col)
+        const key = `${row}:${col}`
+        const preview = edited === undefined && row < baseRows && !fetched.current.has(key) ? lazyCols.get(col) : undefined
+        const v = edited !== undefined ? edited : row < baseRows ? baseValue(row, col) : null
         if (v === null) return undefined
-        if (kind === 'binary') return t('data.lobBinary', { size: formatBytes(Number(v)) })
-        // Uncut previews are the whole value.
-        return typeof v === 'string' && v.endsWith(LOB_CUT_MARK) ? `${v.slice(0, -LOB_CUT_MARK.length)}…` : undefined
+        // An unloaded binary LOB arrives as its size.
+        if (preview === 'binary') return blobLabel(undefined)
+        if (typeof v !== 'string') return undefined
+        const cut = preview === 'text' && v.endsWith(LOB_CUT_MARK)
+        const text = cut ? v.slice(0, -LOB_CUT_MARK.length) : v
+        const binary = binaryText(text, lob.charset)
+        if (binary) return blobLabel(binary.type?.label)
+        return cut ? `${text}…` : undefined
       }
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [edits, baseRows, revision, lazyCols, result]
+    [edits, baseRows, revision, lazyCols, lobCols, result]
   )
+
+  /** LOB cells still holding a preview or a size instead of the value. */
+  const needsFetch = (row: number, col: number): boolean => {
+    const kind = lazyCols.get(col)
+    if (!kind || row >= baseRows || fetched.current.has(`${row}:${col}`) || edits.updates.get(row)?.has(col)) return false
+    const v = result.get(col, row)
+    return v !== null && (kind === 'binary' || (typeof v === 'string' && v.endsWith(LOB_CUT_MARK)))
+  }
 
   /** Value as loaded (or fetched), without pending edits. */
   const baseValue = (row: number, col: number): CellValue => {
@@ -189,7 +215,7 @@ export function DataView({
   const fetchLobs = async (rows: number[], only?: number): Promise<void> => {
     let changed = false
     for (const row of rows) {
-      const cols = [...lazyCols.keys()].filter((c) => (only === undefined || c === only) && overlay.placeholder!(row, c) !== undefined)
+      const cols = [...lazyCols.keys()].filter((c) => (only === undefined || c === only) && needsFetch(row, c))
       if (!cols.length) continue
       const values = await session.client.call('fetchCellValues', { ref: refObj, key: keyFor(row), columns: cols.map((c) => result.columns[c].name) })
       cols.forEach((c, i) => fetched.current.set(`${row}:${c}`, values[i]))

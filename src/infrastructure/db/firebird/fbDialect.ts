@@ -39,11 +39,14 @@ export class FbDialect extends BaseDialect {
     return `SELECT FIRST ${req.limit} SKIP ${req.offset} ${this.selectList(req)} FROM ${this.qualify(req.ref)}${this.whereAndOrder(req)}`
   }
 
-  protected override lobPreview(column: string, kind: LobKind): string {
+  protected override lobPreview(column: string, kind: LobKind, charset?: string): string {
     if (kind === 'binary') return `OCTET_LENGTH(${column})`
-    // SUBSTRING of a BLOB is still a BLOB (one more read per cell); a VARCHAR comes inline.
+    // SUBSTRING of a BLOB is still a BLOB (one more read per cell); a VARCHAR comes inline. Without
+    // the column charset the VARCHAR takes the database default, and under NONE the server sends
+    // the bytes untransliterated.
     const n = LOB_PREVIEW_CHARS
-    return `CASE WHEN CHAR_LENGTH(${column}) > ${n} THEN CAST(SUBSTRING(${column} FROM 1 FOR ${n}) AS VARCHAR(${n})) || ASCII_CHAR(1) ELSE CAST(${column} AS VARCHAR(${n})) END`
+    const type = `VARCHAR(${n})${charset && /^\w+$/.test(charset) && !/^(NONE|OCTETS)$/i.test(charset) ? ` CHARACTER SET ${charset}` : ''}`
+    return `CASE WHEN CHAR_LENGTH(${column}) > ${n} THEN CAST(SUBSTRING(${column} FROM 1 FOR ${n}) AS ${type}) || ASCII_CHAR(1) ELSE CAST(${column} AS ${type}) END`
   }
 
   override limitQuery(sql: string, limit: number): string {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { detectFileType, textBytes } from '@domain/fileType'
+import { binaryText, blobLabel, detectFileType, textBytes } from '@domain/fileType'
 
 const bytes = (...parts: (string | number[])[]): Uint8Array =>
   new Uint8Array(parts.flatMap((p) => (typeof p === 'string' ? [...p].map((c) => c.charCodeAt(0)) : p)))
@@ -41,5 +41,20 @@ describe('textBytes', () => {
     expect(textBytes('日本', 'WIN1252')).toBeNull()
     expect(textBytes('abc', 'UTF8')).toBeNull()
     expect(textBytes('abc', undefined)).toBeNull()
+  })
+})
+
+describe('binary values in the grid', () => {
+  it('labels files by type and other binary text as BLOB', () => {
+    expect(blobLabel('PNG')).toBe('(PNG)')
+    expect(blobLabel(undefined)).toBe('(BLOB)')
+  })
+
+  it('finds files and raw bytes in text values, and leaves readable text alone', () => {
+    const bmp = 'BM' + String.fromCharCode(0x4e, 0x38, 5, 0, 0, 0, 0, 0, 0x36, 0, 0, 0, 40, 0, 0, 0, 0, 0) + 'x'.repeat(100)
+    expect(binaryText(bmp, 'WIN1252')).toEqual({ type: expect.objectContaining({ label: 'BMP' }) })
+    expect(binaryText('ab\u0001\u0002cd', 'UTF8')).toEqual({ type: null })
+    expect(binaryText('BM\ufffd\ufffd', undefined)).toEqual({ type: null })
+    expect(binaryText('Observações:\r\n\tlinha 2', 'WIN1252')).toBeNull()
   })
 })

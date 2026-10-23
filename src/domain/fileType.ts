@@ -85,3 +85,20 @@ export function textBytes(text: string, charset: string | undefined): Uint8Array
   }
   return out
 }
+
+/**
+ * What a text value really holds when it is binary data: a known file or unknown bytes
+ * (`type` null). Null for readable text. Looks at the start only.
+ */
+export function binaryText(text: string, charset: string | undefined): { type: FileType | null } | null {
+  const head = text.slice(0, 4096)
+  const bytes = textBytes(head, charset)
+  const type = bytes && detectFileType(bytes)
+  if (type) return { type }
+  return /[\u0000-\u0008\u000e-\u001f\ufffd]/.test(head.slice(0, 512)) ? { type: null } : null
+}
+
+/** Grid text for a large or binary value: its file type, e.g. "(PNG)", or "(BLOB)" when unknown. */
+export function blobLabel(type: string | undefined): string {
+  return `(${type ?? 'BLOB'})`
+}
