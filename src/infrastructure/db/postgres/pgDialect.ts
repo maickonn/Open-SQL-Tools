@@ -1,6 +1,7 @@
-import type { BulkTableOperations, ColumnDef, DbEngine, DbObjectRef, IndexDef, ObjectKind, Partitioning, ServerUser, TableStructure, TriggerDef } from '@shared/model'
+import type { BulkTableOperations, ColumnDef, DbEngine, DbObjectRef, IndexDef, LobKind, ObjectKind, Partitioning, ServerUser, TableStructure, TriggerDef } from '@shared/model'
 import type { TemplateContext } from '@domain/ports/database'
 import { splitType } from '@domain/sql/columnType'
+import { LOB_PREVIEW_CHARS } from '@domain/lob'
 import { BaseDialect, toHex } from '../common/baseDialect'
 
 /** Keywords that must be quoted when used as identifiers (reserved in PostgreSQL). */
@@ -29,6 +30,11 @@ export class PgDialect extends BaseDialect {
 
   constructor(protected readonly version: number) {
     super()
+  }
+
+  protected override lobPreview(column: string, kind: LobKind): string {
+    if (kind === 'binary') return `OCTET_LENGTH(${column})`
+    return `CASE WHEN CHAR_LENGTH(${column}) > ${LOB_PREVIEW_CHARS} THEN LEFT(${column}, ${LOB_PREVIEW_CHARS}) || CHR(1) ELSE ${column} END`
   }
 
   quoteIdent(name: string): string {

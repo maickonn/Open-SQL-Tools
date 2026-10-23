@@ -110,6 +110,8 @@ export interface SqlDialect {
   qualify(ref: DbObjectRef): string
   literal(value: CellValue | undefined): string
   selectTableData(req: TableDataRequest): string
+  /** SELECT of some columns of the row identified by `key` (lazy LOB values). */
+  selectByKey(ref: DbObjectRef, columns: string[], key: Record<string, CellValue>): string
   rowChanges(ref: DbObjectRef, changes: RowChange[]): string[]
   createTable(target: TableStructure): string[]
   alterTable(original: TableStructure, target: TableStructure): string[]

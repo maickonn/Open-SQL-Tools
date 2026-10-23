@@ -3,6 +3,7 @@ import type { TableStructure } from '@shared/model'
 import { MariaDbDialect, MySqlDialect } from '@infrastructure/db/mysql-family/mysqlDialect'
 import { PgDialect } from '@infrastructure/db/postgres/pgDialect'
 import { FbDialect } from '@infrastructure/db/firebird/fbDialect'
+import { lobKind } from '@domain/lob'
 
 const table = (over: Partial<TableStructure> = {}): TableStructure => ({
   ref: { database: 'app', schema: 'public', name: 'items', kind: 'table' },
@@ -249,5 +250,40 @@ describe('trigger form statements', () => {
     ])
     expect(new MariaDbDialect(110800).triggerStatements(t, t)).toEqual(['CREATE OR REPLACE TRIGGER `app`.`orders_bi`\nBEFORE INSERT ON `app`.`orders`\nFOR EACH ROW\nSET NEW.total = 0'])
     expect(() => new MySqlDialect(90700).triggerStatements(null, { ...t, events: ['INSERT', 'UPDATE'] })).toThrow()
+  })
+})
+
+describe('large objects loaded on demand', () => {
+  it('classifies LOB columns per engine', () => {
+    expect(lobKind('firebird', { dataType: 'BLOB', fullType: 'BLOB SUB_TYPE TEXT SEGMENT SIZE 16384' })).toBe('text')
+    expect(lobKind('firebird', { dataType: 'BLOB', fullType: 'BLOB SUB_TYPE BINARY' })).toBe('binary')
+    expect(lobKind('firebird', { dataType: 'VARCHAR', fullType: 'VARCHAR(100)' })).toBeNull()
+    expect(lobKind('mysql', { dataType: 'LONGBLOB', fullType: 'longblob' })).toBe('binary')
+    expect(lobKind('mariadb', { dataType: 'MEDIUMTEXT', fullType: 'mediumtext' })).toBe('text')
+    expect(lobKind('mysql', { dataType: 'TINYTEXT', fullType: 'tinytext' })).toBeNull()
+    expect(lobKind('postgres', { dataType: 'BYTEA', fullType: 'bytea' })).toBe('binary')
+    expect(lobKind('postgres', { dataType: 'TEXT', fullType: 'text' })).toBeNull()
+    expect(lobKind('sqlite', { dataType: 'BLOB', fullType: 'BLOB' })).toBeNull()
+  })
+
+  it('selects previews and sizes instead of the values, and single values by key', () => {
+    const fb = new FbDialect(20500)
+    const ref = { name: 'DOCS', kind: 'table' as const }
+    const lazy = [
+      { column: 'NOTES', kind: 'text' as const },
+      { column: 'PHOTO', kind: 'binary' as const }
+    ]
+    expect(fb.selectTableData({ ref, offset: 0, limit: 100, columns: ['ID', 'NOTES', 'PHOTO'], lazy })).toBe(
+      'SELECT FIRST 100 SKIP 0 ID, CASE WHEN CHAR_LENGTH(NOTES) > 256 THEN CAST(SUBSTRING(NOTES FROM 1 FOR 256) AS VARCHAR(256)) || ASCII_CHAR(1) ELSE CAST(NOTES AS VARCHAR(256)) END AS NOTES, OCTET_LENGTH(PHOTO) AS PHOTO FROM DOCS'
+    )
+    expect(fb.selectByKey(ref, ['PHOTO'], { ID: 7 })).toBe('SELECT PHOTO FROM DOCS WHERE ID = 7')
+    const my = new MySqlDialect(80400)
+    expect(my.selectTableData({ ref: table().ref, offset: 0, limit: 5, columns: ['id', 'name'], lazy: [{ column: 'name', kind: 'text' }] })).toBe(
+      'SELECT `id`, CASE WHEN CHAR_LENGTH(`name`) > 256 THEN CONCAT(LEFT(`name`, 256), CHAR(1 USING utf8mb4)) ELSE `name` END AS `name` FROM `app`.`items` LIMIT 5 OFFSET 0'
+    )
+    const pg = new PgDialect(170000)
+    expect(pg.selectTableData({ ref: table().ref, offset: 0, limit: 5, columns: ['id', 'name'], lazy: [{ column: 'name', kind: 'binary' }] })).toBe(
+      'SELECT id, OCTET_LENGTH(name) AS name FROM public.items LIMIT 5 OFFSET 0'
+    )
   })
 })

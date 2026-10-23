@@ -7,6 +7,7 @@ import type {
   DbObjectRef,
   ForeignKeyDef,
   IndexDef,
+  LobKind,
   ObjectKind,
   RowChange,
   ServerUser,
@@ -18,6 +19,7 @@ import type { SqlDialect, TemplateContext } from '@domain/ports/database'
 import { joinType, splitType } from '@domain/sql/columnType'
 import { typeArguments } from '@domain/sql/typeArguments'
 import { toHex } from '@shared/bytes'
+import { LOB_PREVIEW_CHARS } from '@domain/lob'
 
 export type RawSql = { sql: string }
 
@@ -103,7 +105,24 @@ export abstract class BaseDialect implements SqlDialect {
   }
 
   protected selectList(req: TableDataRequest): string {
-    return req.columns && req.columns.length ? req.columns.map((c) => this.quoteIdent(c)).join(', ') : '*'
+    if (!req.columns?.length) return '*'
+    const lazy = new Map(req.lazy?.map((l) => [l.column, l.kind]))
+    return req.columns
+      .map((c) => {
+        const kind = lazy.get(c)
+        return kind ? `${this.lobPreview(this.quoteIdent(c), kind)} AS ${this.quoteIdent(c)}` : this.quoteIdent(c)
+      })
+      .join(', ')
+  }
+
+  /** Grid stand-in for a LOB column: its size, or its first characters plus LOB_CUT_MARK when cut. */
+  protected lobPreview(column: string, kind: LobKind): string {
+    if (kind === 'binary') return `OCTET_LENGTH(${column})`
+    return `CASE WHEN CHAR_LENGTH(${column}) > ${LOB_PREVIEW_CHARS} THEN CONCAT(LEFT(${column}, ${LOB_PREVIEW_CHARS}), CHAR(1 USING utf8mb4)) ELSE ${column} END`
+  }
+
+  selectByKey(ref: DbObjectRef, columns: string[], key: Record<string, CellValue>): string {
+    return `SELECT ${columns.map((c) => this.quoteIdent(c)).join(', ')} FROM ${this.qualify(ref)} WHERE ${this.keyCondition(key)}`
   }
 
   protected whereAndOrder(req: TableDataRequest): string {

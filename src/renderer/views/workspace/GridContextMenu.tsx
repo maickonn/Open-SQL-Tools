@@ -8,6 +8,7 @@ import { serializeRows, type CopyFormat } from '../../lib/clipboard'
 import { fullText } from '../../lib/format'
 import { selectedRows } from '../../components/grid/ResultGrid'
 import { useUi } from '../../stores/uiStore'
+import { notify } from '../../stores/toast'
 
 export interface GridMenuState {
   x: number
@@ -24,24 +25,46 @@ export function GridContextMenu({
   result,
   sessionId,
   extra,
-  tableName
+  tableName,
+  resolveRows
 }: {
   menu: GridMenuState | null
   onClose(): void
   result: ResultSet
+  /** Loads values the grid only previews (LOBs) and returns these rows in order. */
+  resolveRows?(rows: number[]): Promise<ResultSet>
   sessionId: string
   extra?: MenuItem[]
   tableName?: string
 }) {
   const { t } = useTranslation()
   const rows = menu ? selectedRows(menu.selection) : []
-  const copy = (format: CopyFormat): void => void navigator.clipboard.writeText(serializeRows(result, rows.length ? rows : [menu!.row], format, tableName))
+  const target = rows.length ? rows : menu ? [menu.row] : []
+  const rowsFor = async (list: number[]): Promise<{ rs: ResultSet; rows: number[] }> =>
+    resolveRows ? { rs: await resolveRows(list), rows: list.map((_, i) => i) } : { rs: result, rows: list }
+  const write = (text: () => Promise<string>): void => {
+    text()
+      .then((s) => navigator.clipboard.writeText(s))
+      .catch((err) => notify.error(err))
+  }
+  const copy = (format: CopyFormat): void =>
+    write(async () => {
+      const { rs, rows: list } = await rowsFor(target)
+      return serializeRows(rs, list, format, tableName)
+    })
   const items: MenuItem[] = [
     {
       label: t('data.copyCell'),
       icon: <Copy size={14} />,
       shortcut: 'Ctrl+C',
-      onSelect: () => menu && void navigator.clipboard.writeText(fullText(result.get(menu.col, menu.row)))
+      onSelect: () => {
+        if (!menu) return
+        const { col, row } = menu
+        write(async () => {
+          const { rs, rows: list } = await rowsFor([row])
+          return fullText(rs.get(col, list[0]))
+        })
+      }
     },
     {
       label: t('data.copyAs'),

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check, ChevronsDown, Filter, Plus, RefreshCw, Trash2, Undo2, X, Ban, Pencil } from 'lucide-react'
-import type { CellValue, DbObjectRef, RowChange, TableStructure } from '@shared/model'
+import type { CellValue, DbObjectRef, LobKind, RowChange, TableDataRequest, TableStructure } from '@shared/model'
+import { LOB_CUT_MARK, lobKind } from '@domain/lob'
 import type { SessionState } from '../../stores/workspaceStore'
 import { useSettings } from '../../stores/settingsStore'
 import { ResultGrid, selectedRows, type GridOverlay, type RowStatus } from '../../components/grid/ResultGrid'
@@ -12,6 +13,7 @@ import { Badge, Button, IconButton, Input, Spinner, Tooltip } from '../../compon
 import { notify } from '../../stores/toast'
 import { exportSources } from '../commands'
 import { ValueEditorDialog } from './ValueEditorDialog'
+import { formatBytes } from '../../lib/format'
 
 interface Edits {
   updates: Map<number, Map<number, CellValue>>
@@ -21,7 +23,22 @@ interface Edits {
 
 const emptyEdits = (): Edits => ({ updates: new Map(), inserts: [], deletes: new Set() })
 
-export function DataView({ session, refObj, tabId, active, structure }: { session: SessionState; refObj: DbObjectRef; tabId: string; active: boolean; structure: TableStructure | null }) {
+export function DataView({
+  session,
+  refObj,
+  tabId,
+  active,
+  structure,
+  structurePending
+}: {
+  session: SessionState
+  refObj: DbObjectRef
+  tabId: string
+  active: boolean
+  structure: TableStructure | null
+  /** The table structure is still loading: wait for it to know the key and the LOB columns. */
+  structurePending: boolean
+}) {
   const { t } = useTranslation()
   const settings = useSettings((s) => s.settings)
   const [result, setResult] = useState<ResultSet>(() => new ResultSet())
@@ -49,6 +66,19 @@ export function DataView({ session, refObj, tabId, active, structure }: { sessio
     return uq?.columns ?? null
   }, [structure])
 
+  // Large objects load on demand, located by key: without one the grid reads them eagerly.
+  const lazy = useMemo(() => {
+    if (!structure || !keyColumns) return []
+    return structure.columns.flatMap((c) => {
+      const kind = lobKind(session.info.engine, c)
+      return kind && !keyColumns.includes(c.name) ? [{ column: c.name, kind }] : []
+    })
+  }, [structure, keyColumns, session.info.engine])
+  /** LOB columns of the loaded result (by index) holding previews instead of values. */
+  const [lazyCols, setLazyCols] = useState<Map<number, LobKind>>(() => new Map())
+  /** Full LOB values fetched so far, by `row:col`. */
+  const fetched = useRef(new Map<string, CellValue>())
+
   const load = useCallback(
     async (opts?: { append?: boolean; all?: boolean }) => {
       setLoading(true)
@@ -56,14 +86,24 @@ export function DataView({ session, refObj, tabId, active, structure }: { sessio
         if (!opts?.append) loadedKey.current = JSON.stringify([appliedWhere, sort])
         const offset = opts?.append ? result.rowCount : 0
         const limit = opts?.all ? Number.MAX_SAFE_INTEGER : settings.dataPageSize
-        const sql = await session.client.call('tableDataSql', { ref: refObj, where: appliedWhere || undefined, orderBy: sort, offset, limit: Math.min(limit, 2_147_483_647) })
+        const req: TableDataRequest = { ref: refObj, where: appliedWhere || undefined, orderBy: sort, offset, limit: Math.min(limit, 2_147_483_647) }
+        const columns = structure?.columns.filter((c) => !c.invisible).map((c) => c.name)
+        const lazyReq = lazy.length && columns ? { ...req, columns, lazy } : null
+        const sql = await session.client.call('tableDataSql', lazyReq ?? req)
+        // Exports re-run the result's SQL: they get the full values.
+        const fullSql = lazyReq ? await session.client.call('tableDataSql', req) : sql
         let page: ResultSet | null = null
         const summary = await runScript(session.client, sql, {
           database: refObj.database,
           maxRows: opts?.all ? Number.MAX_SAFE_INTEGER : settings.dataPageSize,
           onResult: (rs) => {
+            rs.sql = fullSql
             page = rs
-            if (!opts?.append) setResult(rs)
+            if (!opts?.append) {
+              fetched.current = new Map()
+              setLazyCols(new Map(lazyReq ? lazy.map((l) => [rs.columns.findIndex((c) => c.name === l.column), l.kind] as const) : []))
+              setResult(rs)
+            }
           }
         })
         const err = summary.statements.find((s) => s.error)?.error
@@ -85,16 +125,16 @@ export function DataView({ session, refObj, tabId, active, structure }: { sessio
         setLoading(false)
       }
     },
-    [session, refObj, appliedWhere, sort, settings.dataPageSize, result]
+    [session, refObj, appliedWhere, sort, settings.dataPageSize, result, structure, lazy]
   )
 
   useEffect(() => {
-    if (!active) return
+    if (!active || structurePending) return
     if (!loaded.current) {
       loaded.current = true
       void load()
     }
-  }, [active, load])
+  }, [active, structurePending, load])
 
   // Reload when filter or sort change after the first load. Comparing with what was loaded (instead
   // of skipping the first run) keeps StrictMode's double effect run from issuing a second SELECT.
@@ -121,14 +161,60 @@ export function DataView({ session, refObj, tabId, active, structure }: { sessio
           return ins?.has(col) ? ins.get(col)! : null
         }
         const u = edits.updates.get(row)
-        return u?.has(col) ? u.get(col)! : undefined
+        return u?.has(col) ? u.get(col)! : fetched.current.get(`${row}:${col}`)
       },
       status: (row): RowStatus => (row >= baseRows ? 'inserted' : edits.deletes.has(row) ? 'deleted' : edits.updates.has(row) ? 'modified' : undefined),
-      cellEdited: (row, col) => row < baseRows && !!edits.updates.get(row)?.has(col)
+      cellEdited: (row, col) => row < baseRows && !!edits.updates.get(row)?.has(col),
+      placeholder: (row, col) => {
+        const kind = row < baseRows ? lazyCols.get(col) : undefined
+        if (!kind || fetched.current.has(`${row}:${col}`)) return undefined
+        const v = result.get(col, row)
+        if (v === null) return undefined
+        if (kind === 'binary') return t('data.lobBinary', { size: formatBytes(Number(v)) })
+        // Uncut previews are the whole value.
+        return typeof v === 'string' && v.endsWith(LOB_CUT_MARK) ? `${v.slice(0, -LOB_CUT_MARK.length)}…` : undefined
+      }
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [edits, baseRows, revision]
+    [edits, baseRows, revision, lazyCols, result]
   )
+
+  /** Value as loaded (or fetched), without pending edits. */
+  const baseValue = (row: number, col: number): CellValue => {
+    const key = `${row}:${col}`
+    return fetched.current.has(key) ? fetched.current.get(key)! : result.get(col, row)
+  }
+
+  /** Fetches the LOB values of these rows (all LOB columns, or `only`) still shown as previews. */
+  const fetchLobs = async (rows: number[], only?: number): Promise<void> => {
+    let changed = false
+    for (const row of rows) {
+      const cols = [...lazyCols.keys()].filter((c) => (only === undefined || c === only) && overlay.placeholder!(row, c) !== undefined)
+      if (!cols.length) continue
+      const values = await session.client.call('fetchCellValues', { ref: refObj, key: keyFor(row), columns: cols.map((c) => result.columns[c].name) })
+      cols.forEach((c, i) => fetched.current.set(`${row}:${c}`, values[i]))
+      changed = true
+    }
+    if (changed) setRevision((r) => r + 1)
+  }
+
+  const openValueEditor = async (row: number, col: number): Promise<void> => {
+    try {
+      await fetchLobs([row], col)
+      setValueEdit({ row, col })
+    } catch (err) {
+      notify.error(err)
+    }
+  }
+
+  /** Rows with every LOB loaded, for copying. */
+  const resolveRows = async (rows: number[]): Promise<ResultSet> => {
+    await fetchLobs(rows.filter((r) => r < baseRows))
+    return ResultSet.fromRows(
+      result.columns,
+      rows.map((r) => result.columns.map((_, c) => (r < baseRows ? baseValue(r, c) : valueAt(r, c))))
+    )
+  }
 
   const pending = edits.updates.size + edits.inserts.length + edits.deletes.size
 
@@ -140,7 +226,7 @@ export function DataView({ session, refObj, tabId, active, structure }: { sessio
         ins.set(col, value)
         next.inserts[row - baseRows] = ins
       } else {
-        const original = result.get(col, row)
+        const original = baseValue(row, col)
         const m = new Map(next.updates.get(row))
         if (value === original) m.delete(col)
         else m.set(col, value)
@@ -209,7 +295,7 @@ export function DataView({ session, refObj, tabId, active, structure }: { sessio
 
   const extraMenu = editable && menu
     ? [
-        { label: t('data.editCell'), icon: <Pencil size={14} />, onSelect: () => setValueEdit({ row: menu.row, col: menu.col }) },
+        { label: t('data.editCell'), icon: <Pencil size={14} />, onSelect: () => void openValueEditor(menu.row, menu.col) },
         { label: t('data.setNull'), icon: <Ban size={14} />, onSelect: () => setCell(menu.row, menu.col, null) },
         { label: t('data.insertRow'), icon: <Plus size={14} />, onSelect: insertRow },
         { label: t('data.deleteRows'), icon: <Trash2 size={14} />, danger: true, onSelect: () => deleteRows(selectedRows(menu.selection).length ? selectedRows(menu.selection) : [menu.row]) }
@@ -282,7 +368,7 @@ export function DataView({ session, refObj, tabId, active, structure }: { sessio
           sort={sort}
           onSort={(c) => sortBy(c.name)}
           onEdit={(row, col, v) => setCell(row, col, v)}
-          onEditRequest={(row, col) => editable && setValueEdit({ row, col })}
+          onEditRequest={(row, col) => editable && void openValueEditor(row, col)}
           onSelectionChange={(s) => setSelection(selectedRows(s))}
           onContextMenu={(e) => setMenu(e)}
         />
@@ -303,7 +389,15 @@ export function DataView({ session, refObj, tabId, active, structure }: { sessio
         )}
         {selection.length > 0 && <span>{t('status.selected', { count: selection.length })}</span>}
       </div>
-      <GridContextMenu menu={menu} onClose={() => setMenu(null)} result={result} sessionId={session.id} extra={extraMenu} tableName={refObj.name} />
+      <GridContextMenu
+        menu={menu}
+        onClose={() => setMenu(null)}
+        result={result}
+        resolveRows={lazyCols.size ? resolveRows : undefined}
+        sessionId={session.id}
+        extra={extraMenu}
+        tableName={refObj.name}
+      />
       {valueEdit && (
         <ValueEditorDialog
           column={result.columns[valueEdit.col]?.name ?? ''}

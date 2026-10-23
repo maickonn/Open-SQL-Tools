@@ -153,6 +153,9 @@ export class FbConnection implements DbConnection {
       encoding: (p.options.charset || 'UTF8') as Options['encoding'],
       lowercase_keys: false,
       blobAsText: true,
+      // One round trip per op_get_segment: the driver's 1 KB default turned a table with 70 MB of
+      // BLOBs into ~70,000 round trips, blocking the session for seconds locally and minutes on a LAN.
+      blobReadChunkSize: 65535,
       numericMode: 'string',
       wireCrypt: p.options.wireCrypt === 'disabled' ? Firebird.WIRE_CRYPT_DISABLE : Firebird.WIRE_CRYPT_ENABLE,
       wireCompression: !!p.options.wireCompression,

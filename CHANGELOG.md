@@ -4,6 +4,9 @@ User-facing changes per release. Add entries under **Unreleased** as you go; bef
 
 ## [Unreleased]
 
+- Data tab loads large objects (BLOB, TEXT, bytea) on demand: tables with heavy BLOB columns open in a fraction of the time
+- Firebird BLOBs are read in 64 KB requests instead of 1 KB, so queries returning BLOBs no longer stall the session
+
 ## [0.1.5]
 
 - New, sharper application icon (crisp at every size on Windows)

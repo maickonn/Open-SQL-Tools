@@ -82,7 +82,7 @@ export default function ObjectView({ tab, active }: { tab: Tab; active: boolean 
           ))}
         {tableLike && !tab.isNew && (
           <div className={view === 'data' ? 'h-full' : 'hidden'}>
-            <DataView session={session} refObj={ref} tabId={tab.id} active={active && view === 'data'} structure={structure} />
+            <DataView session={session} refObj={ref} tabId={tab.id} active={active && view === 'data'} structure={structure} structurePending={ref.kind === 'table' && !structure && !error} />
           </div>
         )}
         {view === 'trigger' && (

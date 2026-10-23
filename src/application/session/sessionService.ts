@@ -348,6 +348,14 @@ export class SessionService {
     return this.require().dialect.selectTableData(p)
   }
 
+  async fetchCellValues(p: { ref: DbObjectRef; key: Record<string, CellValue>; columns: string[] }): Promise<CellValue[]> {
+    const sql = this.require().dialect.selectByKey(p.ref, p.columns, p.key)
+    // Read-only on the meta connection: a long query in the editor doesn't hold the grid back.
+    const res = await this.query({ sql, database: p.ref.database, maxRows: 1, readOnly: true })
+    if (!res.rows.length) throw new Error('The row no longer exists. Refresh the data.')
+    return res.rows[0]
+  }
+
   countRows(p: { ref: DbObjectRef; where?: string }): Promise<number> {
     return this.require().inspector.countRows(p.ref, p.where)
   }

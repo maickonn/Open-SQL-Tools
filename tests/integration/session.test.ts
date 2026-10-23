@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import type { CellValue, DbEngine, DbObjectRef } from '@shared/model'
 import type { WorkerEvents } from '@shared/workerApi'
 import { SessionService } from '@application/session/sessionService'
+import { LOB_CUT_MARK, lobKind } from '@domain/lob'
 import { openDatabase } from '@infrastructure/db/openDatabase'
 import { createFileWriter, readTextFile } from '@infrastructure/fs/fileWriter'
 import { availableTargets, profileFor, type Target } from './targets'
@@ -225,6 +226,49 @@ describe.skipIf(targets.length === 0)('session service against live databases', 
       expect(res.rows[0].slice(1, 3)).toEqual(['big', 'mid'])
       expect(svc.serverInfo().engine).toBe('firebird')
       await svc.query({ sql: 'DROP TABLE OST_WIDE' })
+    })
+
+    // BLOBs are read in 64 KB requests: values span several requests and segments.
+    it.skipIf(engine !== 'firebird')('reads large text and binary BLOBs whole', async () => {
+      await svc.query({ sql: "RECREATE TABLE OST_BLOBS (ID INTEGER, T BLOB SUB_TYPE TEXT SEGMENT SIZE 16384, B BLOB SUB_TYPE 0)" })
+      await svc.query({ sql: "INSERT INTO OST_BLOBS VALUES (1, '', '')" })
+      const piece = 'abcdefghij'.repeat(3000)
+      for (let i = 0; i < 10; i++) {
+        await svc.query({ sql: `UPDATE OST_BLOBS SET T = T || '${piece}', B = B || '${piece}'` })
+      }
+      const res = await svc.query({ sql: 'SELECT T, B FROM OST_BLOBS' })
+      expect(res.rows[0][0]).toBe(piece.repeat(10))
+      expect(Buffer.from(res.rows[0][1] as Uint8Array).toString('latin1')).toBe(piece.repeat(10))
+      await svc.query({ sql: 'DROP TABLE OST_BLOBS' })
+    })
+
+    // The Data tab selects previews/sizes of LOB columns and fetches the values by key.
+    it.skipIf(engine === 'sqlite')('loads LOB columns on demand', async () => {
+      const structure = await svc.getTableStructure({ ref })
+      const lazy = structure.columns.flatMap((c) => {
+        const kind = lobKind(engine, c)
+        return kind ? [{ column: c.name, kind }] : []
+      })
+      const data = name(engine, 'data')
+      expect(lazy.map((l) => l.column)).toContain(data)
+      const id = name(engine, 'id')
+      const sql = svc.tableDataSql({ ref, offset: 0, limit: 100, orderBy: [{ column: id, desc: false }], columns: structure.columns.map((c) => c.name), lazy })
+      const res = await svc.query({ sql, database: ref.database })
+      const at = (column: string): number => res.columns.findIndex((c) => c.name === column)
+      expect(Number(res.rows[0][at(id)])).toBe(1)
+      expect(Number(res.rows[0][at(data)])).toBe(4)
+      const note = name(engine, 'note')
+      if (lazy.some((l) => l.column === note)) {
+        // Uncut previews are the value; cut ones end with the mark the server appends.
+        expect(res.rows[0][at(note)]).toBe('first')
+        await svc.applyRowChanges({ ref, changes: [{ kind: 'update', key: { [id]: 1 }, values: { [note]: 'é'.repeat(300) } }] })
+        const cut = await svc.query({ sql, database: ref.database })
+        expect(cut.rows[0][at(note)]).toBe('é'.repeat(256) + LOB_CUT_MARK)
+        await svc.applyRowChanges({ ref, changes: [{ kind: 'update', key: { [id]: 1 }, values: { [note]: 'first' } }] })
+      }
+      const values = await svc.fetchCellValues({ ref, key: { [id]: 1 }, columns: [data] })
+      expect(Array.from(values[0] as Uint8Array)).toEqual([0xde, 0xad, 0xbe, 0xef])
+      await expect(svc.fetchCellValues({ ref, key: { [id]: 999 }, columns: [data] })).rejects.toThrow(/no longer exists/)
     })
 
     it('rejects writes in read-only queries (agent mode)', async () => {

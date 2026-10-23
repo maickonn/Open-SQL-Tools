@@ -113,6 +113,8 @@ export interface WorkerApi {
   dataTypes(p: void): string[]
 
   tableDataSql(p: TableDataRequest): string
+  /** Full values of some columns of one row, by key (LOBs the Data tab loads on demand). */
+  fetchCellValues(p: { ref: DbObjectRef; key: Record<string, CellValue>; columns: string[] }): CellValue[]
   countRows(p: { ref: DbObjectRef; where?: string }): number
   applyRowChanges(p: { ref: DbObjectRef; changes: RowChange[]; dryRun?: boolean }): { statements: string[]; affected: number }
   generateTableDDL(p: { original: TableStructure | null; target: TableStructure }): string[]

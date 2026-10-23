@@ -1,4 +1,5 @@
-import type { ColumnDef, DbEngine, DbObjectRef, IndexDef, ObjectKind, ServerUser, TableDataRequest, TableStructure, TriggerDef } from '@shared/model'
+import type { ColumnDef, DbEngine, DbObjectRef, IndexDef, LobKind, ObjectKind, ServerUser, TableDataRequest, TableStructure, TriggerDef } from '@shared/model'
+import { LOB_PREVIEW_CHARS } from '@domain/lob'
 import type { TemplateContext } from '@domain/ports/database'
 import { splitType } from '@domain/sql/columnType'
 import { BaseDialect } from '../common/baseDialect'
@@ -36,6 +37,13 @@ export class FbDialect extends BaseDialect {
   override selectTableData(req: TableDataRequest): string {
     // FIRST/SKIP works on every supported version (2.5+).
     return `SELECT FIRST ${req.limit} SKIP ${req.offset} ${this.selectList(req)} FROM ${this.qualify(req.ref)}${this.whereAndOrder(req)}`
+  }
+
+  protected override lobPreview(column: string, kind: LobKind): string {
+    if (kind === 'binary') return `OCTET_LENGTH(${column})`
+    // SUBSTRING of a BLOB is still a BLOB (one more read per cell); a VARCHAR comes inline.
+    const n = LOB_PREVIEW_CHARS
+    return `CASE WHEN CHAR_LENGTH(${column}) > ${n} THEN CAST(SUBSTRING(${column} FROM 1 FOR ${n}) AS VARCHAR(${n})) || ASCII_CHAR(1) ELSE CAST(${column} AS VARCHAR(${n})) END`
   }
 
   override limitQuery(sql: string, limit: number): string {

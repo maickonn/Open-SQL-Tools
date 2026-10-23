@@ -33,7 +33,7 @@ const service = new SessionService({
 const METHODS: (keyof WorkerApi & string)[] = [
   'connect', 'disconnect', 'ping', 'serverInfo', 'execute', 'cancel', 'query', 'useDatabase', 'setAutocommit', 'commit',
   'rollback', 'inTransaction', 'listDatabases', 'listSchemas', 'listObjects', 'listColumns', 'listRoutines', 'getTableStructure', 'getObjectDDL',
-  'getRoutineSource', 'listCollations', 'listEngines', 'dataTypes', 'tableDataSql', 'countRows', 'applyRowChanges',
+  'getRoutineSource', 'listCollations', 'listEngines', 'dataTypes', 'tableDataSql', 'fetchCellValues', 'countRows', 'applyRowChanges',
   'generateTableDDL', 'executeStatements', 'objectAction', 'setEnabled', 'setSequenceValue', 'setExceptionMessage', 'listSequences',
   'listExceptions', 'getDependencies', 'getRoutineCall', 'getRoutineOperations', 'createTemplate',
   'getTrigger', 'triggerBodyTemplate', 'triggerStatements', 'saveTrigger', 'bulkAlterTables', 'insertRows', 'hostInfo', 'killProcess', 'listUsers', 'getUserPrivileges',

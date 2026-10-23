@@ -93,7 +93,7 @@ export const en = {
   data: {
     where: 'WHERE clause, e.g. id > 10', applyFilter: 'Apply', clearFilter: 'Clear', insertRow: 'Insert row', deleteRows: 'Delete selected rows',
     applyChanges: 'Post changes', discardChanges: 'Discard changes', loadMore: 'Load more', loadAll: 'Load all', pending: '{{count}} pending changes',
-    total: '{{shown}} of {{total}} rows', noKey: 'This table has no primary or unique key; edits match on all columns.',
+    total: '{{shown}} of {{total}} rows', lobBinary: '(BLOB {{size}})', noKey: 'This table has no primary or unique key; edits match on all columns.',
     setNull: 'Set NULL', setDefault: 'Set DEFAULT', copyAs: 'Copy as', copyRows: 'Copy rows', copyCell: 'Copy value',
     copyCsv: 'CSV', copyTsv: 'Tab-separated', copySql: 'SQL INSERT', copyMarkdown: 'Markdown', copyJson: 'JSON', editCell: 'Edit value',
     blobEditor: 'Value editor', textMode: 'Text', hexMode: 'Hex', jsonMode: 'JSON', bytes: '{{count}} bytes', readOnly: 'Read-only result'

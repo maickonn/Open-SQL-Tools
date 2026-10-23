@@ -433,7 +433,12 @@ export interface TableDataRequest {
   limit: number
   /** Columns to select (empty = all). */
   columns?: string[]
+  /** Large-object columns (listed in `columns`) selected as a preview instead of the value. */
+  lazy?: { column: string; kind: LobKind }[]
 }
+
+/** Text LOBs come as their first characters, binary LOBs as their size in bytes. */
+export type LobKind = 'text' | 'binary'
 
 export type RowChange =
   | { kind: 'insert'; values: Record<string, CellValue | { sql: string }> }

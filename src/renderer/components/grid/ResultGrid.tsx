@@ -28,6 +28,8 @@ export interface GridOverlay {
   value(row: number, col: number): CellValue | undefined
   status(row: number): RowStatus
   cellEdited(row: number, col: number): boolean
+  /** Text for a cell whose value isn't loaded yet (large objects); such cells open the value editor. */
+  placeholder?(row: number, col: number): string | undefined
 }
 
 export interface ResultGridProps {
@@ -101,9 +103,20 @@ export function ResultGrid({ result, overlay, editable, sort, onSort, onEdit, on
     ([col, row]: Item): GridCell => {
       const meta = result.columns[col]
       const override = overlay?.value(row, col)
+      const placeholder = override === undefined ? overlay?.placeholder?.(row, col) : undefined
       const v = override !== undefined ? override : row < result.rowCount ? result.get(col, row) : null
       const isNull = v === null
       const status = overlay?.status(row)
+      if (placeholder !== undefined) {
+        return {
+          kind: GridCellKind.Text,
+          data: placeholder,
+          displayData: placeholder,
+          allowOverlay: false,
+          readonly: true,
+          themeOverride: status === 'deleted' ? { textDark: colors.danger, bgCell: colors.dangerSoft } : { textDark: colors.null }
+        }
+      }
       const edited = overlay?.cellEdited(row, col)
       const text = isNull ? settings.nullText : displayValue(v, settings.nullText)
       const themeOverride: Partial<Theme> | undefined = isNull
@@ -165,7 +178,9 @@ export function ResultGrid({ result, overlay, editable, sort, onSort, onEdit, on
         onHeaderClicked={(i) => onSort?.(result.columns[i])}
         onCellEdited={editable ? onCellEdited : undefined}
         onCellActivated={([col, row]) => {
-          const v = result.columns[col] && row < result.rowCount ? result.get(col, row) : null
+          const override = overlay?.value(row, col)
+          if (override === undefined && overlay?.placeholder?.(row, col) !== undefined) return onEditRequest?.(row, col)
+          const v = override !== undefined ? override : result.columns[col] && row < result.rowCount ? result.get(col, row) : null
           if (v instanceof Uint8Array || (typeof v === 'string' && v.length > 200)) onEditRequest?.(row, col)
         }}
         onCellContextMenu={([col, row], e) => {
