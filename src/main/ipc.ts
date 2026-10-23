@@ -158,6 +158,7 @@ export function registerIpc(s: IpcServices): void {
   handle('update:cancel', () => s.updates?.cancel())
   handle('update:skip', () => s.updates?.skip())
   handle('update:install', () => s.updates?.install())
+  handle('update:openPage', () => s.updates?.openReleasePage())
   handle('edit:command', (e, command) => {
     const allowed = ['undo', 'redo', 'cut', 'copy', 'paste', 'delete', 'selectAll'] as const
     if (allowed.includes(command)) e.sender[command]()

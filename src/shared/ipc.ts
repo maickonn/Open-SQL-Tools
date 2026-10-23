@@ -95,6 +95,7 @@ export interface IpcInvokeMap {
   'update:cancel': { args: []; result: void }
   'update:skip': { args: []; result: void }
   'update:install': { args: []; result: void }
+  'update:openPage': { args: []; result: void }
   /** Runs an edit command on the focused field (keeps the native undo stack and input events). */
   'edit:command': { args: [command: EditCommand]; result: void }
   'edit:canPaste': { args: []; result: boolean }

@@ -97,7 +97,7 @@ Credentials: MySQL/MariaDB `root`/`test`, PostgreSQL `postgres`/`test`, Firebird
 
 ## CI and releases
 
-GitHub Actions ([`ci.yml`](.github/workflows/ci.yml)) runs on every push to `main` and every pull request: typecheck, unit tests and build, then one job per database server in `docker/compose.yml` (integration tests, plus the Electron end-to-end flow for SQLite, `firebird5`, `mysql97`, `mariadb118` and `postgres18`), the SSH/TLS connectivity tests and a Windows installer build.
+GitHub Actions ([`ci.yml`](.github/workflows/ci.yml)) runs on every push to `main` and every pull request: typecheck, unit tests and build, then one job per database server in `docker/compose.yml` (integration tests, plus the Electron end-to-end flow for SQLite, `firebird5`, `mysql97`, `mariadb118` and `postgres18`), the SSH/TLS connectivity tests and the Windows installer and macOS disk image builds.
 
 To release, write the user-facing changes under `## [Unreleased]` in [`CHANGELOG.md`](CHANGELOG.md), rename that heading to the new version (e.g. `## [0.1.1]`) and commit, then bump the version and push the tag:
 
@@ -109,9 +109,9 @@ npm version patch
 git push --follow-tags
 ```
 
-[`release.yml`](.github/workflows/release.yml) checks that the tag matches `package.json`, creates a draft GitHub release with that version's `CHANGELOG.md` section as its notes (it fails if the section is missing) and uploads the Windows installer and its update feed (`latest.yml`). Test the installer, then publish the draft.
+[`release.yml`](.github/workflows/release.yml) checks that the tag matches `package.json`, creates a draft GitHub release with that version's `CHANGELOG.md` section as its notes (it fails if the section is missing) and uploads the Windows installer and the Apple Silicon disk image with their update feeds (`latest.yml`, `latest-mac.yml`). Test them, then publish the draft.
 
-Installed Windows builds check the published releases on startup (a small splash: update available with the first changelog items, download progress, restart to install) and open normally when offline or up to date; the check can be turned off in Preferences. Linux and macOS builds are not published yet.
+Installed builds check the published releases on startup (a small splash with the first changelog items) and open normally when offline or up to date; the check can be turned off in Preferences. On Windows the splash downloads the update and restarts to install it. The macOS build (Apple Silicon only) isn't signed with a Developer ID, so it can't update itself: **Download** opens the release page to get the new disk image. On first launch macOS blocks it as coming from an unidentified developer; allow it in System Settings → Privacy & Security → **Open Anyway** (or run `xattr -dr com.apple.quarantine "/Applications/Open SQL Tools.app"`). Linux builds are not published yet.
 
 ## License
 

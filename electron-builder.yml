@@ -27,10 +27,19 @@ win:
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
+# Apple Silicon only, without a Developer ID: no signing here (identity null), the bundle is signed
+# ad hoc after packing (scripts/adhoc-sign.mjs) so macOS offers "Open Anyway" instead of "damaged".
+afterPack: scripts/adhoc-sign.mjs
 mac:
-  target: [dmg]
+  target:
+    - target: dmg
+      arch: [arm64]
   category: public.app-category.developer-tools
   icon: resources/icon.png
+  identity: null
+dmg:
+  # No spaces: the update feed (latest-mac.yml) and the GitHub asset use the same name.
+  artifactName: Open-SQL-Tools-${version}-${arch}.${ext}
 linux:
   target: [AppImage, deb]
   category: Development

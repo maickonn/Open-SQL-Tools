@@ -8,6 +8,8 @@ export interface UpdateServiceDeps {
   source: UpdateSource
   currentVersion: string
   emit: (state: UpdateState) => void
+  /** Shows the page of a release, where it can be downloaded by hand (macOS: no in-app install). */
+  openReleasePage?: (version: string) => void
   /** A check that takes longer is treated as offline (the app must never hang on startup). */
   checkTimeoutMs?: number
   /** How long the "couldn't check" notice stays before the app opens. */
@@ -74,6 +76,14 @@ export class UpdateService {
   cancel(): void {
     if (this.current.phase !== 'downloading') return
     this.deps.source.cancel()
+    this.finish('continue')
+  }
+
+  /** The update is installed by hand from the release page; the app opens meanwhile. */
+  openReleasePage(): void {
+    const s = this.current
+    if (s.phase !== 'available' || !this.deps.openReleasePage) return
+    this.deps.openReleasePage(s.version)
     this.finish('continue')
   }
 

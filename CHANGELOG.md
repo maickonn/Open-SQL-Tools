@@ -5,6 +5,7 @@ User-facing changes per release. Add entries under **Unreleased** as you go; bef
 ## [Unreleased]
 
 - macOS: the menus move to the system menu bar (with About, Settings and Quit in the app menu, plus the standard Edit and Window menus), and the title bar drops the logo and the space reserved for the Windows window controls
+- macOS: Apple Silicon disk image in the releases; on startup the app tells when a new version is out and **Download** opens its release page
 - macOS: shortcuts show with the system symbols (⌘↩, ⇧⌘F…) in tooltips, menus, the shortcuts list and Preferences
 
 ## [0.2.1]

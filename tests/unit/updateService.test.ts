@@ -36,9 +36,9 @@ class FakeSource implements UpdateSource {
   }
 }
 
-function setup(source = new FakeSource()) {
+function setup(source = new FakeSource(), openReleasePage?: (version: string) => void) {
   const states: UpdateState[] = []
-  const service = new UpdateService({ source, currentVersion: '0.1.0', emit: (s) => states.push(s), checkTimeoutMs: 50, failureNoticeMs: 10 })
+  const service = new UpdateService({ source, currentVersion: '0.1.0', emit: (s) => states.push(s), checkTimeoutMs: 50, failureNoticeMs: 10, openReleasePage })
   return { source, service, states, phases: () => states.map((s) => s.phase) }
 }
 
@@ -128,5 +128,26 @@ describe('releaseNoteLines', () => {
   it('reads plain markdown and keeps at most four lines', () => {
     expect(releaseNoteLines('## Changes\n- a\n- b\n* c\n- d\n- e')).toEqual(['Changes', 'a', 'b', 'c'])
     expect(releaseNoteLines('')).toEqual([])
+  })
+
+  it('opens the release page and continues when updates are installed by hand (macOS)', async () => {
+    const opened: string[] = []
+    const { source, service, phases } = setup(new FakeSource(), (v) => opened.push(v))
+    const done = service.run()
+    await tick()
+    service.openReleasePage()
+    await expect(done).resolves.toBe('continue')
+    expect(opened).toEqual(['0.2.0'])
+    expect(phases()).toEqual(['checking', 'available'])
+    expect(source.installed).toBe(false)
+  })
+
+  it('ignores the release page without a way to open it', async () => {
+    const { service, phases } = setup()
+    void service.run()
+    await tick()
+    service.openReleasePage()
+    await tick()
+    expect(phases()).toEqual(['checking', 'available'])
   })
 })

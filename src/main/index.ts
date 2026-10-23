@@ -1,4 +1,4 @@
-import { app, BrowserWindow, nativeTheme } from 'electron'
+import { app, BrowserWindow, nativeTheme, shell } from 'electron'
 import { join } from 'node:path'
 import { SqliteStore, historyRepository, settingsRepository, snippetRepository } from '@infrastructure/persistence/sqliteStore'
 import { SafeStorageSecretStore } from '@infrastructure/security/safeStorageSecretStore'
@@ -7,7 +7,7 @@ import { AgentService } from '@application/chat/agentService'
 import { UpdateService } from '@application/update/updateService'
 import { ElectronUpdateSource } from '@infrastructure/update/electronUpdateSource'
 import { PreviewUpdateSource } from '@infrastructure/update/previewUpdateSource'
-import type { AppSettings } from '@shared/model'
+import { REPOSITORY_URL, type AppSettings } from '@shared/model'
 import { SessionManager } from './sessions/sessionManager'
 import { ProviderRegistry } from './providers'
 import { createAgentGateway } from './agentGateway'
@@ -28,17 +28,20 @@ let mainWindow: BrowserWindow | null = null
 let sessions: SessionManager | null = null
 
 /**
- * Installed Windows builds check GitHub for a new release behind a splash on startup.
- * OST_SPLASH_PREVIEW (update|offline|latest) shows the splash with fake releases in dev.
+ * Installed Windows and macOS builds check GitHub for a new release behind a splash on startup.
+ * Windows downloads and installs it; macOS (unsigned, so Squirrel.Mac can't install it) opens the
+ * release page in the browser. OST_SPLASH_PREVIEW (update|offline|latest) shows the splash with
+ * fake releases in dev.
  */
 function createUpdates(settings: AppSettings): UpdateService | null {
   const preview = process.env.OST_SPLASH_PREVIEW
-  const enabled = process.platform === 'win32' && app.isPackaged && settings.checkForUpdates && !process.env.OST_USER_DATA
+  const enabled = (process.platform === 'win32' || process.platform === 'darwin') && app.isPackaged && settings.checkForUpdates && !process.env.OST_USER_DATA
   if (!preview && !enabled) return null
   return new UpdateService({
     source: preview ? new PreviewUpdateSource(preview, () => app.quit()) : new ElectronUpdateSource(),
     currentVersion: app.getVersion(),
-    emit: (state) => broadcast('update:state', state)
+    emit: (state) => broadcast('update:state', state),
+    openReleasePage: process.platform === 'darwin' ? (version) => void shell.openExternal(`${REPOSITORY_URL}/releases/tag/v${version}`) : undefined
   })
 }
 

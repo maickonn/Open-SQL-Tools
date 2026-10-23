@@ -82,6 +82,8 @@ function Progress({ state }: { state: UpdateState | null }): ReactNode {
 
 function Available({ state }: { state: Extract<UpdateState, { phase: 'available' }> }): ReactNode {
   const { t } = useTranslation()
+  // macOS builds aren't signed, so they can't install updates: the release page has the disk image.
+  const manual = api.platform === 'darwin'
   return (
     <>
       <div className="flex items-center gap-3.5 px-7 pt-6">
@@ -104,14 +106,18 @@ function Available({ state }: { state: Extract<UpdateState, { phase: 'available'
         ))}
       </div>
       <div className="flex items-center gap-2 px-7 pt-4 pb-5">
-        <a href={`${REPOSITORY_URL}/releases/tag/v${state.version}`} target="_blank" rel="noreferrer" className="no-drag text-xs text-accent hover:underline">
-          {t('update.releaseNotes')}
-        </a>
+        {manual ? (
+          <span className="text-xs text-muted">{t('update.downloadHint')}</span>
+        ) : (
+          <a href={`${REPOSITORY_URL}/releases/tag/v${state.version}`} target="_blank" rel="noreferrer" className="no-drag text-xs text-accent hover:underline">
+            {t('update.releaseNotes')}
+          </a>
+        )}
         <Button className="no-drag ml-auto" onClick={() => void api.invoke('update:skip')}>
           {t('update.later')}
         </Button>
-        <Button variant="primary" className="no-drag" onClick={() => void api.invoke('update:download')}>
-          {t('update.updateNow')}
+        <Button variant="primary" className="no-drag" onClick={() => void api.invoke(manual ? 'update:openPage' : 'update:download')}>
+          {manual ? t('update.download') : t('update.updateNow')}
         </Button>
       </div>
     </>

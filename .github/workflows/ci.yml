@@ -13,12 +13,14 @@ permissions:
   contents: read
 
 env:
-  # Electron and electron-builder download caches (Linux and Windows runners).
+  # Electron and electron-builder download caches (Linux, Windows and macOS runners).
   ELECTRON_CACHE_PATHS: |
     ~/.cache/electron
     ~/.cache/electron-builder
     ~/AppData/Local/electron/Cache
     ~/AppData/Local/electron-builder/Cache
+    ~/Library/Caches/electron
+    ~/Library/Caches/electron-builder
 
 jobs:
   check:
@@ -167,3 +169,20 @@ jobs:
           key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
       - run: npm ci
       - run: npm run package -- --win --publish never
+
+  package-mac:
+    name: macOS disk image
+    needs: check
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - uses: actions/cache@v5
+        with:
+          path: ${{ env.ELECTRON_CACHE_PATHS }}
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - run: npm ci
+      - run: npm run package -- --mac --publish never
