@@ -135,6 +135,7 @@ export function registerIpc(s: IpcServices): void {
   })
   handle('fs:readText', (_e, filePath) => readFile(filePath, 'utf8'))
   handle('fs:writeText', (_e, filePath, content) => writeFile(filePath, content, 'utf8'))
+  handle('fs:writeBytes', (_e, filePath, content) => writeFile(filePath, content))
   handle('shell:showItem', (_e, filePath) => shell.showItemInFolder(filePath))
   handle('shell:openExternal', async (_e, url) => {
     if (!isHttpUrl(url)) throw new Error('Only http(s) links can be opened')

@@ -402,6 +402,7 @@ export function DataView({
         <ValueEditorDialog
           column={result.columns[valueEdit.col]?.name ?? ''}
           value={valueAt(valueEdit.row, valueEdit.col)}
+          charset={structure?.columns.find((c) => c.name === result.columns[valueEdit.col]?.name)?.charset}
           readOnly={!editable}
           onClose={() => setValueEdit(null)}
           onSave={(v) => {

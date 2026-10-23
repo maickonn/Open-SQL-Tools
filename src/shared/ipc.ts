@@ -82,6 +82,7 @@ export interface IpcInvokeMap {
   'dialog:saveFile': { args: [options: FileDialogOptions]; result: string | null }
   'fs:readText': { args: [filePath: string]; result: string }
   'fs:writeText': { args: [filePath: string, content: string]; result: void }
+  'fs:writeBytes': { args: [filePath: string, content: Uint8Array]; result: void }
   'shell:showItem': { args: [filePath: string]; result: void }
   'shell:openExternal': { args: [url: string]; result: void }
 

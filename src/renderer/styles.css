@@ -237,3 +237,13 @@ textarea,
 .theme-switching *::after {
   transition: none !important;
 }
+
+/* Behind image previews, so transparent pixels show as such. */
+.ost-checkerboard {
+  background-color: var(--sunken);
+  background-image:
+    linear-gradient(45deg, var(--panel) 25%, transparent 25%), linear-gradient(-45deg, var(--panel) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, var(--panel) 75%), linear-gradient(-45deg, transparent 75%, var(--panel) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
