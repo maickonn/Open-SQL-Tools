@@ -77,6 +77,24 @@ export class ResultSet {
     this.truncated = other.truncated
   }
 
+  /** A copy with posted grid edits applied: deleted rows dropped, updated cells set, inserted rows appended. */
+  withEdits(edits: { updates: Map<number, Map<number, CellValue>>; inserts: Map<number, CellValue>[]; deletes: Set<number> }): ResultSet {
+    const rows: CellValue[][] = []
+    for (let r = 0; r < this.rowCount; r++) {
+      if (edits.deletes.has(r)) continue
+      const row = this.row(r)
+      for (const [c, v] of edits.updates.get(r) ?? []) row[c] = v
+      rows.push(row)
+    }
+    for (const ins of edits.inserts) rows.push(this.columns.map((_, c) => (ins.has(c) ? ins.get(c)! : null)))
+    const rs = ResultSet.fromRows(this.columns, rows)
+    rs.sql = this.sql
+    rs.statementIndex = this.statementIndex
+    rs.durationMs = this.durationMs
+    rs.truncated = this.truncated
+    return rs
+  }
+
   row(r: number): CellValue[] {
     return this.columns.map((_, c) => this.get(c, r))
   }

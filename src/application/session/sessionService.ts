@@ -12,14 +12,15 @@ import type {
   MaterializedResult,
   ObjectDependency,
   ObjectKind,
+  ResultSource,
   RoutineOperation,
   RowChange,
   SequenceInfo,
   ServerInfo,
-  TriggerDef,
   ServerUser,
   TableDataRequest,
-  TableStructure
+  TableStructure,
+  TriggerDef
 } from '@shared/model'
 import type { ExecuteParams, ExecuteSummary, ExportSource, StatementSummary, WorkerEvents } from '@shared/workerApi'
 import { toErrorPayload } from '@shared/rpc'
@@ -342,6 +343,39 @@ export class SessionService {
 
   dataTypes(): string[] {
     return this.require().dialect.dataTypes
+  }
+
+  async resultSource(p: { columns: ColumnMeta[]; database?: string }): Promise<ResultSource | null> {
+    const db = this.require()
+    const engine = db.info.engine
+    let sources: ({ database?: string; schema?: string; table: string; column: string } | null)[]
+    if (engine === 'postgres') {
+      const oids = p.columns.map((c) => (c.tableOid && c.columnNum ? { tableOid: c.tableOid, columnNum: c.columnNum } : null))
+      const known = oids.filter((o): o is { tableOid: number; columnNum: number } => !!o)
+      const found = known.length && db.inspector.columnSources ? await db.inspector.columnSources(known) : []
+      let i = 0
+      sources = oids.map((o) => (o ? found[i++] ?? null : null))
+    } else {
+      sources = p.columns.map((c) => (c.table && c.orgName ? { database: c.database, table: c.table.trim(), column: c.orgName.trim() } : null))
+    }
+    const tables = new Set(sources.filter((s) => s).map((s) => JSON.stringify([s!.database ?? '', s!.schema ?? '', s!.table])))
+    // Joins and results without table columns can't be edited.
+    if (tables.size !== 1) return null
+    const first = sources.find((s) => s)!
+    const ref: DbObjectRef = {
+      database: isSingleDatabase(engine) ? undefined : (first.database ?? p.database ?? db.primary.currentDatabase()),
+      schema: first.schema,
+      name: first.table,
+      kind: 'table'
+    }
+    let structure: TableStructure
+    try {
+      structure = await db.inspector.getTableStructure(ref)
+    } catch {
+      return null
+    }
+    if (!structure.columns.length) return null
+    return { ref, structure, columns: sources.map((s) => s?.column ?? null) }
   }
 
   tableDataSql(p: TableDataRequest): string {

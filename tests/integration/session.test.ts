@@ -309,6 +309,22 @@ describe.skipIf(targets.length === 0)('session service against live databases', 
       }
     })
 
+    // Query results from one table can be edited: the source table and each column's origin.
+    it('finds the table behind a query result', async () => {
+      const db = isMy(engine) ? target.database : undefined
+      const table = engine === 'postgres' ? `public.${q(engine, 'ost_items')}` : q(engine, 'ost_items')
+      const res = await svc.query({ sql: `SELECT ${q(engine, 'id')}, ${q(engine, 'name')} AS label, ${q(engine, 'price')} * 2 AS twice FROM ${table}`, database: db })
+      const source = await svc.resultSource({ columns: res.columns, database: db })
+      expect(source?.ref.name.toLowerCase()).toBe('ost_items')
+      expect(source?.columns.map((c) => c?.toLowerCase() ?? null)).toEqual(['id', 'name', null])
+      expect(source?.structure.columns.length).toBeGreaterThan(3)
+      const joined = await svc.query({ sql: `SELECT a.${q(engine, 'id')}, b.${q(engine, 'name')} FROM ${table} a JOIN ${table} b ON b.${q(engine, 'id')} = a.${q(engine, 'id')}`, database: db })
+      // A self-join still has one source table; two different tables have none.
+      expect((await svc.resultSource({ columns: joined.columns, database: db }))?.ref.name.toLowerCase()).toBe('ost_items')
+      const constant = await svc.query({ sql: engine === 'firebird' ? 'SELECT 1 AS ONE FROM RDB$DATABASE' : 'SELECT 1 AS one', database: db })
+      expect(await svc.resultSource({ columns: constant.columns, database: db })).toBeNull()
+    })
+
     it('rejects writes in read-only queries (agent mode)', async () => {
       await expect(
         svc.query({ sql: `UPDATE ${q(engine, 'ost_items')} SET ${q(engine, 'name')} = 'x'`, readOnly: true, database: isMy(engine) ? target.database : undefined })

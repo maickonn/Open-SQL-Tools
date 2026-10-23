@@ -28,6 +28,8 @@ export interface GridOverlay {
   value(row: number, col: number): CellValue | undefined
   status(row: number): RowStatus
   cellEdited(row: number, col: number): boolean
+  /** Columns that can't be edited (expressions in a query result). */
+  readOnlyColumn?(col: number): boolean
   /** Text shown instead of the value (unloaded or binary large objects); such cells open the value editor. */
   placeholder?(row: number, col: number): string | undefined
 }
@@ -139,8 +141,8 @@ export function ResultGrid({ result, overlay, editable, sort, onSort, onEdit, on
         kind: GridCellKind.Text,
         data: isNull ? '' : typeof v === 'string' ? v : text,
         displayData: text,
-        allowOverlay: !!editable && !(v instanceof Uint8Array) && status !== 'deleted',
-        readonly: !editable,
+        allowOverlay: !!editable && !(v instanceof Uint8Array) && status !== 'deleted' && !overlay?.readOnlyColumn?.(col),
+        readonly: !editable || !!overlay?.readOnlyColumn?.(col),
         contentAlign: NUMERIC.has(meta?.category ?? '') ? 'right' : undefined,
         themeOverride
       }

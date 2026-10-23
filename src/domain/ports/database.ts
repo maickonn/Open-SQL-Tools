@@ -75,6 +75,8 @@ export interface DbConnection {
 
 /** Reads catalog metadata. Implementations isolate per-version catalog queries. */
 export interface SchemaInspector {
+  /** PostgreSQL: schema, table and column names of result columns reported as OIDs. */
+  columnSources?(columns: { tableOid: number; columnNum: number }[]): Promise<({ schema: string; table: string; column: string } | null)[]>
   listDatabases(): Promise<string[]>
   listSchemas(database?: string): Promise<string[]>
   listObjects(database?: string, schema?: string): Promise<DbObjectInfo[]>

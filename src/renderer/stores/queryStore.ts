@@ -92,6 +92,8 @@ interface QueryVM {
   run(tabId: string, sql?: string, baseOffset?: number): Promise<void>
   cancel(tabId: string): Promise<void>
   setFilePath(tabId: string, filePath: string | undefined): void
+  /** Swaps a result for its edited copy once grid changes were posted. */
+  replaceResult(tabId: string, index: number, rs: ResultSet): void
 }
 
 export const useQueries = create<QueryVM>((set, get) => ({
@@ -121,6 +123,16 @@ export const useQueries = create<QueryVM>((set, get) => ({
 
   setFilePath(tabId, filePath) {
     set((s) => ({ tabs: { ...s.tabs, [tabId]: { ...s.tabs[tabId], filePath } } }))
+  },
+
+  replaceResult(tabId, index, rs) {
+    set((s) => {
+      const tab = s.tabs[tabId]
+      if (!tab?.results[index]) return s
+      const results = [...tab.results]
+      results[index] = rs
+      return { tabs: { ...s.tabs, [tabId]: { ...tab, results } } }
+    })
   },
 
   async run(tabId, sqlOverride, baseOffset = 0) {

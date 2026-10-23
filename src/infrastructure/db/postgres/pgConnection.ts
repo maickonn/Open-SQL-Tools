@@ -164,10 +164,10 @@ export class PgConnection implements DbConnection {
     await this.requireClient().query('SELECT 1')
   }
 
-  private columnMeta(fields: { name: string; dataTypeID: number; tableID: number }[]): ColumnMeta[] {
+  private columnMeta(fields: { name: string; dataTypeID: number; tableID: number; columnID: number }[]): ColumnMeta[] {
     return fields.map((f) => {
       const t = this.types.get(f.dataTypeID)
-      return { name: f.name, type: t?.name ?? String(f.dataTypeID), category: categorize(t) }
+      return { name: f.name, type: t?.name ?? String(f.dataTypeID), category: categorize(t), tableOid: f.tableID || undefined, columnNum: f.columnID || undefined }
     })
   }
 
@@ -207,7 +207,7 @@ export class PgConnection implements DbConnection {
 
   private async stream(client: pg.Client, sql: string, sink: ResultSink | null, options: RunOptions): Promise<RunOutcome> {
     const cursor = client.query(new Cursor(sql, undefined, { rowMode: 'array' }))
-    type CursorResult = { fields: { name: string; dataTypeID: number; tableID: number }[]; rowCount: number | null; command: string }
+    type CursorResult = { fields: { name: string; dataTypeID: number; tableID: number; columnID: number }[]; rowCount: number | null; command: string }
     const read = (n: number): Promise<{ rows: unknown[][]; result?: CursorResult }> =>
       new Promise((resolve, reject) =>
         cursor.read(n, (err: Error | undefined, rows: unknown[][], result?: CursorResult) => (err ? reject(err) : resolve({ rows, result })))

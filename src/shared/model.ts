@@ -410,7 +410,20 @@ export interface ColumnMeta {
   table?: string
   /** Original column name in the table. */
   orgName?: string
+  /** Database of the source table (MySQL/MariaDB). */
+  database?: string
+  /** PostgreSQL reports the source as OIDs: table and attribute number. */
+  tableOid?: number
+  columnNum?: number
   nullable?: boolean
+}
+
+/** Table a query result comes from, when it is a single table and the result can be edited. */
+export interface ResultSource {
+  ref: DbObjectRef
+  structure: TableStructure
+  /** Table column of each result column; null for expressions and other tables' columns. */
+  columns: (string | null)[]
 }
 
 /** Structured-clone friendly cell value. Binary data arrives as Uint8Array. */

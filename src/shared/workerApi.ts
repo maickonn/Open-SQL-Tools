@@ -15,14 +15,15 @@ import type {
   ObjectDependency,
   ObjectKind,
   ProgressInfo,
+  ResultSource,
   RoutineOperation,
   RowChange,
   SequenceInfo,
   ServerInfo,
-  TriggerDef,
   ServerUser,
   TableDataRequest,
   TableStructure,
+  TriggerDef,
   UserPrivileges
 } from './model'
 
@@ -113,6 +114,8 @@ export interface WorkerApi {
   dataTypes(p: void): string[]
 
   tableDataSql(p: TableDataRequest): string
+  /** The single table a query result comes from, for editing it; null when there is none. */
+  resultSource(p: { columns: ColumnMeta[]; database?: string }): ResultSource | null
   /** Full values of some columns of one row, by key (LOBs the Data tab loads on demand). */
   fetchCellValues(p: { ref: DbObjectRef; key: Record<string, CellValue>; columns: string[] }): CellValue[]
   /** Stored bytes of a text LOB holding a file (no transliteration). */

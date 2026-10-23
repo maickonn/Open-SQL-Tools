@@ -64,6 +64,19 @@ export class PgInspector implements SchemaInspector {
     return `${this.lit(this.dialect.qualify({ ...ref, args: undefined }))}::regclass`
   }
 
+  async columnSources(columns: { tableOid: number; columnNum: number }[]): Promise<({ schema: string; table: string; column: string } | null)[]> {
+    if (!columns.length) return []
+    const pairs = columns.map((c) => `(${Math.trunc(c.tableOid)}, ${Math.trunc(c.columnNum)})`).join(', ')
+    const rows = await queryObjects(
+      this.query,
+      `SELECT a.attrelid AS oid, a.attnum AS num, n.nspname AS schema, c.relname AS tbl, a.attname AS col
+       FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE (a.attrelid, a.attnum) IN (${pairs})`
+    )
+    const found = new Map(rows.map((r) => [`${num(r.oid)}:${num(r.num)}`, { schema: str(r.schema), table: str(r.tbl), column: str(r.col) }]))
+    return columns.map((c) => found.get(`${c.tableOid}:${c.columnNum}`) ?? null)
+  }
+
   async listDatabases(): Promise<string[]> {
     const rows = await queryObjects(this.query, 'SELECT datname FROM pg_database WHERE NOT datistemplate AND datallowconn ORDER BY datname')
     return rows.map((r) => str(r.datname))

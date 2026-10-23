@@ -4,6 +4,8 @@ User-facing changes per release. Add entries under **Unreleased** as you go; bef
 
 ## [Unreleased]
 
+- Query results from a single table can be edited like the Data tab (cells, inserts, deletes, BLOB import/export) when they include the table's key
+- The title bar no longer has the session, new tab, run and stop buttons (they stay in the menus, shortcuts and query toolbar)
 - Value editor previews images and PDFs stored in BLOBs (also images kept in text BLOBs) and exports any value to a file
 - Import a file into a BLOB from the value editor or the cell's context menu; binary values are sent as statement parameters, so large files fit
 - Binary values show in the grid as their file type, e.g. (PNG), or (BLOB) when the type is unknown

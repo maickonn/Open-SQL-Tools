@@ -55,6 +55,7 @@ export function toColumnMeta(f: FieldPacket): ColumnMeta {
     category: categorize(typeId, charset),
     table: f.orgTable || f.table || undefined,
     orgName: f.orgName || undefined,
+    database: (f as { schema?: string }).schema || undefined,
     nullable: f.flags !== undefined ? (Number(f.flags) & 1) === 0 : undefined
   }
 }

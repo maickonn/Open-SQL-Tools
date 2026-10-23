@@ -121,30 +121,17 @@ export function TitleBar() {
         ]}
       />
 
-      <div className="no-drag ml-3 flex items-center gap-0.5 border-l border-border pl-2">
-        <IconButton label={t('menu.sessionManager')} onClick={() => useConnections.getState().openDialog()}>
-          <Database size={16} />
-        </IconButton>
-        <IconButton label={t('menu.newQueryTab')} disabled={!sid} onClick={() => commands.newQuery()}>
-          <Plus size={16} />
-        </IconButton>
-        <IconButton label={`${t('menu.runAll')} (${sc('run')})`} disabled={activeTab?.kind !== 'query'} onClick={() => commands.run('all')}>
-          <Play size={16} className="text-success" />
-        </IconButton>
-        <IconButton label={t('menu.stop')} disabled={activeTab?.kind !== 'query'} onClick={() => commands.stop()}>
-          <Square size={14} className="text-danger" />
-        </IconButton>
-        {activeSession && !activeSession.autocommit && (
-          <>
-            <IconButton label={t('menu.commit')} onClick={() => commands.commit()}>
-              <Check size={16} />
-            </IconButton>
-            <IconButton label={t('menu.rollback')} onClick={() => commands.rollback()}>
-              <RotateCcw size={15} />
-            </IconButton>
-          </>
-        )}
-      </div>
+      {/* Session, query tab, run and stop live in the menus and the query toolbar; only the pending transaction gets buttons here. */}
+      {activeSession && !activeSession.autocommit && (
+        <div className="no-drag ml-3 flex items-center gap-0.5 border-l border-border pl-2">
+          <IconButton label={t('menu.commit')} onClick={() => commands.commit()}>
+            <Check size={16} />
+          </IconButton>
+          <IconButton label={t('menu.rollback')} onClick={() => commands.rollback()}>
+            <RotateCcw size={15} />
+          </IconButton>
+        </div>
+      )}
 
       <div className="flex-1" />
 

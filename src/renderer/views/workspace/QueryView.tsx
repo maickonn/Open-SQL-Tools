@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Group, Panel, Separator } from 'react-resizable-panels'
 import { AlignLeft, CheckCircle2, History, ListTree, Play, PlayCircle, Square, TextCursorInput, XCircle, Bookmark, Trash2, Plus } from 'lucide-react'
-import type { QueryHistoryEntry, Snippet } from '@shared/model'
+import type { QueryHistoryEntry, ResultSource, Snippet } from '@shared/model'
 import { useWorkspace, type Tab } from '../../stores/workspaceStore'
 import { useQueries } from '../../stores/queryStore'
 import { SqlEditor, type SqlEditorHandle } from '../../components/editor/SqlEditor'
@@ -15,6 +15,8 @@ import { promptDialog } from '../../components/ui/prompts'
 import { uid } from '../../lib/format'
 import { useSqlCatalog } from './useSqlCatalog'
 import { GridContextMenu } from './GridContextMenu'
+import { EditableGrid, tableKey } from '../object/EditableGrid'
+import type { ResultSet } from '../../lib/resultSet'
 import { isSingleDatabase } from '@domain/engineTraits'
 
 export default function QueryView({ tab, active }: { tab: Tab; active: boolean }) {
@@ -212,14 +214,52 @@ export default function QueryView({ tab, active }: { tab: Tab; active: boolean }
 function ResultPane({ tabId, sessionId, index }: { tabId: string; sessionId: string; index: number }) {
   const { t } = useTranslation()
   const rs = useQueries((s) => s.tabs[tabId]?.results[index])
+  const database = useQueries((s) => s.tabs[tabId]?.database)
+  const session = useWorkspace((s) => s.sessions[sessionId])
   const [menu, setMenu] = useState<{ x: number; y: number; row: number; col: number; selection: import('@glideapps/glide-data-grid').GridSelection } | null>(null)
+  const done = useSyncExternalStore(
+    useCallback((cb) => rs?.subscribe(cb) ?? (() => undefined), [rs]),
+    () => !!rs?.done
+  )
+  // Results of a single table that keep its key are editable like the Data tab.
+  const [source, setSource] = useState<{ rs: ResultSet; source: ResultSource } | null>(null)
+  useEffect(() => {
+    if (!rs || !done || !session || !rs.columns.length) return
+    let live = true
+    session.client
+      .call('resultSource', { columns: rs.columns, database })
+      .then((found) => {
+        const key = found && tableKey(found.structure)
+        if (live && found && key?.every((k) => found.columns.includes(k))) setSource({ rs, source: found })
+      })
+      .catch(() => undefined)
+    return () => {
+      live = false
+    }
+  }, [rs, done, session, database])
+
   if (!rs) return null
+  const truncated = rs.truncated && <div className="shrink-0 border-t border-border bg-warning/10 px-3 py-1 text-[11px] text-warning">{t('query.truncated', { count: rs.rowCount })}</div>
+  if (session && source?.rs === rs) {
+    return (
+      <EditableGrid
+        session={session}
+        refObj={source.source.ref}
+        structure={source.source.structure}
+        result={rs}
+        columnNames={source.source.columns}
+        editable
+        onApplied={(edits) => useQueries.getState().replaceResult(tabId, index, rs.withEdits(edits))}
+        footer={() => truncated}
+      />
+    )
+  }
   return (
     <div className="flex h-full flex-col">
       <div className="min-h-0 flex-1">
         <ResultGrid result={rs} onContextMenu={(e) => setMenu(e)} />
       </div>
-      {rs.truncated && <div className="shrink-0 border-t border-border bg-warning/10 px-3 py-1 text-[11px] text-warning">{t('query.truncated', { count: rs.rowCount })}</div>}
+      {truncated}
       <GridContextMenu menu={menu} onClose={() => setMenu(null)} result={rs} sessionId={sessionId} />
     </div>
   )
