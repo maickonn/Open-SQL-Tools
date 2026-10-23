@@ -40,7 +40,3 @@ mac:
 dmg:
   # No spaces: the update feed (latest-mac.yml) and the GitHub asset use the same name.
   artifactName: Open-SQL-Tools-${version}-${arch}.${ext}
-linux:
-  target: [AppImage, deb]
-  category: Development
-  icon: resources/icon.png

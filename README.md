@@ -8,6 +8,13 @@ A fast, modern desktop SQL client in the spirit of HeidiSQL, for **MySQL 5.7+**,
 
 This application was written with the help of [Claude Code](https://claude.com/claude-code).
 
+## Download
+
+Open SQL Tools runs on Windows and macOS. Get the latest version from [GitHub Releases](https://github.com/maickonn/Open-SQL-Tools/releases/latest):
+
+- **Windows** (x64): `Open-SQL-Tools-Setup-<version>.exe`. The app checks for new versions on startup, downloads them and installs them on restart.
+- **macOS** (Apple Silicon): `Open-SQL-Tools-<version>-arm64.dmg`. Open it and drag **Open SQL Tools** to Applications. The app isn't signed with an Apple Developer ID, so on first launch macOS refuses to open it: go to System Settings → Privacy & Security and click **Open Anyway** (or run `xattr -dr com.apple.quarantine "/Applications/Open SQL Tools.app"`). It checks for new versions on startup too, and **Download** opens the release page to get the new disk image.
+
 ## Features
 
 - **Session manager**: SQLite database files (create if missing, open read-only), folders, colors, SSH tunnels (password, key, agent), SSL/TLS, MariaDB `ed25519`/`parsec` accounts, startup scripts, keep-alive, import/export of sessions. Passwords and API keys are encrypted with the OS keychain (Electron `safeStorage`).
@@ -21,8 +28,8 @@ This application was written with the help of [Claude Code](https://claude.com/c
 - **Table editor**: columns (types picked from the engine's list), indexes, foreign keys, check constraints, table options and partitions (MySQL/MariaDB `PARTITION BY`, PostgreSQL declarative partitions) with a live preview of the generated `CREATE`/`ALTER` SQL. On SQLite, changes `ALTER TABLE` cannot make are applied by rebuilding the table in one transaction, keeping data, indexes, triggers, views and foreign keys.
 - **Bulk table editor**: move tables to another database/schema, change engine, collation (optionally converting data), row format, tablespace or owner for many tables at once.
 - **Copy table**: to another database, schema or server of the same engine family, with or without data (server-side `INSERT … SELECT` when possible, streamed otherwise).
-- **Menus**: File, Query, Tools, View and Help work like a desktop menu bar: once one is open, hovering another switches to it.
-- **Keyboard shortcuts**: every action can be rebound in Preferences → Keyboard shortcuts (with conflict detection).
+- **Menus**: File, Query, Tools, View and Help work like a desktop menu bar: once one is open, hovering another switches to it. On macOS they live in the system menu bar, with About, Settings and Quit in the application menu and the standard Edit and Window menus.
+- **Keyboard shortcuts**: every action can be rebound in Preferences → Keyboard shortcuts (with conflict detection). On macOS Ctrl shortcuts use ⌘ (⌘T, ⇧⌘F, ⌘↩) and are shown with the system symbols; switching tabs stays ⌃⇥, since ⌘⇥ belongs to the system.
 - **Tools**: export grids (CSV, TSV, Excel XLSX, JSON, SQL, HTML, XML, Markdown, LaTeX), SQL dump of databases, run SQL files, CSV import, find text on server, user manager.
 - **AI assistant**: streaming chat with tool use. Reads schema and data freely (inside a read-only transaction); any statement that changes data or schema needs your explicit approval. Supported models: Claude Opus 5.5, Claude Sonnet 5.5, Claude Haiku 5.5, GPT 6.1 Sol, GPT 5.6 Terra and GPT 6.0 Luna; new chats start with the last model picked. Each connection keeps its own conversations, so contexts never mix. While the model reasons, the chat shows "Thinking…" without the reasoning text.
 
@@ -53,7 +60,7 @@ Performance design:
 - Catalog queries are combined into as few round trips as possible, which matters over SSH tunnels and WAN links.
 - SQLite connections run in their own child process, so a long statement can be cancelled by stopping that process.
 
-Settings, saved sessions, query history and chats live in the app's profile folder (`%APPDATA%\Open SQL Tools` on Windows, `~/Library/Application Support/Open SQL Tools` on macOS, `~/.config/Open SQL Tools` on Linux).
+Settings, saved sessions, query history and chats live in the app's profile folder (`%APPDATA%\Open SQL Tools` on Windows, `~/Library/Application Support/Open SQL Tools` on macOS).
 
 ## Development
 
@@ -76,7 +83,7 @@ Other scripts:
 | `npm run test:e2e:db -- postgres18 firebird5` | Builds the app and runs the Playwright flow (connect, create, edit, copy, bulk/partition editors) against only those containers |
 | `npm run build && OST_E2E_TARGETS=sqlite npx playwright test tests/e2e/engines.spec.ts` | The same flow for SQLite (no container) |
 | `npm run test:e2e` | Builds and drives the real Electron app with Playwright (set `OST_E2E_MYSQL_PORT=33097` with `mysql97` running for the connected scenario) |
-| `npm run package` | Builds installers with electron-builder |
+| `npm run package` | Builds the installers for the current platform with electron-builder into `release/` (Windows: NSIS installer; macOS: arm64 disk image, signed ad hoc by `scripts/adhoc-sign.mjs`; add `--win` or `--mac` to pick one) |
 | `npm run demo` | Builds the app and records `docs/demo.gif` from a scripted storyboard (`scripts/demo`, needs `ffmpeg` on the PATH; the AI scene uses a scripted provider, `OST_DEMO_AI=1`) |
 | `OST_SPLASH_PREVIEW=update npm run dev` | Shows the startup update splash with a fake release (`offline` and `latest` show the other outcomes) |
 
@@ -111,7 +118,7 @@ git push --follow-tags
 
 [`release.yml`](.github/workflows/release.yml) checks that the tag matches `package.json`, creates a draft GitHub release with that version's `CHANGELOG.md` section as its notes (it fails if the section is missing) and uploads the Windows installer and the Apple Silicon disk image with their update feeds (`latest.yml`, `latest-mac.yml`). Test them, then publish the draft.
 
-Installed builds check the published releases on startup (a small splash with the first changelog items) and open normally when offline or up to date; the check can be turned off in Preferences. On Windows the splash downloads the update and restarts to install it. The macOS build (Apple Silicon only) isn't signed with a Developer ID, so it can't update itself: **Download** opens the release page to get the new disk image. On first launch macOS blocks it as coming from an unidentified developer; allow it in System Settings → Privacy & Security → **Open Anyway** (or run `xattr -dr com.apple.quarantine "/Applications/Open SQL Tools.app"`). Linux builds are not published yet.
+Installed builds check the published releases on startup (a small splash with the first changelog items) and open normally when offline or up to date; the check can be turned off in Preferences. On Windows the splash downloads the update and restarts to install it. The macOS build isn't signed with a Developer ID, so Squirrel.Mac can't install updates: there **Download** opens the release page (see [Download](#download)).
 
 ## License
 

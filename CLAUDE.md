@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Open SQL Tools is an Electron + TypeScript desktop SQL client aiming at feature parity with HeidiSQL (MySQL 5.7+, MariaDB 10.2+, PostgreSQL 15+, Firebird 2.5+, SQLite files) plus an agentic AI chat (Anthropic/OpenAI). Application performance is a primary requirement.
+Open SQL Tools is an Electron + TypeScript desktop SQL client aiming at feature parity with HeidiSQL (MySQL 5.7+, MariaDB 10.2+, PostgreSQL 15+, Firebird 2.5+, SQLite files) plus an agentic AI chat (Anthropic/OpenAI). It ships for Windows (x64) and macOS (Apple Silicon only); Linux is not supported. Application performance is a primary requirement.
 
 ## Conventions
 
@@ -24,13 +24,14 @@ npm run test:db -- mysql97 postgres18          # up only these containers, run i
 npm run test:e2e:db -- postgres18 firebird5    # build + Playwright Electron flow against only these containers
 DB_TARGETS=sqlite npx vitest run --project integration                       # SQLite integration tests (temp files, no Docker)
 OST_E2E_TARGETS=sqlite npx playwright test tests/e2e/engines.spec.ts         # SQLite E2E after npm run build
-npm run package             # electron-builder installers
+npm run package             # electron-builder into release/: Windows NSIS installer, macOS arm64 dmg (--win / --mac)
 npm run demo                # build + record docs/demo.gif (scripts/demo: Playwright storyboard, CDP frames, ffmpeg)
 node scripts/render-icon.mjs   # resources/icon.svg → icon.png (1024), icon.ico (16–256) and renderer assets/logo.svg
 ```
 
+- Use Node 24 (as CI): the SQLite integration tests run `sqliteProcess.mts` with Node's type stripping, which older versions lack (Node 20 fails every SQLite test).
 - Integration tests (`tests/integration`) select servers through `DB_TARGETS` (comma-separated compose service names, see `tests/integration/targets.ts`); tests for servers that aren't reachable are skipped. The `sqlite` target needs no container and is always available; `sqlite.test.ts` covers the SQLite-only behaviour (file options, table rebuilds, dumps). `PERF=1` enables the benchmarks: `perf.test.ts` (1M-row streaming) and `sshPerf.test.ts` (object-tree browsing through the `sshd` tunnel with simulated latency, `PERF_RTT_MS`, default 60; prints timings in round trips). `connectivity.test.ts` needs the `tools` profile services (`sshd`, `postgres18ssl`).
-- CI (`.github/workflows/ci.yml`) runs one job per compose service (each starts only its own container) and the Electron E2E under `xvfb-run`; `release.yml` runs on `v*` tags, requires the tag to equal `v` + the `package.json` version (bump with `npm version`), takes the release notes from that version's `CHANGELOG.md` section (`scripts/release-notes.mjs`; add user-facing changes under `## [Unreleased]`), and uploads the Windows installer plus `latest.yml` to a draft release that is published by hand.
+- CI (`.github/workflows/ci.yml`) runs one job per compose service (each starts only its own container), the Electron E2E under `xvfb-run`, and builds the Windows installer and the macOS dmg; `release.yml` runs on `v*` tags, requires the tag to equal `v` + the `package.json` version (bump with `npm version`), takes the release notes from that version's `CHANGELOG.md` section (`scripts/release-notes.mjs`; add user-facing changes under `## [Unreleased]`), and uploads the Windows installer plus `latest.yml` (windows-latest) and the macOS dmg plus `latest-mac.yml` (macos-latest) to a draft release that is published by hand. `firebird6` (`6-snapshot`) and `postgres19` follow upstream snapshots, so they can break without a code change: compare with the previous commit before blaming the latest one.
 - E2E (`tests/e2e`) uses Playwright `_electron` against `out/`, so always build first. `OST_E2E_TARGETS` selects engines for `engines.spec.ts`; `OST_USER_DATA` gives the app an isolated profile directory.
 - Service names, ports and credentials are in `docker/compose.yml` and the README (MySQL/MariaDB `root`/`test`, PostgreSQL `postgres`/`test`, Firebird `SYSDBA`/`masterkey`, database `testdb`). Firebird 2.5 is a custom image built from the official tarball (`docker/firebird25`).
 
@@ -63,7 +64,7 @@ src/
     llm/                      Anthropic and OpenAI LlmProvider adapters
     persistence/sqliteStore.ts      node:sqlite (settings, sessions, history, snippets, chats)
     security/, ssh/, fs/      safeStorage secrets, ssh2 tunnels, file writer/reader
-  main/                       composition root: index.ts, window.ts, ipc.ts, providers.ts,
+  main/                       composition root: index.ts, window.ts, ipc.ts, providers.ts, appMenu.ts (macOS menu bar),
                               agentGateway.ts, sessions/sessionManager.ts (spawns workers, brokers ports)
   preload/                    contextBridge API (index.ts + api.d.ts)
   renderer/
@@ -73,7 +74,8 @@ src/
     views/                    TitleBar, StatusBar, LogPanel, sidebar/ (object tree), workspace/ (Host, Database,
                               Query, Object tabs), object/ (Data grid tab, StructureEditor), dialogs/, chat/
     components/               ui/ (Radix-based primitives), grid/ (Glide Data Grid), editor/ (Monaco)
-    lib/                      resultSet.ts (columnar result store), shortcuts.ts, tabPersistence, clipboard, format
+    lib/                      resultSet.ts (columnar result store), shortcuts.ts, nativeMenu.ts, tabPersistence,
+                              clipboard, format
     i18n/                     en.ts (UI strings)
 tests/
   unit/                       pure logic: splitter, classifier, dialects, agent loop, shortcuts, csv, auth
@@ -81,7 +83,8 @@ tests/
   e2e/                        Playwright driving the built Electron app
 docker/                       compose.yml (one service per server version; profiles latest/all/preview/tools),
                               firebird25/ custom image, sshd/ test SSH server
-scripts/                      test-db.mjs, test-e2e-db.mjs (start only the given containers, test, stop)
+scripts/                      test-db.mjs, test-e2e-db.mjs (start only the given containers, test, stop),
+                              release-notes.mjs, adhoc-sign.mjs (macOS afterPack), render-icon.mjs, demo/
 ```
 
 ## Architecture: Clean Architecture + MVVM
@@ -129,7 +132,7 @@ Each engine in `infrastructure/db/{mysql-family,postgres,firebird}` implements t
 Driver quirks the code depends on:
 - mysql2 runs with `rowsAsArray`, `dateStrings`, `jsonStrings`; MariaDB `client_ed25519` and `parsec` auth are implemented in `mysql-family/mariadbAuth.ts` and passed via `authPlugins`.
 - pg uses custom type parsers to keep exact text values and `pg-cursor` for streaming user queries. PostgreSQL can't switch databases on a live connection, so `PgConnection.useDatabase` parks the current client per database (up to 4 idle, LRU) and reuses it when switching back; the handshake loads server info and `pg_type` in a single multi-statement query.
-- node-firebird uses `sequentially` with array rows, `blobAsText` and string numerics; queries must run inside transactions. Firebird 2.5 lacks boolean select expressions — use `CASE`.
+- node-firebird uses `sequentially` with array rows, `blobAsText` and string numerics; queries must run inside transactions. Firebird 2.5 lacks boolean select expressions — use `CASE`. `fbConnection.ts` patches the driver's output message format: NONE and OCTETS text is declared with its own charset (`blr_text2`/`blr_varying2`) instead of the connection's, because Firebird 6 transliterates it and then fails with "string right truncation" or "Malformed string"; `fitOutputMessage` keeps columns the driver widens for UTF8 within the 64 KB message.
 - SQLite uses Node's built-in `node:sqlite` (no native module). It is synchronous and has no interrupt, so each connection runs in a child process (`sqlite/sqliteProcess.mts`, forked with `ELECTRON_RUN_AS_NODE`; a worker thread cannot be stopped while SQLite's native code runs). Cancel = kill + reopen. The `.mts` script must stay self-contained (built-ins and type-only imports): the bundle ships it as `out/main/sqliteProcess.js`, while integration tests run the source with Node's type stripping. Read-only runs set `PRAGMA query_only`. `PRAGMA foreign_keys` is a no-op inside transactions, so `SqliteConnection` applies OFF before the auto-started transaction and defers ON until it ends — table rebuilds (`SqliteDialect.rebuild`, SQLite's 12-step procedure) rely on this so `DROP TABLE` doesn't fire `ON DELETE` actions.
 - Firebird text without a charset (CHARACTER SET NONE, or columns falling back to a NONE database default) is plain bytes, possibly in different encodings per value. On UTF8 connections `firebird/fbLegacyText.ts` patches node-firebird's text decoders so NONE values (and text BLOBs that aren't valid UTF-8) arrive as `LegacyText` bytes; `FbConnection` holds the first rows of a result, feeds every value to the session's `EncodingProfiles` (`domain/text/legacyText.ts`, shared by both connections via `OpenDatabase.textProfiles`) and decodes each value as ASCII, strict UTF-8 or the column's single-byte code page (plausibility-scored among Windows-1252, DOS 850, Windows-1250/1251, KOI8-R, DOS 866; Windows-1252 unless another wins clearly). `application/session/legacyTextWriter.ts` writes text back in the cell's own encoding, else the column's, the table's declared charsets, the database default, the whole database's evidence, then UTF-8 (hex literals for CHAR/VARCHAR, bound bytes for BLOBs), turns non-ASCII NONE keys into `{ anyOf }` alternatives, and `SessionService.sendable` rewrites typed SQL with `domain/sql/legacyLiterals.ts` (comparisons expand to every encoding the column holds, assignments use its encoding; DDL and PSQL untouched).
 - Single-database engines (Firebird, SQLite) address objects without a database; use the helpers in `domain/engineTraits.ts` (`isSingleDatabase`, `isFileBased`, `hasTransactionalDdl`, `hasBulkTableOptions`) instead of comparing engine names.
@@ -142,7 +145,7 @@ Grid editing lives in `views/object/EditableGrid.tsx` (edits, posting through `a
 
 ### Renderer details
 
-Heavy pieces (Monaco, chat, tool dialogs) are lazy-loaded. Monaco is bundled locally (`renderer/components/editor/monaco.ts`), not from a CDN. On macOS the title bar has no menus: `TitleBar` sends the same menus to the native menu bar (`lib/nativeMenu.ts` → `menu:set` → `main/appMenu.ts`), and clicks come back as `menu:command` with the item id. Dialogs are opened through `uiStore.openDialog({ kind })` and rendered lazily in `App.tsx`. Use the in-app `confirmDialog` rather than `window.confirm`. Keyboard shortcuts come from the registry in `renderer/lib/shortcuts.ts` (user overrides live in `AppSettings.shortcuts`). Theming is CSS variables consumed by Tailwind v4 `@theme inline`.
+Heavy pieces (Monaco, chat, tool dialogs) are lazy-loaded. Monaco is bundled locally (`renderer/components/editor/monaco.ts`), not from a CDN. On macOS the title bar has no menus: `TitleBar` sends the same menus to the native menu bar (`lib/nativeMenu.ts` → `menu:set` → `main/appMenu.ts`), and clicks come back as `menu:command` with the item id. Dialogs are opened through `uiStore.openDialog({ kind })` and rendered lazily in `App.tsx`. Use the in-app `confirmDialog` rather than `window.confirm`. Keyboard shortcuts come from the registry in `renderer/lib/shortcuts.ts` (user overrides live in `AppSettings.shortcuts`); they are stored as `Ctrl+…` and matched with Ctrl or ⌘, so show them through `displayShortcut` (macOS symbols such as ⇧⌘F, ⌃⇥ for tabs) and never hardcode `Ctrl+` in labels. On macOS the page sees keys before the native menu: a shortcut the page handles (`preventDefault`) never reaches the menu, one it ignores runs the menu item's accelerator. Theming is CSS variables consumed by Tailwind v4 `@theme inline`.
 
 ### Auto update
 
