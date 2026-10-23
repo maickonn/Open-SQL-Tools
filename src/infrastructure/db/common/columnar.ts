@@ -98,3 +98,8 @@ export class MaterializingSink implements ResultSink {
     return { columns: this.columns, rows: this.data, durationMs, truncated: this.truncated, affectedRows }
   }
 }
+
+/** A statement parameter as the Node drivers take it: they recognize binary data only as a Buffer. */
+export function driverValue(v: CellValue): unknown {
+  return v instanceof Uint8Array && !Buffer.isBuffer(v) ? Buffer.from(v.buffer, v.byteOffset, v.byteLength) : v
+}

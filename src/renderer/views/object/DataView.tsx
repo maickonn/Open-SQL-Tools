@@ -1,19 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Check, ChevronsDown, Filter, Plus, RefreshCw, Trash2, Undo2, X, Ban, Pencil } from 'lucide-react'
+import { Check, ChevronsDown, Download, Filter, Plus, RefreshCw, Trash2, Undo2, Upload, X, Ban, Pencil } from 'lucide-react'
 import type { CellValue, DbObjectRef, LobKind, RowChange, TableDataRequest, TableStructure } from '@shared/model'
-import { LOB_CUT_MARK, lobKind } from '@domain/lob'
-import { binaryText, blobLabel } from '@domain/fileType'
+import { LOB_CUT_MARK, lobColumnKind, lobKind } from '@domain/lob'
+import { binaryText, blobLabel, detectFileType, singleByteCharset } from '@domain/fileType'
 import type { SessionState } from '../../stores/workspaceStore'
 import { useSettings } from '../../stores/settingsStore'
 import { ResultGrid, selectedRows, type GridOverlay, type RowStatus } from '../../components/grid/ResultGrid'
 import { GridContextMenu, type GridMenuState } from '../workspace/GridContextMenu'
 import { ResultSet } from '../../lib/resultSet'
 import { runScript } from '../../stores/queryStore'
-import { Badge, Button, IconButton, Input, Spinner, Tooltip } from '../../components/ui'
+import { Badge, Button, Dialog, IconButton, Input, Spinner, Tooltip } from '../../components/ui'
 import { notify } from '../../stores/toast'
 import { exportSources } from '../commands'
 import { ValueEditorDialog } from './ValueEditorDialog'
+import { exportValueFile, importValueFile } from '../../lib/valueFiles'
 
 interface Edits {
   updates: Map<number, Map<number, CellValue>>
@@ -78,11 +79,12 @@ export function DataView({
   const [lazyCols, setLazyCols] = useState<Map<number, LobKind>>(() => new Map())
   /** Every LOB column of the result (by index), loaded lazily or not: binary content shows as a label. */
   const lobCols = useMemo(() => {
-    const map = new Map<number, { kind: LobKind; charset?: string }>()
+    const map = new Map<number, { kind: LobKind; charset?: string; blob: boolean }>()
     for (const c of structure?.columns ?? []) {
-      const kind = lobKind(session.info.engine, c)
+      const kind = lobColumnKind(session.info.engine, c)
       const index = kind ? result.columns.findIndex((r) => r.name === c.name) : -1
-      if (kind && index >= 0) map.set(index, { kind, charset: c.charset })
+      // BLOB columns (text sub-types too) show their content type; long TEXT columns show text.
+      if (kind && index >= 0) map.set(index, { kind, charset: c.charset, blob: /BLOB|BYTEA/i.test(c.dataType) })
     }
     return map
   }, [structure, result, session.info.engine])
@@ -185,11 +187,13 @@ export function DataView({
         if (v === null) return undefined
         // An unloaded binary LOB arrives as its size.
         if (preview === 'binary') return blobLabel(undefined)
+        if (v instanceof Uint8Array) return blobLabel(detectFileType(v)?.label)
         if (typeof v !== 'string') return undefined
         const cut = preview === 'text' && v.endsWith(LOB_CUT_MARK)
         const text = cut ? v.slice(0, -LOB_CUT_MARK.length) : v
         const binary = binaryText(text, lob.charset)
-        if (binary) return blobLabel(binary.type?.label)
+        // In a BLOB column anything that isn't a known file is just a (BLOB).
+        if (binary || lob.blob) return blobLabel(binary?.type?.label)
         return cut ? `${text}…` : undefined
       }
     }),
@@ -217,25 +221,63 @@ export function DataView({
     for (const row of rows) {
       const cols = [...lazyCols.keys()].filter((c) => (only === undefined || c === only) && needsFetch(row, c))
       if (!cols.length) continue
-      const values = await session.client.call('fetchCellValues', { ref: refObj, key: keyFor(row), columns: cols.map((c) => result.columns[c].name) })
-      cols.forEach((c, i) => fetched.current.set(`${row}:${c}`, values[i]))
+      // Files kept in single-byte text columns are read as stored bytes: the text the server sends
+      // has lost the bytes the charset lacks.
+      const asBytes = (c: number): boolean => {
+        const lob = lobCols.get(c)
+        const preview = result.get(c, row)
+        return lob?.kind === 'text' && !!singleByteCharset(lob.charset) && typeof preview === 'string' && !!binaryText(preview, lob.charset)
+      }
+      const key = keyFor(row)
+      const textCols = cols.filter((c) => !asBytes(c))
+      if (textCols.length) {
+        const values = await session.client.call('fetchCellValues', { ref: refObj, key, columns: textCols.map((c) => result.columns[c].name) })
+        textCols.forEach((c, i) => fetched.current.set(`${row}:${c}`, values[i]))
+      }
+      for (const c of cols.filter(asBytes)) {
+        fetched.current.set(`${row}:${c}`, await session.client.call('fetchCellBytes', { ref: refObj, key, column: result.columns[c].name }))
+      }
       changed = true
     }
     if (changed) setRevision((r) => r + 1)
   }
 
-  const openValueEditor = async (row: number, col: number): Promise<void> => {
+  /** Cell whose editor is opening: a double click activates the cell twice. */
+  const opening = useRef<string | null>(null)
+  /** Column whose large values are being fetched, shown in a loading dialog. */
+  const [loadingLob, setLoadingLob] = useState<string | null>(null)
+  /** Bumped by the loading dialog's Cancel: a fetch that finishes afterwards is dropped. */
+  const loadRun = useRef(0)
+
+  /** Fetches LOB values with the loading dialog up; false when the user cancelled. */
+  const loadLobs = async (rows: number[], col?: number): Promise<boolean> => {
+    const run = ++loadRun.current
+    const cols = col === undefined ? [...lazyCols.keys()] : [col]
+    if (rows.some((r) => cols.some((c) => needsFetch(r, c)))) setLoadingLob(result.columns[cols[0]]?.name ?? '')
     try {
-      await fetchLobs([row], col)
-      setValueEdit({ row, col })
+      await fetchLobs(rows, col)
+    } finally {
+      if (run === loadRun.current) setLoadingLob(null)
+    }
+    return run === loadRun.current
+  }
+
+  const openValueEditor = async (row: number, col: number): Promise<void> => {
+    const key = `${row}:${col}`
+    if (opening.current === key) return
+    opening.current = key
+    try {
+      if (await loadLobs([row], col)) setValueEdit({ row, col })
     } catch (err) {
       notify.error(err)
+    } finally {
+      opening.current = null
     }
   }
 
   /** Rows with every LOB loaded, for copying. */
   const resolveRows = async (rows: number[]): Promise<ResultSet> => {
-    await fetchLobs(rows.filter((r) => r < baseRows))
+    if (!(await loadLobs(rows.filter((r) => r < baseRows)))) throw new Error(t('data.loadCancelled'))
     return ResultSet.fromRows(
       result.columns,
       rows.map((r) => result.columns.map((_, c) => (r < baseRows ? baseValue(r, c) : valueAt(r, c))))
@@ -319,19 +361,52 @@ export function DataView({
     })
   }
 
-  const extraMenu = editable && menu
-    ? [
-        { label: t('data.editCell'), icon: <Pencil size={14} />, onSelect: () => void openValueEditor(menu.row, menu.col) },
-        { label: t('data.setNull'), icon: <Ban size={14} />, onSelect: () => setCell(menu.row, menu.col, null) },
-        { label: t('data.insertRow'), icon: <Plus size={14} />, onSelect: insertRow },
-        { label: t('data.deleteRows'), icon: <Trash2 size={14} />, danger: true, onSelect: () => deleteRows(selectedRows(menu.selection).length ? selectedRows(menu.selection) : [menu.row]) }
-      ]
-    : []
-
   const valueAt = (row: number, col: number): CellValue => {
     const o = overlay.value(row, col)
     return o !== undefined ? o : row < baseRows ? result.get(col, row) : null
   }
+
+  const charsetOf = (col: number): string | undefined => structure?.columns.find((c) => c.name === result.columns[col]?.name)?.charset
+  /** Imported files keep their bytes in binary columns and in text LOBs of single-byte charsets. */
+  const storesBytes = (col: number): boolean =>
+    result.columns[col]?.category === 'binary' || (lobCols.get(col)?.kind === 'text' && !!singleByteCharset(lobCols.get(col)?.charset))
+
+  const importInto = async (row: number, col: number): Promise<void> => {
+    try {
+      const value = await importValueFile(storesBytes(col))
+      if (value !== undefined) setCell(row, col, value)
+    } catch (err) {
+      notify.error(err)
+    }
+  }
+
+  const exportFrom = async (row: number, col: number): Promise<void> => {
+    try {
+      if (await loadLobs([row], col)) await exportValueFile(result.columns[col].name, valueAt(row, col), charsetOf(col))
+    } catch (err) {
+      notify.error(err)
+    }
+  }
+
+  // Large objects: files go in and out through Import/Export instead of the clipboard.
+  const lobMenu = menu && lobCols.has(menu.col)
+  const fileMenu = lobMenu
+    ? [
+        ...(editable ? [{ label: t('data.importValue'), icon: <Upload size={14} />, onSelect: () => void importInto(menu.row, menu.col) }] : []),
+        ...(valueAt(menu.row, menu.col) !== null || overlay.placeholder?.(menu.row, menu.col) !== undefined
+          ? [{ label: t('data.exportValue'), icon: <Download size={14} />, onSelect: () => void exportFrom(menu.row, menu.col) }]
+          : [])
+      ]
+    : []
+  const extraMenu = editable && menu
+    ? [
+        { label: t('data.editCell'), icon: <Pencil size={14} />, onSelect: () => void openValueEditor(menu.row, menu.col) },
+        ...fileMenu,
+        { label: t('data.setNull'), icon: <Ban size={14} />, onSelect: () => setCell(menu.row, menu.col, null) },
+        { label: t('data.insertRow'), icon: <Plus size={14} />, onSelect: insertRow },
+        { label: t('data.deleteRows'), icon: <Trash2 size={14} />, danger: true, onSelect: () => deleteRows(selectedRows(menu.selection).length ? selectedRows(menu.selection) : [menu.row]) }
+      ]
+    : fileMenu
 
   return (
     <div className="flex h-full flex-col">
@@ -420,15 +495,45 @@ export function DataView({
         onClose={() => setMenu(null)}
         result={result}
         resolveRows={lazyCols.size ? resolveRows : undefined}
+        copy={!lobMenu}
         sessionId={session.id}
         extra={extraMenu}
         tableName={refObj.name}
       />
+      {loadingLob !== null && (
+        <Dialog
+          open
+          onOpenChange={(o) => {
+            if (o) return
+            loadRun.current++
+            setLoadingLob(null)
+          }}
+          title={`${t('data.blobEditor')} — ${loadingLob}`}
+          width={360}
+          footer={
+            <Button
+              onClick={() => {
+                loadRun.current++
+                setLoadingLob(null)
+              }}
+            >
+              {t('common.cancel')}
+            </Button>
+          }
+        >
+          <div className="flex items-center gap-3 px-4 py-6 text-sm text-muted">
+            <Spinner size={18} />
+            {t('data.loadingValue')}
+          </div>
+        </Dialog>
+      )}
       {valueEdit && (
         <ValueEditorDialog
           column={result.columns[valueEdit.col]?.name ?? ''}
           value={valueAt(valueEdit.row, valueEdit.col)}
-          charset={structure?.columns.find((c) => c.name === result.columns[valueEdit.col]?.name)?.charset}
+          charset={charsetOf(valueEdit.col)}
+          storesBytes={storesBytes(valueEdit.col)}
+          blob={!!lobCols.get(valueEdit.col)?.blob || result.columns[valueEdit.col]?.category === 'binary'}
           readOnly={!editable}
           onClose={() => setValueEdit(null)}
           onSave={(v) => {

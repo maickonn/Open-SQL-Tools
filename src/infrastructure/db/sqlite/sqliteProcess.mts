@@ -7,7 +7,7 @@
  * Self-contained on purpose (Node built-ins and type-only imports): the bundle runs it as
  * sqliteProcess.js and integration tests run this .mts file directly with Node's type stripping.
  */
-import { DatabaseSync, type StatementSync } from 'node:sqlite'
+import { DatabaseSync, type SQLInputValue, type StatementSync } from 'node:sqlite'
 import type { ProcessRequest, ProcessResponse, ProcessColumn } from './sqliteProtocol'
 
 let db: DatabaseSync | null = null
@@ -27,11 +27,11 @@ function cell(v: unknown): unknown {
   return v
 }
 
-function run(id: number, sql: string, maxRows: number, chunkSize: number): void {
+function run(id: number, sql: string, maxRows: number, chunkSize: number, params: SQLInputValue[] = []): void {
   const stmt: StatementSync = requireDb().prepare(sql)
   const meta = stmt.columns()
   if (meta.length === 0) {
-    const r = stmt.run()
+    const r = stmt.run(...params)
     send({ id, type: 'end', rowCount: 0, truncated: false, hasResultSet: false, changes: Number(r.changes) })
     return
   }
@@ -56,7 +56,7 @@ function run(id: number, sql: string, maxRows: number, chunkSize: number): void 
     cols = Array.from({ length: width }, () => [])
     count = 0
   }
-  const it = stmt.iterate() as Iterator<unknown[]>
+  const it = stmt.iterate(...params) as Iterator<unknown[]>
   try {
     for (;;) {
       const next = it.next()
@@ -88,13 +88,13 @@ process.on('message', (msg: ProcessRequest) => {
         break
       case 'run':
         if (!msg.readOnly) {
-          run(msg.id, msg.sql, msg.maxRows, msg.chunkSize)
+          run(msg.id, msg.sql, msg.maxRows, msg.chunkSize, msg.params)
           break
         }
         // Read-only statements (AI agent, previews): SQLite refuses any write while query_only is on.
         requireDb().exec('PRAGMA query_only = ON')
         try {
-          run(msg.id, msg.sql, msg.maxRows, msg.chunkSize)
+          run(msg.id, msg.sql, msg.maxRows, msg.chunkSize, msg.params)
         } finally {
           requireDb().exec('PRAGMA query_only = OFF')
         }

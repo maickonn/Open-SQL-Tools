@@ -37,6 +37,14 @@ export interface RunOptions {
   direct?: boolean
   /** Seconds to wait for locks held by other connections before failing (engines that support it). */
   lockTimeoutSec?: number
+  /** Values of the statement's placeholders (`?`, or `$n` on PostgreSQL). */
+  params?: CellValue[]
+}
+
+/** A generated statement whose binary values travel as parameters instead of literals. */
+export interface BoundStatement {
+  sql: string
+  params: CellValue[]
 }
 
 export interface RunOutcome {
@@ -112,7 +120,15 @@ export interface SqlDialect {
   selectTableData(req: TableDataRequest): string
   /** SELECT of some columns of the row identified by `key` (lazy LOB values). */
   selectByKey(ref: DbObjectRef, columns: string[], key: Record<string, CellValue>): string
+  /**
+   * SELECT whose rows, first column concatenated, are the stored bytes of a text LOB, without the
+   * transliteration to the connection charset (lossy for files kept in text columns). Null when the
+   * engine needs none.
+   */
+  selectLobBytes(ref: DbObjectRef, column: string, key: Record<string, CellValue>): string | null
   rowChanges(ref: DbObjectRef, changes: RowChange[]): string[]
+  /** Same statements with binary values bound as parameters: large files would overflow SQL literals. */
+  boundRowChanges(ref: DbObjectRef, changes: RowChange[]): BoundStatement[]
   createTable(target: TableStructure): string[]
   alterTable(original: TableStructure, target: TableStructure): string[]
   dropObject(ref: DbObjectRef): string

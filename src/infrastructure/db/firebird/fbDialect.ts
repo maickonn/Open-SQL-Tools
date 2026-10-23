@@ -1,4 +1,4 @@
-import type { ColumnDef, DbEngine, DbObjectRef, IndexDef, LobKind, ObjectKind, ServerUser, TableDataRequest, TableStructure, TriggerDef } from '@shared/model'
+import type { CellValue, ColumnDef, DbEngine, DbObjectRef, IndexDef, LobKind, ObjectKind, ServerUser, TableDataRequest, TableStructure, TriggerDef } from '@shared/model'
 import { LOB_PREVIEW_CHARS } from '@domain/lob'
 import type { TemplateContext } from '@domain/ports/database'
 import { splitType } from '@domain/sql/columnType'
@@ -37,6 +37,39 @@ export class FbDialect extends BaseDialect {
   override selectTableData(req: TableDataRequest): string {
     // FIRST/SKIP works on every supported version (2.5+).
     return `SELECT FIRST ${req.limit} SKIP ${req.offset} ${this.selectList(req)} FROM ${this.qualify(req.ref)}${this.whereAndOrder(req)}`
+  }
+
+  /**
+   * Binary parameters are typed as BLOBs: as text BLOBs in the connection charset, the server
+   * would transliterate a file put in a text column (and reject bytes that aren't valid UTF-8).
+   */
+  protected override placeholder(): string {
+    return 'CAST(? AS BLOB SUB_TYPE BINARY)'
+  }
+
+  /**
+   * Firebird transliterates text BLOBs on every read, casts included, and maps the bytes the column
+   * charset lacks (0x81, 0x8D… in WIN1252) to 0x00. CHARACTER SET OCTETS strings are copied as they
+   * are, so the BLOB goes out in OCTETS chunks, one row each (a row message holds 64 KB).
+   */
+  override selectLobBytes(ref: DbObjectRef, column: string, key: Record<string, CellValue>): string {
+    const n = 32000
+    const from = `FROM ${this.qualify(ref)} WHERE ${this.keyCondition(key)}`
+    const col = this.quoteIdent(column)
+    return [
+      `EXECUTE BLOCK RETURNS (CHUNK VARCHAR(${n}) CHARACTER SET OCTETS) AS`,
+      'DECLARE P INTEGER = 1;',
+      'DECLARE L INTEGER;',
+      'BEGIN',
+      `  SELECT OCTET_LENGTH(${col}) ${from} INTO :L;`,
+      '  WHILE (P <= L) DO',
+      '  BEGIN',
+      `    SELECT CAST(SUBSTRING(${col} FROM :P FOR ${n}) AS VARCHAR(${n}) CHARACTER SET OCTETS) ${from} INTO :CHUNK;`,
+      '    SUSPEND;',
+      `    P = P + ${n};`,
+      '  END',
+      'END'
+    ].join('\n')
   }
 
   protected override lobPreview(column: string, kind: LobKind, charset?: string): string {

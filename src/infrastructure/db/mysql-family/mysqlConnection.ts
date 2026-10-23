@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import type { ColumnMeta, ConnectionProfile, ConnectionSecrets, ServerInfo, TypeCategory } from '@shared/model'
 import type { DbConnection, ResultSink, RunOptions, RunOutcome } from '@domain/ports/database'
 import { capabilitiesFor, formatVersion, parseMySqlFamilyVersion } from '@domain/serverVersion'
-import { ColumnarBuffer } from '../common/columnar'
+import { ColumnarBuffer, driverValue } from '../common/columnar'
 import { mariadbAuthPlugins } from './mariadbAuth'
 
 const TYPE_NAMES: Record<number, string> = {
@@ -219,7 +219,7 @@ export class MySqlConnection implements DbConnection {
         buffer = null
       }
 
-      const q = conn.query({ sql, rowsAsArray: true })
+      const q = conn.query({ sql, rowsAsArray: true, values: options.params?.map(driverValue) })
       q.on('fields', (fields: FieldPacket[] | undefined) => {
         // mysql2 also emits 'fields' (with undefined) for statements without a result set.
         if (!fields) return

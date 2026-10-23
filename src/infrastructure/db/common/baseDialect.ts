@@ -15,7 +15,7 @@ import type {
   TableStructure,
   TriggerDef
 } from '@shared/model'
-import type { SqlDialect, TemplateContext } from '@domain/ports/database'
+import type { BoundStatement, SqlDialect, TemplateContext } from '@domain/ports/database'
 import { joinType, splitType } from '@domain/sql/columnType'
 import { typeArguments } from '@domain/sql/typeArguments'
 import { toHex } from '@shared/bytes'
@@ -121,6 +121,11 @@ export abstract class BaseDialect implements SqlDialect {
     return `CASE WHEN CHAR_LENGTH(${column}) > ${LOB_PREVIEW_CHARS} THEN CONCAT(LEFT(${column}, ${LOB_PREVIEW_CHARS}), CHAR(1 USING utf8mb4)) ELSE ${column} END`
   }
 
+  selectLobBytes(ref: DbObjectRef, column: string, key: Record<string, CellValue>): string | null {
+    void ref, column, key
+    return null
+  }
+
   selectByKey(ref: DbObjectRef, columns: string[], key: Record<string, CellValue>): string {
     return `SELECT ${columns.map((c) => this.quoteIdent(c)).join(', ')} FROM ${this.qualify(ref)} WHERE ${this.keyCondition(key)}`
   }
@@ -154,22 +159,41 @@ export abstract class BaseDialect implements SqlDialect {
   }
 
   rowChanges(ref: DbObjectRef, changes: RowChange[]): string[] {
+    return this.buildRowChanges(ref, changes, false).map((s) => s.sql)
+  }
+
+  boundRowChanges(ref: DbObjectRef, changes: RowChange[]): BoundStatement[] {
+    return this.buildRowChanges(ref, changes, true)
+  }
+
+  /** Placeholder of the n-th parameter (1-based). */
+  protected placeholder(n: number): string {
+    void n
+    return '?'
+  }
+
+  private buildRowChanges(ref: DbObjectRef, changes: RowChange[], bind: boolean): BoundStatement[] {
     const table = this.qualify(ref)
     return changes.map((ch) => {
+      const params: CellValue[] = []
+      const value = (v: CellValue | RawSql | undefined): string => {
+        if (!bind || !(v instanceof Uint8Array)) return this.literal(v)
+        params.push(v)
+        return this.placeholder(params.length)
+      }
       switch (ch.kind) {
         case 'insert': {
           const cols = Object.keys(ch.values)
-          if (cols.length === 0) return `INSERT INTO ${table} DEFAULT VALUES`
-          return `INSERT INTO ${table} (${cols.map((c) => this.quoteIdent(c)).join(', ')}) VALUES (${cols
-            .map((c) => this.literal(ch.values[c]))
-            .join(', ')})`
+          if (cols.length === 0) return { sql: `INSERT INTO ${table} DEFAULT VALUES`, params }
+          const values = cols.map((c) => value(ch.values[c])).join(', ')
+          return { sql: `INSERT INTO ${table} (${cols.map((c) => this.quoteIdent(c)).join(', ')}) VALUES (${values})`, params }
         }
         case 'update': {
-          const sets = Object.entries(ch.values).map(([c, v]) => `${this.quoteIdent(c)} = ${this.literal(v)}`)
-          return `UPDATE ${table} SET ${sets.join(', ')} WHERE ${this.keyCondition(ch.key)}${this.singleRowSuffix()}`
+          const sets = Object.entries(ch.values).map(([c, v]) => `${this.quoteIdent(c)} = ${value(v)}`)
+          return { sql: `UPDATE ${table} SET ${sets.join(', ')} WHERE ${this.keyCondition(ch.key)}${this.singleRowSuffix()}`, params }
         }
         case 'delete':
-          return `DELETE FROM ${table} WHERE ${this.keyCondition(ch.key)}${this.singleRowSuffix()}`
+          return { sql: `DELETE FROM ${table} WHERE ${this.keyCondition(ch.key)}${this.singleRowSuffix()}`, params }
       }
     })
   }

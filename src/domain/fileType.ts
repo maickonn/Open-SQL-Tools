@@ -58,6 +58,17 @@ export function detectFileType(bytes: Uint8Array): FileType | null {
   return null
 }
 
+/**
+ * Single-byte charsets whose text columns can hold any bytes: values are read back with
+ * textBytes, and files imported into them are written as-is.
+ */
+export function singleByteCharset(charset: string | undefined): 'cp1252' | 'latin1' | null {
+  const cs = (charset ?? '').toUpperCase().replace(/[-_]/g, '')
+  // MySQL's latin1 is Windows-1252.
+  if (cs === 'WIN1252' || cs === 'CP1252' || cs === 'LATIN1') return 'cp1252'
+  return cs === 'ISO88591' ? 'latin1' : null
+}
+
 /** Windows-1252 code points of bytes 0x80–0x9F (the rest of the code page is Latin-1). */
 const CP1252_HIGH = [
   0x20ac, 0x81, 0x201a, 0x192, 0x201e, 0x2026, 0x2020, 0x2021, 0x2c6, 0x2030, 0x160, 0x2039, 0x152, 0x8d, 0x17d, 0x8f,
@@ -72,10 +83,9 @@ const CP1252 = new Map(CP1252_HIGH.map((c, i) => [c, 0x80 + i]))
  * single-byte one or a character doesn't belong to it.
  */
 export function textBytes(text: string, charset: string | undefined): Uint8Array | null {
-  const cs = (charset ?? '').toUpperCase().replace(/[-_]/g, '')
-  // MySQL's latin1 is Windows-1252.
-  const cp1252 = cs === 'WIN1252' || cs === 'CP1252' || cs === 'LATIN1'
-  if (!cp1252 && cs !== 'ISO88591') return null
+  const kind = singleByteCharset(charset)
+  if (!kind) return null
+  const cp1252 = kind === 'cp1252'
   const out = new Uint8Array(text.length)
   for (let i = 0; i < text.length; i++) {
     const c = text.charCodeAt(i)
@@ -83,6 +93,15 @@ export function textBytes(text: string, charset: string | undefined): Uint8Array
     if (b < 0) return null
     out[i] = b
   }
+  return out
+}
+
+/** Text of bytes: in the column charset when it is single-byte (as textBytes encodes it), UTF-8 otherwise. */
+export function bytesText(bytes: Uint8Array, charset: string | undefined): string {
+  const kind = singleByteCharset(charset)
+  if (!kind) return new TextDecoder().decode(bytes)
+  let out = ''
+  for (const b of bytes) out += String.fromCharCode(kind === 'cp1252' && b >= 0x80 && b < 0xa0 ? CP1252_HIGH[b - 0x80] : b)
   return out
 }
 

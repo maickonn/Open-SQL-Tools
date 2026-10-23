@@ -5,7 +5,7 @@ import type { EventEmitter } from 'node:events'
 import type { ColumnMeta, ConnectionProfile, ConnectionSecrets, ServerInfo, TypeCategory } from '@shared/model'
 import type { DbConnection, ResultSink, RunOptions, RunOutcome } from '@domain/ports/database'
 import { capabilitiesFor, formatVersion, parseVersion } from '@domain/serverVersion'
-import { ColumnarBuffer, formatDate } from '../common/columnar'
+import { ColumnarBuffer, driverValue, formatDate } from '../common/columnar'
 import type { Endpoint } from '../mysql-family/mysqlConnection'
 
 const T = {
@@ -281,7 +281,8 @@ export class FbConnection implements DbConnection {
       return { hasResultSet: true, rowCount, truncated }
     }
 
-    const result = (await tx.executeAsync(sql, [], { withMeta: true })) as unknown as {
+    // Binary parameters become BLOBs written as-is (no transliteration), so files keep their bytes.
+    const result = (await tx.executeAsync(sql, (options.params ?? []).map(driverValue), { withMeta: true })) as unknown as {
       rows?: unknown[] | Record<string, unknown>
       affectedRows?: number
     }

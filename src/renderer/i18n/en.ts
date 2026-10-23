@@ -96,7 +96,7 @@ export const en = {
     total: '{{shown}} of {{total}} rows', noKey: 'This table has no primary or unique key; edits match on all columns.',
     setNull: 'Set NULL', setDefault: 'Set DEFAULT', copyAs: 'Copy as', copyRows: 'Copy rows', copyCell: 'Copy value',
     copyCsv: 'CSV', copyTsv: 'Tab-separated', copySql: 'SQL INSERT', copyMarkdown: 'Markdown', copyJson: 'JSON', editCell: 'Edit value',
-    blobEditor: 'Value editor', previewMode: 'Preview', exportValue: 'Export…', exported: 'Saved to {{file}}', textMode: 'Text', hexMode: 'Hex', jsonMode: 'JSON', bytes: '{{count}} bytes', readOnly: 'Read-only result'
+    blobEditor: 'Value editor', previewMode: 'Preview', exportValue: 'Export…', importValue: 'Import…', imported: '{{file}} loaded: post the changes to save it', exported: 'Saved to {{file}}', textMode: 'Text', hexMode: 'Hex', loadingValue: 'Loading the value…', loadCancelled: 'Loading cancelled', invalidHex: 'Invalid hex: use pairs of hexadecimal digits', bytes: '{{count}} bytes', readOnly: 'Read-only result'
   },
   structure: {
     columns: 'Columns', indexes: 'Indexes', foreignKeys: 'Foreign keys', checks: 'Check constraints', options: 'Options', partitions: 'Partitions',

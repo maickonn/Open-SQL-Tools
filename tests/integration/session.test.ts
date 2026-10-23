@@ -232,13 +232,14 @@ describe.skipIf(targets.length === 0)('session service against live databases', 
     it.skipIf(engine !== 'firebird')('reads large text and binary BLOBs whole', async () => {
       await svc.query({ sql: "RECREATE TABLE OST_BLOBS (ID INTEGER, T BLOB SUB_TYPE TEXT SEGMENT SIZE 16384, B BLOB SUB_TYPE 0)" })
       await svc.query({ sql: "INSERT INTO OST_BLOBS VALUES (1, '', '')" })
-      const piece = 'abcdefghij'.repeat(3000)
-      for (let i = 0; i < 10; i++) {
+      // Firebird 3+ caps UTF8 string literals at 16383 characters.
+      const piece = 'abcdefghij'.repeat(1500)
+      for (let i = 0; i < 20; i++) {
         await svc.query({ sql: `UPDATE OST_BLOBS SET T = T || '${piece}', B = B || '${piece}'` })
       }
       const res = await svc.query({ sql: 'SELECT T, B FROM OST_BLOBS' })
-      expect(res.rows[0][0]).toBe(piece.repeat(10))
-      expect(Buffer.from(res.rows[0][1] as Uint8Array).toString('latin1')).toBe(piece.repeat(10))
+      expect(res.rows[0][0]).toBe(piece.repeat(20))
+      expect(Buffer.from(res.rows[0][1] as Uint8Array).toString('latin1')).toBe(piece.repeat(20))
       await svc.query({ sql: 'DROP TABLE OST_BLOBS' })
     })
 
@@ -269,6 +270,43 @@ describe.skipIf(targets.length === 0)('session service against live databases', 
       const values = await svc.fetchCellValues({ ref, key: { [id]: 1 }, columns: [data] })
       expect(Array.from(values[0] as Uint8Array)).toEqual([0xde, 0xad, 0xbe, 0xef])
       await expect(svc.fetchCellValues({ ref, key: { [id]: 999 }, columns: [data] })).rejects.toThrow(/no longer exists/)
+    })
+
+    // Binary values are bound as parameters: as a hex literal, 60 KB would overflow Firebird 2.5's 64 KB statements.
+    it('writes large binary values through parameters', async () => {
+      const id = name(engine, 'id')
+      const data = name(engine, 'data')
+      // MySQL's BLOB holds up to 64 KB.
+      const bytes = new Uint8Array(60_000).map((_, i) => (i * 31) % 256)
+      const res = await svc.applyRowChanges({ ref, changes: [{ kind: 'update', key: { [id]: 1 }, values: { [data]: bytes } }] })
+      expect(res.affected).toBe(1)
+      const [stored] = await svc.fetchCellValues({ ref, key: { [id]: 1 }, columns: [data] })
+      expect(Buffer.from(stored as Uint8Array).equals(Buffer.from(bytes))).toBe(true)
+      await svc.applyRowChanges({ ref, changes: [{ kind: 'update', key: { [id]: 1 }, values: { [data]: new Uint8Array([0xde, 0xad, 0xbe, 0xef]) } }] })
+    })
+
+    // Files kept in single-byte text columns: written as parameters, read back without transliteration
+    // (Firebird turns the bytes WIN1252 lacks, 0x81, 0x8D…, into 0x00 when it sends text).
+    it.skipIf(engine !== 'firebird' && !isMy(engine))('keeps every byte of a file in a single-byte text column', async () => {
+      const table = name(engine, 'ost_files')
+      const fileRef: DbObjectRef = { ...ref, name: table }
+      await svc.query({
+        sql:
+          engine === 'firebird'
+            ? 'RECREATE TABLE OST_FILES (ID INTEGER NOT NULL PRIMARY KEY, IMG BLOB SUB_TYPE TEXT CHARACTER SET WIN1252)'
+            : `CREATE TABLE ${target.database}.ost_files (id INT NOT NULL PRIMARY KEY, img LONGTEXT CHARACTER SET latin1)`,
+        database: isMy(engine) ? target.database : undefined
+      })
+      try {
+        const bytes = new Uint8Array(70_000).map((_, i) => i % 256)
+        const id = name(engine, 'id')
+        const img = name(engine, 'img')
+        await svc.applyRowChanges({ ref: fileRef, changes: [{ kind: 'insert', values: { [id]: 1, [img]: bytes } }] })
+        const stored = await svc.fetchCellBytes({ ref: fileRef, key: { [id]: 1 }, column: img })
+        expect(Buffer.from(stored).equals(Buffer.from(bytes))).toBe(true)
+      } finally {
+        await svc.query({ sql: engine === 'firebird' ? 'DROP TABLE OST_FILES' : `DROP TABLE ${target.database}.ost_files`, database: isMy(engine) ? target.database : undefined })
+      }
     })
 
     it('rejects writes in read-only queries (agent mode)', async () => {

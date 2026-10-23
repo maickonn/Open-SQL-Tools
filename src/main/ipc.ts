@@ -134,6 +134,7 @@ export function registerIpc(s: IpcServices): void {
     return r.canceled ? null : (r.filePath ?? null)
   })
   handle('fs:readText', (_e, filePath) => readFile(filePath, 'utf8'))
+  handle('fs:readBytes', async (_e, filePath) => new Uint8Array(await readFile(filePath)))
   handle('fs:writeText', (_e, filePath, content) => writeFile(filePath, content, 'utf8'))
   handle('fs:writeBytes', (_e, filePath, content) => writeFile(filePath, content))
   handle('shell:showItem', (_e, filePath) => shell.showItemInFolder(filePath))

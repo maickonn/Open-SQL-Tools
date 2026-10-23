@@ -32,3 +32,12 @@ export function lobKind(engine: DbEngine, column: Pick<ColumnDef, 'dataType' | '
       return null
   }
 }
+
+/**
+ * Large-object columns as the user sees them (files go in and out through Import/Export): the
+ * lazily loaded ones plus SQLite BLOBs, which are read eagerly because the file is local.
+ */
+export function lobColumnKind(engine: DbEngine, column: Pick<ColumnDef, 'dataType' | 'fullType'>): LobKind | null {
+  if (engine === 'sqlite') return /BLOB/i.test(column.dataType) ? 'binary' : null
+  return lobKind(engine, column)
+}

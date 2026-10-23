@@ -5,7 +5,9 @@ User-facing changes per release. Add entries under **Unreleased** as you go; bef
 ## [Unreleased]
 
 - Value editor previews images and PDFs stored in BLOBs (also images kept in text BLOBs) and exports any value to a file
+- Import a file into a BLOB from the value editor or the cell's context menu; binary values are sent as statement parameters, so large files fit
 - Binary values show in the grid as their file type, e.g. (PNG), or (BLOB) when the type is unknown
+- Value editor tabs are Preview, Hex and Text (the JSON view was removed); BLOBs of unknown type open on Hex
 - Firebird text BLOB previews keep the column charset (accents no longer break in databases with charset NONE)
 - Data tab loads large objects (BLOB, TEXT, bytea) on demand: tables with heavy BLOB columns open in a fraction of the time
 - Firebird BLOBs are read in 64 KB requests instead of 1 KB, so queries returning BLOBs no longer stall the session

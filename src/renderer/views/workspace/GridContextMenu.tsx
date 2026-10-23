@@ -26,13 +26,16 @@ export function GridContextMenu({
   sessionId,
   extra,
   tableName,
-  resolveRows
+  resolveRows,
+  copy: withCopy = true
 }: {
   menu: GridMenuState | null
   onClose(): void
   result: ResultSet
   /** Loads values the grid only previews (LOBs) and returns these rows in order. */
   resolveRows?(rows: number[]): Promise<ResultSet>
+  /** Show the copy items (off on large-object cells, which export instead). */
+  copy?: boolean
   sessionId: string
   extra?: MenuItem[]
   tableName?: string
@@ -52,7 +55,7 @@ export function GridContextMenu({
       const { rs, rows: list } = await rowsFor(target)
       return serializeRows(rs, list, format, tableName)
     })
-  const items: MenuItem[] = [
+  const copyItems: MenuItem[] = [
     {
       label: t('data.copyCell'),
       icon: <Copy size={14} />,
@@ -75,8 +78,10 @@ export function GridContextMenu({
         { label: t('data.copyMarkdown'), onSelect: () => copy('markdown') },
         { label: t('data.copyJson'), onSelect: () => copy('json') }
       ]
-    },
-    { separator: true },
+    }
+  ]
+  const items: MenuItem[] = [
+    ...(withCopy ? [...copyItems, { separator: true } as MenuItem] : []),
     {
       label: t('menu.exportGrid'),
       icon: <FileDown size={14} />,

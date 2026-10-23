@@ -23,7 +23,7 @@ import type {
 } from '@shared/model'
 import type { ExecuteParams, ExecuteSummary, ExportSource, StatementSummary, WorkerEvents } from '@shared/workerApi'
 import { toErrorPayload } from '@shared/rpc'
-import type { OpenDatabase, ResultSink, TextWriter } from '@domain/ports/database'
+import type { BoundStatement, OpenDatabase, ResultSink, TextWriter } from '@domain/ports/database'
 import { splitSql } from '@domain/sql/splitter'
 import { hasTransactionalDdl, isFileBased, isSingleDatabase } from '@domain/engineTraits'
 import { extractDmlStatements } from '@domain/sql/psqlStatements'
@@ -356,13 +356,27 @@ export class SessionService {
     return res.rows[0]
   }
 
+  async fetchCellBytes(p: { ref: DbObjectRef; key: Record<string, CellValue>; column: string }): Promise<Uint8Array> {
+    const sql = this.require().dialect.selectLobBytes(p.ref, p.column, p.key)
+    if (!sql) throw new Error('This database returns text values as stored')
+    const res = await this.query({ sql, database: p.ref.database, maxRows: Number.MAX_SAFE_INTEGER, readOnly: true })
+    const chunks = res.rows.map((r) => (r[0] instanceof Uint8Array ? r[0] : new Uint8Array()))
+    const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0))
+    let at = 0
+    for (const c of chunks) {
+      out.set(c, at)
+      at += c.length
+    }
+    return out
+  }
+
   countRows(p: { ref: DbObjectRef; where?: string }): Promise<number> {
     return this.require().inspector.countRows(p.ref, p.where)
   }
 
   /* -------------------------------- Changes ------------------------------- */
 
-  private async runStatements(statements: string[], database?: string, transactional = false): Promise<number> {
+  private async runStatements(statements: (string | BoundStatement)[], database?: string, transactional = false): Promise<number> {
     return this.primaryLock.run(async () => {
       const conn = this.require().primary
       if (database && database !== conn.currentDatabase()) await conn.useDatabase(database)
@@ -370,10 +384,11 @@ export class SessionService {
       if (wrap) await conn.setAutocommit(false)
       let affected = 0
       try {
-        for (const sql of statements) {
-          this.log('sql', sql)
+        for (const statement of statements) {
+          const { sql, params } = typeof statement === 'string' ? { sql: statement, params: undefined } : statement
+          this.log('sql', params?.length ? `${sql} -- ${params.map((v) => (v instanceof Uint8Array ? `(${v.length} bytes)` : String(v))).join(', ')}` : sql)
           // Generated DDL/DML from forms and the tree: fail fast if another connection holds the object.
-          const out = await conn.run(sql, null, { maxRows: 1_000, chunkSize: 1_000, lockTimeoutSec: FORM_LOCK_TIMEOUT_SEC })
+          const out = await conn.run(sql, null, { maxRows: 1_000, chunkSize: 1_000, lockTimeoutSec: FORM_LOCK_TIMEOUT_SEC, params: params?.length ? params : undefined })
           affected += out.affectedRows ?? 0
         }
         if (wrap) await conn.commit()
@@ -393,9 +408,10 @@ export class SessionService {
   }
 
   async applyRowChanges(p: { ref: DbObjectRef; changes: RowChange[]; dryRun?: boolean }): Promise<{ statements: string[]; affected: number }> {
-    const statements = this.require().dialect.rowChanges(p.ref, p.changes)
+    const d = this.require().dialect
+    const statements = d.rowChanges(p.ref, p.changes)
     if (p.dryRun) return { statements, affected: 0 }
-    const affected = await this.runStatements(statements, p.ref.database, statements.length > 1)
+    const affected = await this.runStatements(d.boundRowChanges(p.ref, p.changes), p.ref.database, statements.length > 1)
     return { statements, affected }
   }
 

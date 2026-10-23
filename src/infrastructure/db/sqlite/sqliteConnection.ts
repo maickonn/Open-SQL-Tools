@@ -176,8 +176,16 @@ export class SqliteConnection implements DbConnection {
     await this.exec('SELECT 1')
   }
 
-  private async exec(sql: string, sink: ResultSink | null = null, maxRows = 1000, chunkSize = 1000, readOnly = false): Promise<Extract<ProcessResponse, { type: 'end' }>> {
-    const res = await this.request({ type: 'run', sql, maxRows, chunkSize, readOnly }, sink)
+  private async exec(
+    sql: string,
+    sink: ResultSink | null = null,
+    maxRows = 1000,
+    chunkSize = 1000,
+    readOnly = false,
+    params?: CellValue[]
+  ): Promise<Extract<ProcessResponse, { type: 'end' }>> {
+    const values = params?.map((v) => (typeof v === 'boolean' ? (v ? 1 : 0) : v))
+    const res = await this.request({ type: 'run', sql, maxRows, chunkSize, readOnly, params: values }, sink)
     if (res.type !== 'end') throw new Error('Unexpected SQLite response')
     return res
   }
@@ -206,7 +214,7 @@ export class SqliteConnection implements DbConnection {
       await this.exec('BEGIN')
       this.tx = true
     }
-    const res = await this.exec(sql, sink, options.maxRows, options.chunkSize, !!options.readOnly)
+    const res = await this.exec(sql, sink, options.maxRows, options.chunkSize, !!options.readOnly, options.params)
     if (/^BEGIN\b/.test(head)) this.tx = true
     else if (/^(COMMIT|END)\b/.test(head) || (/^ROLLBACK\b/.test(head) && !/^ROLLBACK\s+(TRANSACTION\s+)?TO\b/.test(head))) await this.ended()
     if (res.hasResultSet) sink?.end({ rowCount: res.rowCount, truncated: res.truncated })

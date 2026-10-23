@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import type { ColumnMeta, ConnectionProfile, ConnectionSecrets, ServerInfo, TypeCategory } from '@shared/model'
 import type { DbConnection, ResultSink, RunOptions, RunOutcome } from '@domain/ports/database'
 import { capabilitiesFor, formatVersion, fromPgVersionNum } from '@domain/serverVersion'
-import { ColumnarBuffer } from '../common/columnar'
+import { ColumnarBuffer, driverValue } from '../common/columnar'
 import type { Endpoint } from '../mysql-family/mysqlConnection'
 
 const BUILTIN = pg.types.builtins
@@ -180,7 +180,8 @@ export class PgConnection implements DbConnection {
       this.inTx = true
     }
     try {
-      return options.direct ? await this.runDirect(client, sql, sink, options) : await this.stream(client, sql, sink, options)
+      // Parameters only come with generated DML: no cursor needed.
+      return options.direct || options.params ? await this.runDirect(client, sql, sink, options) : await this.stream(client, sql, sink, options)
     } finally {
       if (wrapReadOnly) await client.query('ROLLBACK').catch(() => undefined)
       else this.trackTransaction(sql)
@@ -189,7 +190,7 @@ export class PgConnection implements DbConnection {
 
   /** Whole result in one round trip (no portal); only for small internal queries. */
   private async runDirect(client: pg.Client, sql: string, sink: ResultSink | null, options: RunOptions): Promise<RunOutcome> {
-    const res = (await client.query({ text: sql, rowMode: 'array' })) as unknown as pg.QueryArrayResult | pg.QueryArrayResult[]
+    const res = (await client.query({ text: sql, rowMode: 'array', values: options.params?.map(driverValue) })) as unknown as pg.QueryArrayResult | pg.QueryArrayResult[]
     const r = Array.isArray(res) ? res[res.length - 1] : res
     if (!r.fields?.length) return { hasResultSet: false, rowCount: 0, affectedRows: r.rowCount ?? undefined, truncated: false }
     const truncated = r.rows.length > options.maxRows

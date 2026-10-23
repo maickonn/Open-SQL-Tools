@@ -32,6 +32,10 @@ export class PgDialect extends BaseDialect {
     super()
   }
 
+  protected override placeholder(n: number): string {
+    return `$${n}`
+  }
+
   protected override lobPreview(column: string, kind: LobKind): string {
     if (kind === 'binary') return `OCTET_LENGTH(${column})`
     return `CASE WHEN CHAR_LENGTH(${column}) > ${LOB_PREVIEW_CHARS} THEN LEFT(${column}, ${LOB_PREVIEW_CHARS}) || CHR(1) ELSE ${column} END`

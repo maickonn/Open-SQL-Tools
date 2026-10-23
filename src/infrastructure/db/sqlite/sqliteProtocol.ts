@@ -2,7 +2,7 @@
 
 export type ProcessRequest =
   | { id: number; type: 'open'; path: string; readOnly: boolean; busyTimeoutMs: number }
-  | { id: number; type: 'run'; sql: string; maxRows: number; chunkSize: number; readOnly?: boolean }
+  | { id: number; type: 'run'; sql: string; maxRows: number; chunkSize: number; readOnly?: boolean; params?: (string | number | bigint | Uint8Array | null)[] }
   | { id: number; type: 'close' }
 
 export interface ProcessColumn {

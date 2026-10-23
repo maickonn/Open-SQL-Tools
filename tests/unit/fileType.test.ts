@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { binaryText, blobLabel, detectFileType, textBytes } from '@domain/fileType'
+import { binaryText, blobLabel, bytesText, detectFileType, textBytes } from '@domain/fileType'
 
 const bytes = (...parts: (string | number[])[]): Uint8Array =>
   new Uint8Array(parts.flatMap((p) => (typeof p === 'string' ? [...p].map((c) => c.charCodeAt(0)) : p)))
@@ -56,5 +56,14 @@ describe('binary values in the grid', () => {
     expect(binaryText('ab\u0001\u0002cd', 'UTF8')).toEqual({ type: null })
     expect(binaryText('BM\ufffd\ufffd', undefined)).toEqual({ type: null })
     expect(binaryText('Observações:\r\n\tlinha 2', 'WIN1252')).toBeNull()
+  })
+})
+
+describe('bytesText', () => {
+  it('reads bytes in the column charset, so textBytes gives them back', () => {
+    const all = new Uint8Array(256).map((_, i) => i)
+    expect(Array.from(textBytes(bytesText(all, 'WIN1252'), 'WIN1252')!)).toEqual(Array.from(all))
+    expect(bytesText(new Uint8Array([0x80, 0xe9]), 'WIN1252')).toBe('€é')
+    expect(bytesText(new TextEncoder().encode('olá'), 'UTF8')).toBe('olá')
   })
 })
