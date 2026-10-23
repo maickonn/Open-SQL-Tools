@@ -10,6 +10,7 @@ import type {
   LobKind,
   ObjectKind,
   RowChange,
+  RowKey,
   ServerUser,
   TableDataRequest,
   TableStructure,
@@ -22,6 +23,8 @@ import { toHex } from '@shared/bytes'
 import { LOB_PREVIEW_CHARS } from '@domain/lob'
 
 export type RawSql = { sql: string }
+
+const isAnyOf = (v: unknown): v is { anyOf: (CellValue | RawSql)[] } => typeof v === 'object' && v !== null && Array.isArray((v as { anyOf?: unknown }).anyOf)
 
 export const isRawSql = (v: unknown): v is RawSql =>
   typeof v === 'object' && v !== null && !(v instanceof Uint8Array) && typeof (v as RawSql).sql === 'string'
@@ -121,12 +124,12 @@ export abstract class BaseDialect implements SqlDialect {
     return `CASE WHEN CHAR_LENGTH(${column}) > ${LOB_PREVIEW_CHARS} THEN CONCAT(LEFT(${column}, ${LOB_PREVIEW_CHARS}), CHAR(1 USING utf8mb4)) ELSE ${column} END`
   }
 
-  selectLobBytes(ref: DbObjectRef, column: string, key: Record<string, CellValue>): string | null {
+  selectLobBytes(ref: DbObjectRef, column: string, key: RowKey): string | null {
     void ref, column, key
     return null
   }
 
-  selectByKey(ref: DbObjectRef, columns: string[], key: Record<string, CellValue>): string {
+  selectByKey(ref: DbObjectRef, columns: string[], key: RowKey): string {
     return `SELECT ${columns.map((c) => this.quoteIdent(c)).join(', ')} FROM ${this.qualify(ref)} WHERE ${this.keyCondition(key)}`
   }
 
@@ -147,9 +150,14 @@ export abstract class BaseDialect implements SqlDialect {
     return `SELECT * FROM (${sql}) AS limited_query LIMIT ${limit}`
   }
 
-  protected keyCondition(key: Record<string, CellValue>): string {
+  protected keyCondition(key: RowKey): string {
     return Object.entries(key)
-      .map(([col, val]) => (val === null ? `${this.quoteIdent(col)} IS NULL` : `${this.quoteIdent(col)} = ${this.literal(val)}`))
+      .map(([col, val]) => {
+        const c = this.quoteIdent(col)
+        if (val === null) return `${c} IS NULL`
+        if (isAnyOf(val)) return val.anyOf.length === 1 ? `${c} = ${this.literal(val.anyOf[0])}` : `(${val.anyOf.map((v) => `${c} = ${this.literal(v)}`).join(' OR ')})`
+        return `${c} = ${this.literal(val)}`
+      })
       .join(' AND ')
   }
 

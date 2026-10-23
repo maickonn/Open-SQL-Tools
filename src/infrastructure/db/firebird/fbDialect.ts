@@ -1,4 +1,4 @@
-import type { CellValue, ColumnDef, DbEngine, DbObjectRef, IndexDef, LobKind, ObjectKind, ServerUser, TableDataRequest, TableStructure, TriggerDef } from '@shared/model'
+import type { ColumnDef, DbEngine, DbObjectRef, IndexDef, LobKind, ObjectKind, RowKey, ServerUser, TableDataRequest, TableStructure, TriggerDef } from '@shared/model'
 import { LOB_PREVIEW_CHARS } from '@domain/lob'
 import type { TemplateContext } from '@domain/ports/database'
 import { splitType } from '@domain/sql/columnType'
@@ -52,7 +52,7 @@ export class FbDialect extends BaseDialect {
    * charset lacks (0x81, 0x8D… in WIN1252) to 0x00. CHARACTER SET OCTETS strings are copied as they
    * are, so the BLOB goes out in OCTETS chunks, one row each (a row message holds 64 KB).
    */
-  override selectLobBytes(ref: DbObjectRef, column: string, key: Record<string, CellValue>): string {
+  override selectLobBytes(ref: DbObjectRef, column: string, key: RowKey): string {
     const n = 32000
     const from = `FROM ${this.qualify(ref)} WHERE ${this.keyCondition(key)}`
     const col = this.quoteIdent(column)
@@ -70,6 +70,16 @@ export class FbDialect extends BaseDialect {
       '  END',
       'END'
     ].join('\n')
+  }
+
+  selectTextBytes(ref: DbObjectRef, column: ColumnDef, opts: { key?: RowKey; limit: number }): string {
+    const col = this.quoteIdent(column.name)
+    const blob = column.dataType.toUpperCase() === 'BLOB'
+    // OCTETS strings carry the stored bytes as they are (casts to other charsets transliterate).
+    const size = blob ? Math.min(opts.limit, 32000) : Math.max(1, Math.min(column.length ?? 32765, 32765))
+    const value = blob ? `SUBSTRING(${col} FROM 1 FOR ${size})` : col
+    const where = opts.key ? this.keyCondition(opts.key) : `${col} IS NOT NULL`
+    return `SELECT FIRST ${opts.key ? 1 : opts.limit} CAST(${value} AS VARCHAR(${size}) CHARACTER SET OCTETS) FROM ${this.qualify(ref)} WHERE ${where}`
   }
 
   protected override lobPreview(column: string, kind: LobKind, charset?: string): string {

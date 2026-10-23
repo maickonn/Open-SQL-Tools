@@ -7,6 +7,8 @@ import type { DbConnection, ResultSink, RunOptions, RunOutcome } from '@domain/p
 import { capabilitiesFor, formatVersion, parseVersion } from '@domain/serverVersion'
 import { ColumnarBuffer, driverValue, formatDate } from '../common/columnar'
 import type { Endpoint } from '../mysql-family/mysqlConnection'
+import { LegacyText, rawNoneText } from './fbLegacyText'
+import { EncodingProfiles } from '@domain/text/legacyText'
 
 const T = {
   TEXT: 452, VARYING: 448, SHORT: 500, LONG: 496, FLOAT: 482, DOUBLE: 480, D_FLOAT: 530, TIMESTAMP: 510, BLOB: 520,
@@ -86,10 +88,13 @@ const MAX_STRING = 32765
 
 interface WireVar {
   type: number
+  subType?: number
   length: number
   /** Set by the driver when it widened a column for the connection charset. */
   nativeLength?: number
 }
+
+const isText = (v: WireVar): boolean => (v.type & ~1) === T.VARYING || (v.type & ~1) === T.TEXT
 
 /** Upper bound of a column's share of the message: data, null indicator and alignment. */
 const varSize = (v: WireVar): number => ((v.type & ~1) === T.VARYING ? v.length + 2 : (v.type & ~1) === T.TEXT ? v.length : 16) + 2 + 7
@@ -102,8 +107,10 @@ const varSize = (v: WireVar): number => ((v.type & ~1) === T.VARYING ? v.length 
  * Keeps each widened column within the string limit and the whole row within a message, giving
  * back the widening of the largest columns first (they never shrink below their native length).
  */
-function fitOutputMessage(output: WireVar[] | undefined): void {
+function fitOutputMessage(output: WireVar[] | undefined, rawNoneText: boolean): void {
   if (!output?.length) return
+  // NONE text travels as the stored bytes when FbConnection decodes it (fbLegacyText): no widening.
+  if (rawNoneText) for (const v of output) if (v.subType === 0 && v.nativeLength !== undefined && isText(v)) v.length = v.nativeLength
   const widened = output.filter((v) => v.nativeLength !== undefined && v.length > v.nativeLength)
   if (!widened.length) return
   for (const v of widened) v.length = Math.max(v.nativeLength!, Math.min(v.length, MAX_STRING))
@@ -119,12 +126,21 @@ function fitOutputMessage(output: WireVar[] | undefined): void {
 // The fetch request carries the output message format built from statement.output.
 const wireFetch = FbWire.prototype.fetch
 FbWire.prototype.fetch = function (this: FbWire, statement: { output?: WireVar[] }, ...rest: unknown[]) {
-  fitOutputMessage(statement.output)
+  fitOutputMessage(statement.output, rawNoneText((this as unknown as { options?: Options & { legacyText?: boolean } }).options))
   return (wireFetch as (...args: unknown[]) => void).call(this, statement, ...rest)
 } as typeof wireFetch
 
 /** Lock wait for user statements; forms and tree actions pass a shorter one. */
 const DEFAULT_LOCK_TIMEOUT_SEC = 30
+
+/** Rows held back at the start of a result while their NONE text is learned. */
+const HELD_ROWS = 200
+
+/** Columns whose values may be NONE text: CHAR/VARCHAR of charset NONE and text BLOBs. */
+const mayHoldNoneText = (m: ColumnMetadata): boolean => {
+  const t = m.type & ~1
+  return ((t === T.TEXT || t === T.VARYING) && m.subType === 0) || (t === T.BLOB && m.subType === 1)
+}
 
 /** Sentinel used to stop `sequentially` once enough rows were read. */
 const STOP = new Error('fetch limit reached')
@@ -138,7 +154,9 @@ export class FbConnection implements DbConnection {
   constructor(
     private readonly profile: ConnectionProfile,
     private readonly secrets: ConnectionSecrets,
-    private readonly endpoint: Endpoint
+    private readonly endpoint: Endpoint,
+    /** Evidence about the database's NONE text, shared with the session's other connection. */
+    readonly profiles: EncodingProfiles = new EncodingProfiles()
   ) {}
 
   private options(): Options {
@@ -161,16 +179,20 @@ export class FbConnection implements DbConnection {
       wireCompression: !!p.options.wireCompression,
       connectTimeout: (p.options.connectTimeoutSec ?? 15) * 1000,
       retryConnectionInterval: 1000,
-      enableKeepAlive: true
-    }
+      enableKeepAlive: true,
+      // NONE text comes as LegacyText and is decoded here (fbLegacyText).
+      legacyText: true
+    } as Options
   }
 
   async connect(): Promise<ServerInfo> {
     this.db = await Firebird.attachAsync(this.options())
     const rows = (await this.db.queryAsync<Record<string, unknown>>(
-      "SELECT rdb$get_context('SYSTEM', 'ENGINE_VERSION') AS V, CURRENT_USER AS U FROM RDB$DATABASE"
+      "SELECT rdb$get_context('SYSTEM', 'ENGINE_VERSION') AS V, CURRENT_USER AS U, TRIM(RDB$CHARACTER_SET_NAME) AS CS FROM RDB$DATABASE"
     )) as Record<string, unknown>[]
-    const versionString = String(rows[0]?.V ?? '')
+    // Context variables are NONE text on some versions: they come as LegacyText too.
+    const text = (v: unknown): string => (v instanceof LegacyText ? this.profiles.decode(v.bytes) : String(v ?? '')).trim()
+    const versionString = text(rows[0]?.V)
     const version = parseVersion(versionString)
     this.info = {
       engine: 'firebird',
@@ -178,8 +200,9 @@ export class FbConnection implements DbConnection {
       version,
       label: `Firebird ${formatVersion(version)}`,
       capabilities: capabilitiesFor('firebird', version),
-      currentUser: String(rows[0]?.U ?? '').trim(),
-      currentDatabase: this.profile.database
+      currentUser: text(rows[0]?.U),
+      currentDatabase: this.profile.database,
+      defaultCharset: text(rows[0]?.CS) || 'NONE'
     }
     return this.info
   }
@@ -254,6 +277,13 @@ export class FbConnection implements DbConnection {
       const converters = output.map(converterFor)
       let rowCount = 0
       let truncated = false
+      // NONE text is decoded with its column's evidence: the first rows are held back until they
+      // have all been learned, so even they get the column's code page.
+      let held: unknown[][] | null = output.some(mayHoldNoneText) ? [] : null
+      const release = (): void => {
+        for (const r of held ?? []) buffer?.pushRow(this.decodeRow(r))
+        held = null
+      }
       try {
         await tx.sequentiallyAsync(
           sql,
@@ -265,17 +295,24 @@ export class FbConnection implements DbConnection {
             }
             for (let c = 0; c < row.length; c++) {
               const v = row[c]
-              if (typeof v === 'function') row[c] = await readBinaryBlob(v as never, tx)
+              if (v instanceof LegacyText) this.profiles.learn(v.bytes, v.column)
+              else if (typeof v === 'function') row[c] = await readBinaryBlob(v as never, tx)
               else if (converters[c] && v !== null) row[c] = converters[c]!(v)
             }
-            buffer?.pushRow(row)
             rowCount++
+            if (held) {
+              held.push(row)
+              if (held.length >= HELD_ROWS) release()
+            } else {
+              buffer?.pushRow(this.decodeRow(row))
+            }
           },
           { asObject: false } as never
         )
       } catch (err) {
         if (err !== STOP) throw err
       }
+      release()
       buffer?.flush()
       sink?.end({ rowCount, truncated })
       return { hasResultSet: true, rowCount, truncated }
@@ -289,7 +326,7 @@ export class FbConnection implements DbConnection {
     if (output.length && type === STMT_EXEC_PROCEDURE) {
       // EXECUTE PROCEDURE / RETURNING: a single output row.
       const raw = result?.rows
-      const row = Array.isArray(raw) ? (Array.isArray(raw[0]) ? (raw[0] as unknown[]) : raw) : raw ? Object.values(raw) : []
+      const row = this.decodeRow(Array.isArray(raw) ? (Array.isArray(raw[0]) ? (raw[0] as unknown[]) : raw) : raw ? Object.values(raw) : [])
       sink?.start(columns)
       if (sink && row.length) {
         const buffer = new ColumnarBuffer(columns.length, 1, sink)
@@ -299,6 +336,18 @@ export class FbConnection implements DbConnection {
       return { hasResultSet: true, rowCount: row.length ? 1 : 0, affectedRows: result?.affectedRows, truncated: false }
     }
     return { hasResultSet: false, rowCount: 0, affectedRows: result?.affectedRows, truncated: false }
+  }
+
+  /** Decodes the NONE text of a row (LegacyText) with what the profiles learned. */
+  private decodeRow(row: unknown[]): unknown[] {
+    for (let c = 0; c < row.length; c++) {
+      const v = row[c]
+      if (v instanceof LegacyText) {
+        this.profiles.learn(v.bytes, v.column)
+        row[c] = this.profiles.decode(v.bytes, v.column)
+      }
+    }
+    return row
   }
 
   async cancel(): Promise<void> {

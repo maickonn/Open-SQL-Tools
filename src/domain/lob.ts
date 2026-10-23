@@ -14,7 +14,7 @@ export const LOB_PREVIEW_CHARS = 256
  * bytes that aren't valid in the connection charset (e.g. images in a text BLOB) decode to fewer
  * characters than the server sent.
  */
-export const LOB_CUT_MARK = ''
+export const LOB_CUT_MARK = '\u0001'
 
 export function lobKind(engine: DbEngine, column: Pick<ColumnDef, 'dataType' | 'fullType'>): LobKind | null {
   const type = column.dataType.toUpperCase()

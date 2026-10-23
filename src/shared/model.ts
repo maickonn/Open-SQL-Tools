@@ -144,6 +144,8 @@ export interface ServerInfo {
   currentUser?: string
   /** Current database/schema. */
   currentDatabase?: string
+  /** Firebird: the database's default character set (NONE when it has none). */
+  defaultCharset?: string
 }
 
 export type ObjectKind =
@@ -453,10 +455,14 @@ export interface TableDataRequest {
 /** Text LOBs come as their first characters, binary LOBs as their size in bytes. */
 export type LobKind = 'text' | 'binary'
 
+/** A key value that may be stored in more than one way (Firebird NONE text): any of them matches. */
+export type KeyValue = CellValue | { anyOf: (CellValue | { sql: string })[] }
+export type RowKey = Record<string, KeyValue>
+
 export type RowChange =
   | { kind: 'insert'; values: Record<string, CellValue | { sql: string }> }
-  | { kind: 'update'; key: Record<string, CellValue>; values: Record<string, CellValue | { sql: string }> }
-  | { kind: 'delete'; key: Record<string, CellValue> }
+  | { kind: 'update'; key: RowKey; values: Record<string, CellValue | { sql: string }> }
+  | { kind: 'delete'; key: RowKey }
 
 export type ExportFormat = 'csv' | 'tsv' | 'json' | 'sql' | 'html' | 'xml' | 'markdown' | 'latex' | 'xlsx'
 

@@ -9,6 +9,7 @@ import { MySqlInspector } from './mysql-family/mysqlInspector'
 import { PgConnection } from './postgres/pgConnection'
 import { PgDialect } from './postgres/pgDialect'
 import { PgInspector } from './postgres/pgInspector'
+import { EncodingProfiles } from '@domain/text/legacyText'
 import { FbConnection } from './firebird/fbConnection'
 import { FbDialect } from './firebird/fbDialect'
 import { FbInspector } from './firebird/fbInspector'
@@ -25,7 +26,7 @@ export async function runMaterialized(conn: DbConnection, sql: string, maxRows =
   return sink.toResult(Math.round(performance.now() - started), outcome.affectedRows)
 }
 
-function createConnection(profile: ConnectionProfile, secrets: ConnectionSecrets, endpoint: Endpoint): DbConnection {
+function createConnection(profile: ConnectionProfile, secrets: ConnectionSecrets, endpoint: Endpoint, profiles: EncodingProfiles): DbConnection {
   switch (profile.engine) {
     case 'mysql':
     case 'mariadb':
@@ -33,15 +34,17 @@ function createConnection(profile: ConnectionProfile, secrets: ConnectionSecrets
     case 'postgres':
       return new PgConnection(profile, secrets, endpoint)
     case 'firebird':
-      return new FbConnection(profile, secrets, endpoint)
+      return new FbConnection(profile, secrets, endpoint, profiles)
     case 'sqlite':
       return new SqliteConnection(profile)
   }
 }
 
 export async function openDatabase(profile: ConnectionProfile, secrets: ConnectionSecrets, endpoint: Endpoint): Promise<OpenDatabase> {
-  const primary = createConnection(profile, secrets, endpoint)
-  const meta = createConnection(profile, secrets, endpoint)
+  // What one connection learns about NONE text (Firebird) the other uses too.
+  const textProfiles = new EncodingProfiles()
+  const primary = createConnection(profile, secrets, endpoint, textProfiles)
+  const meta = createConnection(profile, secrets, endpoint, textProfiles)
   // Both handshakes run concurrently (they cost several round trips over SSH or WAN links);
   // the primary's error wins so authentication failures surface once, with a clear message.
   // Firebird attaches one after the other: concurrent attaches through an SSH tunnel were 10x slower.
@@ -109,6 +112,7 @@ export async function openDatabase(profile: ConnectionProfile, secrets: Connecti
     inspector,
     metaLock,
     metaQuery,
+    textProfiles: info.engine === 'firebird' ? textProfiles : undefined,
     close: async () => {
       await Promise.allSettled([primary.close(), meta.close()])
     }

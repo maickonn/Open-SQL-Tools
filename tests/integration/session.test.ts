@@ -6,6 +6,7 @@ import type { CellValue, DbEngine, DbObjectRef } from '@shared/model'
 import type { WorkerEvents } from '@shared/workerApi'
 import { SessionService } from '@application/session/sessionService'
 import { LOB_CUT_MARK, lobKind } from '@domain/lob'
+import { encodeText } from '@domain/text/legacyText'
 import { openDatabase } from '@infrastructure/db/openDatabase'
 import { createFileWriter, readTextFile } from '@infrastructure/fs/fileWriter'
 import { availableTargets, profileFor, type Target } from './targets'
@@ -323,6 +324,63 @@ describe.skipIf(targets.length === 0)('session service against live databases', 
       expect((await svc.resultSource({ columns: joined.columns, database: db }))?.ref.name.toLowerCase()).toBe('ost_items')
       const constant = await svc.query({ sql: engine === 'firebird' ? 'SELECT 1 AS ONE FROM RDB$DATABASE' : 'SELECT 1 AS one', database: db })
       expect(await svc.resultSource({ columns: constant.columns, database: db })).toBeNull()
+    })
+
+    // Firebird CHARACTER SET NONE stores bytes: each value is read in the encoding it was written in,
+    // and writes keep the encoding the cell or the column uses.
+    it.skipIf(engine !== 'firebird')('reads and writes NONE text in the encoding each value uses', async () => {
+      const hex = (text: string, enc: 'windows-1252' | 'utf8'): string => `x'${Buffer.from(encodeText(text, enc)!).toString('hex')}'`
+      const stored = async (sql: string): Promise<string> => Buffer.from((await svc.query({ sql })).rows[0][0] as Uint8Array).toString('hex')
+      const legacy: DbObjectRef = { name: 'OST_LEGACY', kind: 'table' }
+      await svc.query({
+        sql: 'RECREATE TABLE OST_LEGACY (ID INTEGER NOT NULL PRIMARY KEY, NAME VARCHAR(60) CHARACTER SET NONE, CODE CHAR(8) CHARACTER SET NONE, NOTE BLOB SUB_TYPE TEXT CHARACTER SET NONE)'
+      })
+      try {
+        await svc.query({ sql: `INSERT INTO OST_LEGACY VALUES (1, ${hex('Resolução 211', 'windows-1252')}, ${hex('Ação', 'windows-1252')}, ${hex('Observação longa', 'windows-1252')})` })
+        await svc.query({ sql: `INSERT INTO OST_LEGACY VALUES (2, ${hex('Relatório via Web', 'utf8')}, 'ok', ${hex('Nota técnica', 'utf8')})` })
+        await svc.query({ sql: `INSERT INTO OST_LEGACY VALUES (3, ${hex('São Paulo', 'windows-1252')}, NULL, NULL)` })
+        const res = await svc.query({ sql: 'SELECT NAME, CODE, NOTE FROM OST_LEGACY ORDER BY ID' })
+        expect(res.rows).toEqual([
+          ['Resolução 211', 'Ação    ', 'Observação longa'],
+          ['Relatório via Web', 'ok      ', 'Nota técnica'],
+          ['São Paulo', null, null]
+        ])
+
+        // Each cell keeps its encoding; a new row takes the column's (mostly Windows-1252).
+        await svc.applyRowChanges({ ref: legacy, changes: [{ kind: 'update', key: { ID: 1 }, values: { NAME: 'Opção' } }] })
+        await svc.applyRowChanges({ ref: legacy, changes: [{ kind: 'update', key: { ID: 2 }, values: { NAME: 'Informação' } }] })
+        await svc.applyRowChanges({ ref: legacy, changes: [{ kind: 'insert', values: { ID: 4, NAME: 'Não', NOTE: 'Seção' } }] })
+        const octets = (id: number, col = 'NAME'): Promise<string> => stored(`SELECT CAST(${col} AS VARCHAR(60) CHARACTER SET OCTETS) FROM OST_LEGACY WHERE ID = ${id}`)
+        expect(await octets(1)).toBe(Buffer.from(encodeText('Opção', 'windows-1252')!).toString('hex'))
+        expect(await octets(2)).toBe(Buffer.from(encodeText('Informação', 'utf8')!).toString('hex'))
+        expect(await octets(4)).toBe(Buffer.from(encodeText('Não', 'windows-1252')!).toString('hex'))
+        expect(await octets(4, 'NOTE')).toBe(Buffer.from(encodeText('Seção', 'windows-1252')!).toString('hex'))
+
+        // Typed SQL: filters match every encoding the column holds, assignments use the column's.
+        const ids = async (where: string): Promise<number[]> => (await svc.query({ sql: `SELECT ID FROM OST_LEGACY WHERE ${where} ORDER BY ID` })).rows.map((r) => Number(r[0]))
+        expect(await ids("NAME = 'São Paulo'")).toEqual([3])
+        expect(await ids("NAME IN ('Opção', 'Informação')")).toEqual([1, 2])
+        expect(await ids("NAME LIKE '%ção%'")).toEqual([1, 2])
+        expect(await ids("NAME NOT CONTAINING 'ção' AND NAME IS NOT NULL")).toEqual([3, 4])
+        expect(await ids("NOTE CONTAINING 'técnica'")).toEqual([2])
+        await svc.execute({ queryId: 'legacy-update', sql: "UPDATE OST_LEGACY SET NAME = 'Coração' WHERE ID = 3;\nINSERT INTO OST_LEGACY (ID, NAME) VALUES (5, 'Avião')", maxRows: 10 })
+        expect(await octets(3)).toBe(Buffer.from(encodeText('Coração', 'windows-1252')!).toString('hex'))
+        expect(await octets(5)).toBe(Buffer.from(encodeText('Avião', 'windows-1252')!).toString('hex'))
+        expect(await ids("NAME = 'Coração'")).toEqual([3])
+
+        // A NONE key with accents matches its stored bytes.
+        await svc.query({ sql: 'RECREATE TABLE OST_LEGACY_KEY (NOME VARCHAR(30) CHARACTER SET NONE NOT NULL PRIMARY KEY, V INTEGER)' })
+        await svc.query({ sql: `INSERT INTO OST_LEGACY_KEY VALUES (${hex('SÃO PAULO', 'windows-1252')}, 1)` })
+        const keyRef: DbObjectRef = { name: 'OST_LEGACY_KEY', kind: 'table' }
+        const up = await svc.applyRowChanges({ ref: keyRef, changes: [{ kind: 'update', key: { NOME: 'SÃO PAULO' }, values: { V: 2 } }] })
+        expect(up.affected).toBe(1)
+        expect((await svc.fetchCellValues({ ref: keyRef, key: { NOME: 'SÃO PAULO' }, columns: ['V'] }))[0]).toBe(2)
+        const del = await svc.applyRowChanges({ ref: keyRef, changes: [{ kind: 'delete', key: { NOME: 'SÃO PAULO' } }] })
+        expect(del.affected).toBe(1)
+      } finally {
+        await svc.query({ sql: 'DROP TABLE OST_LEGACY' }).catch(() => undefined)
+        await svc.query({ sql: 'DROP TABLE OST_LEGACY_KEY' }).catch(() => undefined)
+      }
     })
 
     it('rejects writes in read-only queries (agent mode)', async () => {

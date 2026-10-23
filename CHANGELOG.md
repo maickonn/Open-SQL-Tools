@@ -4,6 +4,8 @@ User-facing changes per release. Add entries under **Unreleased** as you go; bef
 
 ## [Unreleased]
 
+- Firebird text stored without a charset (CHARACTER SET NONE) shows its accents: each value is decoded as UTF-8 or the legacy code page its column uses (Windows-1252, DOS 850, Windows-1250/1251…), detected from the data, even when one column mixes them
+- Edits, keys and typed SQL filters on those columns use the encoding the data is stored in, so accented text is found and saved correctly
 - Query results from a single table can be edited like the Data tab (cells, inserts, deletes, BLOB import/export) when they include the table's key
 - The title bar no longer has the session, new tab, run and stop buttons (they stay in the menus, shortcuts and query toolbar)
 - Value editor previews images and PDFs stored in BLOBs (also images kept in text BLOBs) and exports any value to a file

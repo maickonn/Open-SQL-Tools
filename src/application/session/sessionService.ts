@@ -27,6 +27,7 @@ import { toErrorPayload } from '@shared/rpc'
 import type { BoundStatement, OpenDatabase, ResultSink, TextWriter } from '@domain/ports/database'
 import { splitSql } from '@domain/sql/splitter'
 import { hasTransactionalDdl, isFileBased, isSingleDatabase } from '@domain/engineTraits'
+import { LegacyTextWriter } from './legacyTextWriter'
 import { extractDmlStatements } from '@domain/sql/psqlStatements'
 import { Mutex } from '../util/mutex'
 import { createFormatter } from '../export/formatters'
@@ -73,6 +74,8 @@ function toRows(columns: CellValue[][], rowCount: number): CellValue[][] {
  */
 export class SessionService {
   private db: OpenDatabase | null = null
+  /** Firebird NONE text writer of the open database (built on first use). */
+  private legacy: { db: OpenDatabase; writer: LegacyTextWriter } | null = null
   private tunnel: { close(): Promise<void> } | null = null
   private profile: ConnectionProfile | null = null
   private secrets: ConnectionSecrets = {}
@@ -83,6 +86,14 @@ export class SessionService {
   private keepAlive: NodeJS.Timeout | null = null
 
   constructor(private readonly deps: SessionDeps) {}
+
+  /** Encodes NONE text as stored (Firebird on a UTF8 connection); null elsewhere. */
+  private legacyText(): LegacyTextWriter | null {
+    const db = this.require()
+    if (!db.textProfiles || (this.profile?.options.charset || 'UTF8').toUpperCase() !== 'UTF8') return null
+    if (this.legacy?.db !== db) this.legacy = { db, writer: new LegacyTextWriter(db, db.textProfiles, (ref) => db.inspector.getTableStructure(ref)) }
+    return this.legacy.writer
+  }
 
   private require(): OpenDatabase {
     if (!this.db) throw new Error('Not connected')
@@ -191,10 +202,10 @@ export class SessionService {
                 durationMs: Math.round(performance.now() - t0)
               })
           }
-          this.log('sql', st.sql)
           let summary: StatementSummary
           try {
-            const outcome = await this.runWithReconnect(() => this.require().primary.run(st.sql, sink, { maxRows: p.maxRows, chunkSize: p.chunkSize ?? DEFAULT_CHUNK }))
+            const sent = await this.sendable(st.sql)
+            const outcome = await this.runWithReconnect(() => this.require().primary.run(sent, sink, { maxRows: p.maxRows, chunkSize: p.chunkSize ?? DEFAULT_CHUNK }))
             summary = {
               index: i,
               sql: st.sql,
@@ -239,6 +250,17 @@ export class SessionService {
     }
   }
 
+  /**
+   * The statement as sent to the server, logged: Firebird text literals meeting NONE columns are
+   * rewritten to the encodings the data uses (the summary and history keep what the user typed).
+   */
+  private async sendable(sql: string): Promise<string> {
+    const legacy = /[^\x00-\x7f]/.test(sql) ? this.legacyText() : null
+    const sent = legacy ? await legacy.rewriteSql(sql) : sql
+    this.log('sql', sent)
+    return sent
+  }
+
   async cancel(p: { queryId: string }): Promise<void> {
     const ctl = this.running.get(p.queryId)
     if (!ctl) return
@@ -251,6 +273,7 @@ export class SessionService {
   async query(p: { sql: string; database?: string; maxRows?: number; readOnly?: boolean }): Promise<MaterializedResult> {
     const db = this.require()
     const max = p.maxRows ?? 10_000
+    const sql = await this.sendable(p.sql)
     const run = async (conn: typeof db.primary): Promise<MaterializedResult> => {
       if (p.database && p.database !== conn.currentDatabase()) await conn.useDatabase(p.database)
       const rows: CellValue[][] = []
@@ -258,7 +281,7 @@ export class SessionService {
       let truncated = false
       const t0 = performance.now()
       const outcome = await conn.run(
-        p.sql,
+        sql,
         {
           start: (c) => {
             columns = c
@@ -272,7 +295,6 @@ export class SessionService {
       )
       return { columns, rows, truncated, affectedRows: outcome.affectedRows, durationMs: Math.round(performance.now() - t0) }
     }
-    this.log('sql', p.sql)
     if (p.readOnly) return db.metaLock.run(() => run(db.meta))
     return this.primaryLock.run(() => run(db.primary))
   }
@@ -383,7 +405,8 @@ export class SessionService {
   }
 
   async fetchCellValues(p: { ref: DbObjectRef; key: Record<string, CellValue>; columns: string[] }): Promise<CellValue[]> {
-    const sql = this.require().dialect.selectByKey(p.ref, p.columns, p.key)
+    const key = (await this.legacyText()?.key(p.ref, p.key)) ?? p.key
+    const sql = this.require().dialect.selectByKey(p.ref, p.columns, key)
     // Read-only on the meta connection: a long query in the editor doesn't hold the grid back.
     const res = await this.query({ sql, database: p.ref.database, maxRows: 1, readOnly: true })
     if (!res.rows.length) throw new Error('The row no longer exists. Refresh the data.')
@@ -391,7 +414,8 @@ export class SessionService {
   }
 
   async fetchCellBytes(p: { ref: DbObjectRef; key: Record<string, CellValue>; column: string }): Promise<Uint8Array> {
-    const sql = this.require().dialect.selectLobBytes(p.ref, p.column, p.key)
+    const key = (await this.legacyText()?.key(p.ref, p.key)) ?? p.key
+    const sql = this.require().dialect.selectLobBytes(p.ref, p.column, key)
     if (!sql) throw new Error('This database returns text values as stored')
     const res = await this.query({ sql, database: p.ref.database, maxRows: Number.MAX_SAFE_INTEGER, readOnly: true })
     const chunks = res.rows.map((r) => (r[0] instanceof Uint8Array ? r[0] : new Uint8Array()))
@@ -443,9 +467,11 @@ export class SessionService {
 
   async applyRowChanges(p: { ref: DbObjectRef; changes: RowChange[]; dryRun?: boolean }): Promise<{ statements: string[]; affected: number }> {
     const d = this.require().dialect
-    const statements = d.rowChanges(p.ref, p.changes)
+    // Text in Firebird NONE columns goes in the encoding the data uses; keys match any of them.
+    const changes = (await this.legacyText()?.changes(p.ref, p.changes)) ?? p.changes
+    const statements = d.rowChanges(p.ref, changes)
     if (p.dryRun) return { statements, affected: 0 }
-    const affected = await this.runStatements(d.boundRowChanges(p.ref, p.changes), p.ref.database, statements.length > 1)
+    const affected = await this.runStatements(d.boundRowChanges(p.ref, changes), p.ref.database, statements.length > 1)
     return { statements, affected }
   }
 

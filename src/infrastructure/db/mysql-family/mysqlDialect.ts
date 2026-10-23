@@ -1,4 +1,4 @@
-import type { BulkTableOperations, CellValue, ColumnDef, DbEngine, DbObjectRef, IndexDef, ObjectKind, Partitioning, ServerUser, TableStructure, TriggerDef } from '@shared/model'
+import type { BulkTableOperations, ColumnDef, DbEngine, DbObjectRef, IndexDef, ObjectKind, Partitioning, RowKey, ServerUser, TableStructure, TriggerDef } from '@shared/model'
 import type { TemplateContext } from '@domain/ports/database'
 import { BaseDialect } from '../common/baseDialect'
 
@@ -36,7 +36,7 @@ export class MySqlDialect extends BaseDialect {
 
   protected generatedNullability = true
 
-  override selectLobBytes(ref: DbObjectRef, column: string, key: Record<string, CellValue>): string {
+  override selectLobBytes(ref: DbObjectRef, column: string, key: RowKey): string {
     return `SELECT CAST(${this.quoteIdent(column)} AS BINARY) FROM ${this.qualify(ref)} WHERE ${this.keyCondition(key)}`
   }
 

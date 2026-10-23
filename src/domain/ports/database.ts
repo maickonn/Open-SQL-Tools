@@ -3,6 +3,8 @@ import type {
   CatalogColumn,
   CatalogRoutine,
   CellValue,
+  ColumnDef,
+  RowKey,
   ColumnMeta,
   DbObjectInfo,
   DbObjectRef,
@@ -20,6 +22,7 @@ import type {
   UserPrivileges
 } from '@shared/model'
 import type { CollationInfo, HostInfo } from '@shared/workerApi'
+import type { EncodingProfiles } from '../text/legacyText'
 
 /** Receives a streamed result set. Rows arrive as columnar chunks: columns[c][r]. */
 export interface ResultSink {
@@ -121,13 +124,18 @@ export interface SqlDialect {
   literal(value: CellValue | undefined): string
   selectTableData(req: TableDataRequest): string
   /** SELECT of some columns of the row identified by `key` (lazy LOB values). */
-  selectByKey(ref: DbObjectRef, columns: string[], key: Record<string, CellValue>): string
+  selectByKey(ref: DbObjectRef, columns: string[], key: RowKey): string
   /**
    * SELECT whose rows, first column concatenated, are the stored bytes of a text LOB, without the
    * transliteration to the connection charset (lossy for files kept in text columns). Null when the
    * engine needs none.
    */
-  selectLobBytes(ref: DbObjectRef, column: string, key: Record<string, CellValue>): string | null
+  selectLobBytes(ref: DbObjectRef, column: string, key: RowKey): string | null
+  /**
+   * Firebird: SELECT of the stored bytes of a text column (one value by key, or a sample of up to
+   * `limit` values), first column of each row; text BLOBs give their first `limit` bytes.
+   */
+  selectTextBytes?(ref: DbObjectRef, column: ColumnDef, opts: { key?: RowKey; limit: number }): string
   rowChanges(ref: DbObjectRef, changes: RowChange[]): string[]
   /** Same statements with binary values bound as parameters: large files would overflow SQL literals. */
   boundRowChanges(ref: DbObjectRef, changes: RowChange[]): BoundStatement[]
@@ -175,6 +183,8 @@ export interface OpenDatabase {
   metaLock: { run<T>(task: () => Promise<T>): Promise<T> }
   /** Runs a small query on the metadata connection. */
   metaQuery(sql: string, maxRows?: number): Promise<MaterializedResult>
+  /** Firebird: what the session learned about how NONE text is encoded (reads and writes use it). */
+  textProfiles?: EncodingProfiles
   close(): Promise<void>
 }
 
