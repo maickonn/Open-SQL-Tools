@@ -17,7 +17,8 @@ export const en = {
     exportGrid: 'Export grid rows…', dumpSql: 'Export database as SQL…', importSql: 'Run SQL file…', importCsv: 'Import CSV file…',
     findText: 'Find text on server…', userManager: 'User manager…', maintenance: 'Maintenance', settings: 'Preferences…',
     toggleSidebar: 'Toggle sidebar', toggleLog: 'Toggle SQL log', toggleChat: 'Toggle AI assistant', theme: 'Theme',
-    themeDark: 'Dark', themeLight: 'Light', themeSystem: 'System', about: 'About', shortcuts: 'Keyboard shortcuts'
+    themeDark: 'Dark', themeLight: 'Light', themeSystem: 'System', about: 'About', shortcuts: 'Keyboard shortcuts',
+    aboutApp: 'About Open SQL Tools', appSettings: 'Settings…'
   },
   sessions: {
     title: 'Session manager', newSession: 'New session', newFolder: 'New folder', connect: 'Open', test: 'Test',

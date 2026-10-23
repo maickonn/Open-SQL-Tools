@@ -142,7 +142,7 @@ Grid editing lives in `views/object/EditableGrid.tsx` (edits, posting through `a
 
 ### Renderer details
 
-Heavy pieces (Monaco, chat, tool dialogs) are lazy-loaded. Monaco is bundled locally (`renderer/components/editor/monaco.ts`), not from a CDN. Dialogs are opened through `uiStore.openDialog({ kind })` and rendered lazily in `App.tsx`. Use the in-app `confirmDialog` rather than `window.confirm`. Keyboard shortcuts come from the registry in `renderer/lib/shortcuts.ts` (user overrides live in `AppSettings.shortcuts`). Theming is CSS variables consumed by Tailwind v4 `@theme inline`.
+Heavy pieces (Monaco, chat, tool dialogs) are lazy-loaded. Monaco is bundled locally (`renderer/components/editor/monaco.ts`), not from a CDN. On macOS the title bar has no menus: `TitleBar` sends the same menus to the native menu bar (`lib/nativeMenu.ts` → `menu:set` → `main/appMenu.ts`), and clicks come back as `menu:command` with the item id. Dialogs are opened through `uiStore.openDialog({ kind })` and rendered lazily in `App.tsx`. Use the in-app `confirmDialog` rather than `window.confirm`. Keyboard shortcuts come from the registry in `renderer/lib/shortcuts.ts` (user overrides live in `AppSettings.shortcuts`). Theming is CSS variables consumed by Tailwind v4 `@theme inline`.
 
 ### Auto update
 

@@ -9,7 +9,7 @@ import { api } from '../../gateways/api'
 import { notify } from '../../stores/toast'
 import { uid } from '../../lib/format'
 import { parseCsv } from '@application/import/csv'
-import { SHORTCUT_ACTIONS, resolveShortcut } from '../../lib/shortcuts'
+import { SHORTCUT_ACTIONS, displayShortcut, resolveShortcut } from '../../lib/shortcuts'
 import { useSettings } from '../../stores/settingsStore'
 import { isSingleDatabase } from '@domain/engineTraits'
 
@@ -673,9 +673,10 @@ export function ShortcutsDialog() {
   const { t } = useTranslation()
   const close = useUi((s) => s.closeDialog)
   const overrides = useSettings((s) => s.settings.shortcuts)
+  const show = (s: string): string => displayShortcut(s, api.platform === 'darwin')
   const rows: [string, string][] = [
-    ...SHORTCUT_ACTIONS.filter((a) => resolveShortcut(a.id, overrides)).map((a): [string, string] => [resolveShortcut(a.id, overrides), t(a.label)]),
-    ['F9 / Shift+F9', `${t('menu.runAll')} / ${t('menu.runCurrent')}`]
+    ...SHORTCUT_ACTIONS.filter((a) => resolveShortcut(a.id, overrides)).map((a): [string, string] => [show(resolveShortcut(a.id, overrides)), t(a.label)]),
+    [`F9 / ${show('Shift+F9')}`, `${t('menu.runAll')} / ${t('menu.runCurrent')}`]
   ]
   return (
     <Dialog

@@ -98,6 +98,8 @@ export interface IpcInvokeMap {
   /** Runs an edit command on the focused field (keeps the native undo stack and input events). */
   'edit:command': { args: [command: EditCommand]; result: void }
   'edit:canPaste': { args: []; result: boolean }
+  /** macOS: the menus of the native menu bar; clicks come back as `menu:command` with the item id. */
+  'menu:set': { args: [menu: NativeMenu]; result: void }
 }
 
 export type IpcChannel = keyof IpcInvokeMap
@@ -111,6 +113,26 @@ export interface IpcEventMap {
   'update:state': UpdateState
   /** The agent asks to open SQL in a new editor tab. */
   'editor:open': { sql: string; sessionId?: string }
+}
+
+/** An item of the native menu bar (macOS), described by the renderer that owns its commands. */
+export interface NativeMenuItem {
+  /** Sent back in `menu:command` when the item is clicked. */
+  id?: string
+  label?: string
+  /** Electron accelerator, e.g. CmdOrCtrl+Shift+F. */
+  accelerator?: string
+  enabled?: boolean
+  /** Checkbox items only. */
+  checked?: boolean
+  separator?: boolean
+  submenu?: NativeMenuItem[]
+}
+
+export interface NativeMenu {
+  /** Items at the top of the application menu (About, Settings). */
+  app: NativeMenuItem[]
+  menus: { label: string; items: NativeMenuItem[] }[]
 }
 
 /** Channel used to hand a session MessagePort to the renderer. */

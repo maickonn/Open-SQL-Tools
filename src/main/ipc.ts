@@ -12,6 +12,7 @@ import type { SqliteStore } from '@infrastructure/persistence/sqliteStore'
 import type { SessionManager } from './sessions/sessionManager'
 import { demoAi, type ProviderRegistry } from './providers'
 import { applyTitleBarTheme } from './window'
+import { setAppMenu } from './appMenu'
 
 export interface IpcServices {
   store: SqliteStore
@@ -162,6 +163,10 @@ export function registerIpc(s: IpcServices): void {
     if (allowed.includes(command)) e.sender[command]()
   })
   handle('edit:canPaste', async () => (await clipboard.readText()).length > 0)
+  handle('menu:set', (e, menu) => {
+    const win = BrowserWindow.fromWebContents(e.sender)
+    if (win && process.platform === 'darwin') setAppMenu(menu, win)
+  })
   handle('app:setNativeTheme', (e, theme) => {
     nativeTheme.themeSource = theme
     const win = BrowserWindow.fromWebContents(e.sender)

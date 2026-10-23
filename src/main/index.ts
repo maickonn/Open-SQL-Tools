@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, nativeTheme } from 'electron'
+import { app, BrowserWindow, nativeTheme } from 'electron'
 import { join } from 'node:path'
 import { SqliteStore, historyRepository, settingsRepository, snippetRepository } from '@infrastructure/persistence/sqliteStore'
 import { SafeStorageSecretStore } from '@infrastructure/security/safeStorageSecretStore'
@@ -12,6 +12,7 @@ import { SessionManager } from './sessions/sessionManager'
 import { ProviderRegistry } from './providers'
 import { createAgentGateway } from './agentGateway'
 import { broadcast, registerIpc } from './ipc'
+import { setDefaultAppMenu } from './appMenu'
 import { createMainWindow, createSplashWindow } from './window'
 
 // Tests run with an isolated profile directory.
@@ -64,8 +65,8 @@ async function bootstrap(): Promise<void> {
   registerIpc({ store, settings, history: historyRepository(store), snippets: snippetRepository(store), secrets, connections, sessions, agent, providers, updates })
 
   nativeTheme.themeSource = settings.get().theme
-  // The renderer draws its own menu bar in the title bar area.
-  Menu.setApplicationMenu(process.platform === 'darwin' ? Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }, { role: 'windowMenu' }]) : null)
+  // The renderer draws its own menu bar in the title bar area; on macOS it fills the native one (menu:set).
+  setDefaultAppMenu()
 
   // will-quit fires after every window has closed (and saved its bounds).
   app.on('will-quit', () => store.close())

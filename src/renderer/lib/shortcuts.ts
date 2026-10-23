@@ -76,3 +76,20 @@ export function actionForEvent(e: KeyboardEvent, overrides: Record<string, strin
   }
   return null
 }
+
+const MAC_KEYS: Record<string, string> = { Enter: '↩', Tab: '⇥', Backspace: '⌫', Delete: '⌦', Escape: '⎋', Space: 'Space', ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→' }
+
+/**
+ * Shortcut as shown to the user. On macOS Ctrl is Command (shortcutFromEvent reads both) and
+ * modifiers use the system symbols in the system order: "Ctrl+Shift+F" → "⇧⌘F". With Tab it stays
+ * Control (⌃): Command+Tab is the system app switcher and never reaches the app.
+ */
+export function displayShortcut(shortcut: string, mac: boolean): string {
+  const s = normalizeShortcut(shortcut)
+  if (!mac || !s) return s
+  const parts = s.split('+')
+  const key = parts.pop() ?? ''
+  const mods = new Set(parts)
+  const control = mods.has('Ctrl') && key === 'Tab'
+  return `${control ? '⌃' : ''}${mods.has('Alt') ? '⌥' : ''}${mods.has('Shift') ? '⇧' : ''}${mods.has('Ctrl') && !control ? '⌘' : ''}${MAC_KEYS[key] ?? key}`
+}

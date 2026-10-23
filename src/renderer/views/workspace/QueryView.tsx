@@ -18,11 +18,19 @@ import { GridContextMenu } from './GridContextMenu'
 import { EditableGrid, tableKey } from '../object/EditableGrid'
 import type { ResultSet } from '../../lib/resultSet'
 import { isSingleDatabase } from '@domain/engineTraits'
+import { useSettings } from '../../stores/settingsStore'
+import { displayShortcut, resolveShortcut } from '../../lib/shortcuts'
 
 export default function QueryView({ tab, active }: { tab: Tab; active: boolean }) {
   const { t } = useTranslation()
   const session = useWorkspace((s) => s.sessions[tab.sessionId])
   const state = useQueries((s) => s.tabs[tab.id])
+  const shortcuts = useSettings((s) => s.settings.shortcuts)
+  // Button tooltips name their shortcuts (none when the user cleared them).
+  const withKeys = (label: string, ...keys: string[]): string => {
+    const shown = keys.map((k) => displayShortcut(k, api.platform === 'darwin')).filter(Boolean)
+    return shown.length ? `${label} (${shown.join(' / ')})` : label
+  }
   const editorRef = useRef<SqlEditorHandle>(null)
   const [side, setSide] = useState<'history' | 'snippets' | null>(null)
   const [view, setView] = useState<number | 'messages'>(0)
@@ -82,10 +90,10 @@ export default function QueryView({ tab, active }: { tab: Tab; active: boolean }
   return (
     <div className="flex h-full flex-col">
       <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border bg-panel px-2">
-        <IconButton label={`${t('menu.runAll')} (Ctrl+Enter / F9)`} onClick={() => void commands.run('all')} disabled={state.running}>
+        <IconButton label={withKeys(t('menu.runAll'), resolveShortcut('run', shortcuts), 'F9')} onClick={() => void commands.run('all')} disabled={state.running}>
           <Play size={15} className="text-success" />
         </IconButton>
-        <IconButton label={`${t('menu.runCurrent')} (Ctrl+Shift+Enter)`} onClick={() => void commands.run('current')} disabled={state.running}>
+        <IconButton label={withKeys(t('menu.runCurrent'), resolveShortcut('runCurrent', shortcuts))} onClick={() => void commands.run('current')} disabled={state.running}>
           <PlayCircle size={15} />
         </IconButton>
         <IconButton label={t('menu.runSelection')} onClick={() => void commands.run('selection')} disabled={state.running}>
@@ -98,7 +106,7 @@ export default function QueryView({ tab, active }: { tab: Tab; active: boolean }
         <IconButton label={t('menu.explain')} onClick={() => void commands.explain()} disabled={state.running}>
           <ListTree size={15} />
         </IconButton>
-        <IconButton label={`${t('menu.format')} (Ctrl+Shift+F)`} onClick={() => commands.format()}>
+        <IconButton label={withKeys(t('menu.format'), resolveShortcut('format', shortcuts))} onClick={() => commands.format()}>
           <AlignLeft size={15} />
         </IconButton>
         {!isSingleDatabase(session.info.engine) && (

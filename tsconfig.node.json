@@ -23,6 +23,7 @@
     "tests/**/*"
   ],
   "exclude": [
-    "tests/unit/shortcuts.test.ts"
+    "tests/unit/shortcuts.test.ts",
+    "tests/unit/nativeMenu.test.ts"
   ]
 }

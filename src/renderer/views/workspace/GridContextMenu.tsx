@@ -9,6 +9,7 @@ import { fullText } from '../../lib/format'
 import { selectedRows } from '../../components/grid/ResultGrid'
 import { useUi } from '../../stores/uiStore'
 import { notify } from '../../stores/toast'
+import { api } from '../../gateways/api'
 
 export interface GridMenuState {
   x: number
@@ -59,7 +60,7 @@ export function GridContextMenu({
     {
       label: t('data.copyCell'),
       icon: <Copy size={14} />,
-      shortcut: 'Ctrl+C',
+      shortcut: api.platform === 'darwin' ? '⌘C' : 'Ctrl+C',
       onSelect: () => {
         if (!menu) return
         const { col, row } = menu

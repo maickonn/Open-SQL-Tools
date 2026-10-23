@@ -29,6 +29,7 @@ import { useSettings, resolveTheme } from '../stores/settingsStore'
 import { commands } from './commands'
 import { resolveShortcut } from '../lib/shortcuts'
 import { api } from '../gateways/api'
+import { useNativeMenu } from '../lib/nativeMenu'
 import logo from '../assets/logo.svg'
 import { isFileBased } from '@domain/engineTraits'
 
@@ -57,8 +58,8 @@ export function TitleBar() {
     { separator: true },
     { label: t('menu.closeTab'), shortcut: sc('closeTab'), disabled: !activeTab, onSelect: () => activeTab && useWorkspace.getState().closeTab(activeTab.id) },
     { label: t('menu.disconnect'), disabled: !sid, onSelect: () => sid && void useWorkspace.getState().closeSession(sid) },
-    { separator: true },
-    { label: t('menu.exit'), onSelect: () => window.close() }
+    // macOS quits from the application menu.
+    ...(isMac ? [] : [{ separator: true }, { label: t('menu.exit'), onSelect: () => window.close() }])
   ]
 
   const queryMenu: MenuItem[] = [
@@ -81,10 +82,10 @@ export function TitleBar() {
     { label: t('menu.importCsv'), disabled: !sid, onSelect: () => sid && ui.openDialog({ kind: 'importCsv', sessionId: sid }) },
     { separator: true },
     { label: t('menu.findText'), icon: <Search size={14} />, shortcut: sc('findText'), disabled: !sid, onSelect: () => sid && ui.openDialog({ kind: 'findText', sessionId: sid }) },
-    { label: t('menu.userManager'), icon: <Users size={14} />, disabled: !sid || isFileBased(activeSession?.info.engine), onSelect: () => sid && ui.openDialog({ kind: 'users', sessionId: sid }) },
-    { separator: true },
-    { label: t('menu.settings'), icon: <Settings size={14} />, shortcut: sc('settings'), onSelect: () => ui.openDialog({ kind: 'settings' }) }
+    { label: t('menu.userManager'), icon: <Users size={14} />, disabled: !sid || isFileBased(activeSession?.info.engine), onSelect: () => sid && ui.openDialog({ kind: 'users', sessionId: sid }) }
   ]
+  const settingsItem: MenuItem = { label: t('menu.settings'), icon: <Settings size={14} />, shortcut: sc('settings'), onSelect: () => ui.openDialog({ kind: 'settings' }) }
+  const aboutItem: MenuItem = { label: t('menu.about'), onSelect: () => ui.openDialog({ kind: 'about' }) }
 
   const viewMenu: MenuItem[] = [
     { label: t('menu.toggleSidebar'), checked: ui.sidebar, shortcut: sc('toggleSidebar'), onSelect: ui.toggleSidebar },
@@ -101,29 +102,35 @@ export function TitleBar() {
     }
   ]
 
-  const helpMenu: MenuItem[] = [
-    { label: t('menu.shortcuts'), onSelect: () => ui.openDialog({ kind: 'shortcuts' }) },
-    { label: t('menu.about'), onSelect: () => ui.openDialog({ kind: 'about' }) }
+  const helpMenu: MenuItem[] = [{ label: t('menu.shortcuts'), onSelect: () => ui.openDialog({ kind: 'shortcuts' }) }]
+
+  const menus = [
+    { label: t('menu.file'), items: fileMenu },
+    { label: t('menu.query'), items: queryMenu },
+    // macOS keeps Settings and About in the application menu.
+    { label: t('menu.tools'), items: isMac ? toolsMenu : [...toolsMenu, { separator: true }, settingsItem] },
+    { label: t('menu.view'), items: viewMenu },
+    { label: t('menu.help'), items: isMac ? helpMenu : [...helpMenu, aboutItem] }
   ]
+  useNativeMenu(
+    { app: [{ ...aboutItem, label: t('menu.aboutApp') }, { separator: true }, { ...settingsItem, label: t('menu.appSettings') }], menus },
+    isMac
+  )
 
   return (
-    <header className={cx(!menuOpen && 'drag', 'flex h-9 shrink-0 items-center gap-1 border-b border-border bg-bg pr-[140px]', isMac ? 'pl-20' : 'pl-2')}>
-      <img src={logo} alt="" className="mr-1 h-5 w-5" draggable={false} />
-      <Menubar
-        className="no-drag"
-        onOpenChange={setMenuOpen}
-        menus={[
-          { label: t('menu.file'), items: fileMenu },
-          { label: t('menu.query'), items: queryMenu },
-          { label: t('menu.tools'), items: toolsMenu },
-          { label: t('menu.view'), items: viewMenu },
-          { label: t('menu.help'), items: helpMenu }
-        ]}
-      />
+    // macOS: the menus live in the system menu bar; the left padding clears the traffic lights and the
+    // right one is only for the window controls Windows draws over the page.
+    <header className={cx(!menuOpen && 'drag', 'flex h-9 shrink-0 items-center gap-1 border-b border-border bg-bg', isMac ? 'pl-20 pr-2' : 'pl-2 pr-[140px]')}>
+      {!isMac && (
+        <>
+          <img src={logo} alt="" className="mr-1 h-5 w-5" draggable={false} />
+          <Menubar className="no-drag" onOpenChange={setMenuOpen} menus={menus} />
+        </>
+      )}
 
       {/* Session, query tab, run and stop live in the menus and the query toolbar; only the pending transaction gets buttons here. */}
       {activeSession && !activeSession.autocommit && (
-        <div className="no-drag ml-3 flex items-center gap-0.5 border-l border-border pl-2">
+        <div className={cx('no-drag flex items-center gap-0.5', !isMac && 'ml-3 border-l border-border pl-2')}>
           <IconButton label={t('menu.commit')} onClick={() => commands.commit()}>
             <Check size={16} />
           </IconButton>

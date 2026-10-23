@@ -7,7 +7,7 @@ import { useChat } from '../../stores/chatStore'
 import { useUi } from '../../stores/uiStore'
 import { Badge, Button, Checkbox, Dialog, Field, Input, Select, cx } from '../../components/ui'
 import { api } from '../../gateways/api'
-import { SHORTCUT_ACTIONS, normalizeShortcut, resolveShortcut, shortcutFromEvent } from '../../lib/shortcuts'
+import { SHORTCUT_ACTIONS, displayShortcut, normalizeShortcut, resolveShortcut, shortcutFromEvent } from '../../lib/shortcuts'
 import { notify } from '../../stores/toast'
 
 type Section = 'general' | 'editor' | 'grid' | 'shortcuts' | 'ai'
@@ -180,7 +180,7 @@ function ShortcutEditor({ overrides, onChange }: { overrides: Record<string, str
                   <input
                     readOnly
                     data-shortcut-capture
-                    value={recording === a.id ? t('keys.press') : effective(a.id)}
+                    value={recording === a.id ? t('keys.press') : displayShortcut(effective(a.id), api.platform === 'darwin')}
                     onFocus={() => setRecording(a.id)}
                     onBlur={() => setRecording(null)}
                     onKeyDown={(e) => {

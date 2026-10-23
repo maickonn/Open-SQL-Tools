@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { ClipboardPaste, Copy, FileSearch, Play, PlayCircle, Redo2, Scissors, TextSelect, TextQuote, Trash2, Undo2, WandSparkles } from 'lucide-react'
 import type { DbEngine } from '@shared/model'
 import { useSettings } from '../../stores/settingsStore'
-import { actionForEvent, resolveShortcut } from '../../lib/shortcuts'
+import { actionForEvent, displayShortcut, resolveShortcut } from '../../lib/shortcuts'
 import { api } from '../../gateways/api'
 import { PointMenu } from '../ui/PointMenu'
 import type { MenuItem } from '../ui'
@@ -218,7 +218,7 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Sq
     }, 0)
   }
   const clipboard = (command: 'cut' | 'copy' | 'paste') => () => afterMenu(() => void api.invoke('edit:command', command))
-  const key = (id: string): string | undefined => resolveShortcut(id, settings.shortcuts) || undefined
+  const key = (id: string): string | undefined => displayShortcut(resolveShortcut(id, settings.shortcuts), api.platform === 'darwin') || undefined
   const mod = api.platform === 'darwin' ? '⌘' : 'Ctrl+'
 
   const items: MenuItem[] = []
