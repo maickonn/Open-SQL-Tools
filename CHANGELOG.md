@@ -4,18 +4,20 @@ User-facing changes per release. Add entries under **Unreleased** as you go; bef
 
 ## [Unreleased]
 
-- The object tree starts with every category collapsed, Tables included
+## [0.2.0]
+
 - Firebird text stored without a charset (CHARACTER SET NONE) shows its accents: each value is decoded as UTF-8 or the legacy code page its column uses (Windows-1252, DOS 850, Windows-1250/1251…), detected from the data, even when one column mixes them
 - Edits, keys and typed SQL filters on those columns use the encoding the data is stored in, so accented text is found and saved correctly
 - Query results from a single table can be edited like the Data tab (cells, inserts, deletes, BLOB import/export) when they include the table's key
-- The title bar no longer has the session, new tab, run and stop buttons (they stay in the menus, shortcuts and query toolbar)
 - Value editor previews images and PDFs stored in BLOBs (also images kept in text BLOBs) and exports any value to a file
 - Import a file into a BLOB from the value editor or the cell's context menu; binary values are sent as statement parameters, so large files fit
+- Data tab loads large objects (BLOB, TEXT, bytea) on demand: tables with heavy BLOB columns open in a fraction of the time
+- Firebird BLOBs are read in 64 KB requests instead of 1 KB, so queries returning BLOBs no longer stall the session
 - Binary values show in the grid as their file type, e.g. (PNG), or (BLOB) when the type is unknown
 - Value editor tabs are Preview, Hex and Text (the JSON view was removed); BLOBs of unknown type open on Hex
 - Firebird text BLOB previews keep the column charset (accents no longer break in databases with charset NONE)
-- Data tab loads large objects (BLOB, TEXT, bytea) on demand: tables with heavy BLOB columns open in a fraction of the time
-- Firebird BLOBs are read in 64 KB requests instead of 1 KB, so queries returning BLOBs no longer stall the session
+- The object tree starts with every category collapsed, Tables included
+- The title bar no longer has the session, new tab, run and stop buttons (they stay in the menus, shortcuts and query toolbar)
 
 ## [0.1.5]
 
