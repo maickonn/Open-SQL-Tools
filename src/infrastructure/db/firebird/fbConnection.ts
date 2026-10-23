@@ -1,5 +1,6 @@
 import Firebird from 'node-firebird'
 import FbWire from 'node-firebird/lib/wire/connection.js'
+import Xsql from 'node-firebird/lib/wire/xsqlvar.js'
 import type { ColumnMetadata, Database, Options, Transaction } from 'node-firebird'
 import type { EventEmitter } from 'node:events'
 import type { ColumnMeta, ConnectionProfile, ConnectionSecrets, ServerInfo, TypeCategory } from '@shared/model'
@@ -129,6 +130,33 @@ FbWire.prototype.fetch = function (this: FbWire, statement: { output?: WireVar[]
   fitOutputMessage(statement.output, rawNoneText((this as unknown as { options?: Options & { legacyText?: boolean } }).options))
   return (wireFetch as (...args: unknown[]) => void).call(this, statement, ...rest)
 } as typeof wireFetch
+
+/**
+ * node-firebird declares text outputs without a charset (blr_text/blr_varying), asking the server to
+ * convert them to the connection charset. Firebird 5 and older pass NONE and OCTETS through, but
+ * Firebird 6 converts them: it measures the bytes as UTF-8 characters (string right truncation) and
+ * rejects bytes that aren't valid UTF-8 (malformed string). Declaring their own charset keeps the
+ * stored bytes on every version.
+ */
+interface BlrWriter {
+  addByte(b: number): void
+  addWord(w: number): void
+}
+type CalcBlr = (this: WireVar & { subType: number }, blr: BlrWriter) => void
+const xsql = Xsql as unknown as { SQLVarText: { prototype: { calcBlr: CalcBlr } }; SQLVarString: { prototype: { calcBlr: CalcBlr } } }
+const BLR_TEXT2 = 15
+const BLR_VARYING2 = 38
+for (const [cls, code] of [[xsql.SQLVarText, BLR_TEXT2], [xsql.SQLVarString, BLR_VARYING2]] as const) {
+  const calcBlr = cls.prototype.calcBlr
+  cls.prototype.calcBlr = function (blr) {
+    const charset = this.subType & 0xff
+    // 0 = NONE, 1 = OCTETS.
+    if (charset > 1) return calcBlr.call(this, blr)
+    blr.addByte(code)
+    blr.addWord(charset)
+    blr.addWord(this.length)
+  }
+}
 
 /** Lock wait for user statements; forms and tree actions pass a shorter one. */
 const DEFAULT_LOCK_TIMEOUT_SEC = 30

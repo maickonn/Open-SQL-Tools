@@ -4,6 +4,8 @@ User-facing changes per release. Add entries under **Unreleased** as you go; bef
 
 ## [Unreleased]
 
+- Firebird 6: CHARACTER SET NONE and OCTETS columns no longer fail with "string right truncation" or "Malformed string" (table structure, DDL, dumps, host information and BLOB files)
+
 ## [0.2.0]
 
 - Firebird text stored without a charset (CHARACTER SET NONE) shows its accents: each value is decoded as UTF-8 or the legacy code page its column uses (Windows-1252, DOS 850, Windows-1250/1251…), detected from the data, even when one column mixes them
