@@ -84,6 +84,13 @@ function Available({ state }: { state: Extract<UpdateState, { phase: 'available'
   const { t } = useTranslation()
   // macOS builds aren't signed, so they can't install updates: the release page has the disk image.
   const manual = api.platform === 'darwin'
+  // The app quits once the system has the release page (up to 3 s): the button spins meanwhile.
+  const [opening, setOpening] = useState(false)
+  const download = (): void => {
+    if (!manual) return void api.invoke('update:download')
+    setOpening(true)
+    void api.invoke('update:openPage')
+  }
   return (
     <>
       <div className="flex items-center gap-3.5 px-7 pt-6">
@@ -97,11 +104,13 @@ function Available({ state }: { state: Extract<UpdateState, { phase: 'available'
           </div>
         </div>
       </div>
-      <div className="mx-7 mt-4 flex-1 overflow-hidden rounded-lg border border-border bg-sunken px-3.5 py-3 text-[12.5px] leading-relaxed">
+      {/* Notes wrap (bullets hang) and the box scrolls when they don't fit; no-drag lets the wheel reach it. */}
+      <div className="no-drag mx-7 mt-4 min-h-0 flex-1 overflow-y-auto rounded-lg border border-border bg-sunken px-3.5 py-3 text-[12.5px] leading-relaxed">
         <div className="mb-1 text-[11px] font-semibold tracking-wider text-muted uppercase">{t('update.whatsNew')}</div>
         {state.notes.map((n, i) => (
-          <div key={i} className="truncate">
-            • {n}
+          <div key={i} className="flex gap-1.5">
+            <span>•</span>
+            <span>{n}</span>
           </div>
         ))}
       </div>
@@ -113,10 +122,10 @@ function Available({ state }: { state: Extract<UpdateState, { phase: 'available'
             {t('update.releaseNotes')}
           </a>
         )}
-        <Button className="no-drag ml-auto" onClick={() => void api.invoke('update:skip')}>
+        <Button className="no-drag ml-auto" disabled={opening} onClick={() => void api.invoke('update:skip')}>
           {t('update.later')}
         </Button>
-        <Button variant="primary" className="no-drag" onClick={() => void api.invoke(manual ? 'update:openPage' : 'update:download')}>
+        <Button variant="primary" className="no-drag" loading={opening} onClick={download}>
           {manual ? t('update.download') : t('update.updateNow')}
         </Button>
       </div>

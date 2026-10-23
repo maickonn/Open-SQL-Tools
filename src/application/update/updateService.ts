@@ -1,15 +1,23 @@
 import type { UpdateState } from '@shared/model'
 import { UpdateCancelled, type UpdateSource } from '@domain/ports/updater'
 
-/** How the startup splash ended: open the app, or quit so the installer runs. */
-export type UpdateOutcome = 'continue' | 'install'
+/**
+ * How the startup splash ended: open the app, quit so the installer runs, or quit so the release
+ * downloaded by hand can replace the app (macOS).
+ */
+export type UpdateOutcome = 'continue' | 'install' | 'quit'
 
 export interface UpdateServiceDeps {
   source: UpdateSource
   currentVersion: string
   emit: (state: UpdateState) => void
-  /** Shows the page of a release, where it can be downloaded by hand (macOS: no in-app install). */
-  openReleasePage?: (version: string) => void
+  /**
+   * Shows the page of a release, where it can be downloaded by hand (macOS: no in-app install).
+   * Resolves once the system has the URL; the app quits after it, whatever the result.
+   */
+  openReleasePage?: (version: string) => Promise<void>
+  /** Longest wait for `openReleasePage` before quitting anyway. */
+  openPageTimeoutMs?: number
   /** A check that takes longer is treated as offline (the app must never hang on startup). */
   checkTimeoutMs?: number
   /** How long the "couldn't check" notice stays before the app opens. */
@@ -43,6 +51,7 @@ export function releaseNoteLines(notes: string): string[] {
 export class UpdateService {
   private current: UpdateState
   private finish: (outcome: UpdateOutcome) => void = () => undefined
+  private openingPage = false
 
   constructor(private readonly deps: UpdateServiceDeps) {
     this.current = { phase: 'checking', current: deps.currentVersion }
@@ -79,12 +88,19 @@ export class UpdateService {
     this.finish('continue')
   }
 
-  /** The update is installed by hand from the release page; the app opens meanwhile. */
-  openReleasePage(): void {
+  /**
+   * The update is installed by hand from the release page: the app always quits, once the system
+   * has the URL (quitting first could drop it), after a failure or after the timeout.
+   */
+  async openReleasePage(): Promise<void> {
     const s = this.current
-    if (s.phase !== 'available' || !this.deps.openReleasePage) return
-    this.deps.openReleasePage(s.version)
-    this.finish('continue')
+    if (s.phase !== 'available' || !this.deps.openReleasePage || this.openingPage) return
+    this.openingPage = true
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const timeout = new Promise<void>((resolve) => (timer = setTimeout(resolve, this.deps.openPageTimeoutMs ?? 3000)))
+    await Promise.race([this.deps.openReleasePage(s.version).catch(() => undefined), timeout])
+    clearTimeout(timer)
+    this.finish('quit')
   }
 
   skip(): void {

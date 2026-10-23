@@ -19,7 +19,7 @@ export class PreviewUpdateSource implements UpdateSource {
     if (this.mode === 'latest') return null
     return {
       version: '99.0.0',
-      notes: '<ul><li>Faster object tree over SSH</li><li>SQLite support</li><li>Context menu in text fields</li><li>Collation picker in the table editor</li></ul>'
+      notes: '<ul><li>Faster object tree over SSH: catalog queries are combined into fewer round trips, so large schemas open in a fraction of the time</li><li>SQLite support</li><li>Context menu in text fields</li><li>Collation picker in the table editor</li></ul>'
     }
   }
 

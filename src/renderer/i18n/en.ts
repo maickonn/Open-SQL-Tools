@@ -199,7 +199,7 @@ export const en = {
     later: 'Later',
     updateNow: 'Update now',
     download: 'Download',
-    downloadHint: 'Opens the release page in your browser',
+    downloadHint: 'Opens the release page and quits',
     updatingTo: 'Updating to v{{version}}',
     downloading: 'Downloading update…',
     downloaded: '{{transferred}} of {{total}} · {{speed}}/s',

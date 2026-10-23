@@ -13,7 +13,7 @@ This application was written with the help of [Claude Code](https://claude.com/c
 Open SQL Tools runs on Windows and macOS. Get the latest version from [GitHub Releases](https://github.com/maickonn/Open-SQL-Tools/releases/latest):
 
 - **Windows** (x64): `Open-SQL-Tools-Setup-<version>.exe`. The app checks for new versions on startup, downloads them and installs them on restart.
-- **macOS** (Apple Silicon): `Open-SQL-Tools-<version>-arm64.dmg`. Open it and drag **Open SQL Tools** to Applications. The app isn't signed with an Apple Developer ID, so on first launch macOS refuses to open it: go to System Settings → Privacy & Security and click **Open Anyway** (or run `xattr -dr com.apple.quarantine "/Applications/Open SQL Tools.app"`). It checks for new versions on startup too, and **Download** opens the release page to get the new disk image.
+- **macOS** (Apple Silicon): `Open-SQL-Tools-<version>-arm64.dmg`. Open it and drag **Open SQL Tools** to Applications. The app isn't signed with an Apple Developer ID, so on first launch macOS refuses to open it: go to System Settings → Privacy & Security and click **Open Anyway** (or run `xattr -dr com.apple.quarantine "/Applications/Open SQL Tools.app"`). It checks for new versions on startup too: **Download** opens the release page to get the new disk image and closes the app so it can be replaced.
 
 ## Features
 
@@ -118,7 +118,7 @@ git push --follow-tags
 
 [`release.yml`](.github/workflows/release.yml) checks that the tag matches `package.json`, creates a draft GitHub release with that version's `CHANGELOG.md` section as its notes (it fails if the section is missing) and uploads the Windows installer and the Apple Silicon disk image with their update feeds (`latest.yml`, `latest-mac.yml`). Test them, then publish the draft.
 
-Installed builds check the published releases on startup (a small splash with the first changelog items) and open normally when offline or up to date; the check can be turned off in Preferences. On Windows the splash downloads the update and restarts to install it. The macOS build isn't signed with a Developer ID, so Squirrel.Mac can't install updates: there **Download** opens the release page (see [Download](#download)).
+Installed builds check the published releases on startup (a small splash with the first changelog items) and open normally when offline or up to date; the check can be turned off in Preferences. On Windows the splash downloads the update and restarts to install it. The macOS build isn't signed with a Developer ID, so Squirrel.Mac can't install updates: there **Download** opens the release page and quits (see [Download](#download)).
 
 ## License
 

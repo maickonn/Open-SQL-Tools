@@ -36,9 +36,9 @@ class FakeSource implements UpdateSource {
   }
 }
 
-function setup(source = new FakeSource(), openReleasePage?: (version: string) => void) {
+function setup(source = new FakeSource(), openReleasePage?: (version: string) => Promise<void>) {
   const states: UpdateState[] = []
-  const service = new UpdateService({ source, currentVersion: '0.1.0', emit: (s) => states.push(s), checkTimeoutMs: 50, failureNoticeMs: 10, openReleasePage })
+  const service = new UpdateService({ source, currentVersion: '0.1.0', emit: (s) => states.push(s), checkTimeoutMs: 50, failureNoticeMs: 10, openReleasePage, openPageTimeoutMs: 30 })
   return { source, service, states, phases: () => states.map((s) => s.phase) }
 }
 
@@ -130,23 +130,41 @@ describe('releaseNoteLines', () => {
     expect(releaseNoteLines('')).toEqual([])
   })
 
-  it('opens the release page and continues when updates are installed by hand (macOS)', async () => {
+  it('opens the release page and quits when updates are installed by hand (macOS)', async () => {
     const opened: string[] = []
-    const { source, service, phases } = setup(new FakeSource(), (v) => opened.push(v))
+    let handedOver = false
+    const { source, service, phases } = setup(new FakeSource(), async (v) => {
+      opened.push(v)
+      await tick()
+      handedOver = true
+    })
     const done = service.run()
     await tick()
-    service.openReleasePage()
-    await expect(done).resolves.toBe('continue')
+    void service.openReleasePage()
+    void service.openReleasePage()
+    await expect(done).resolves.toBe('quit')
+    // Once, and quits only after the system has the URL.
+    expect(handedOver).toBe(true)
     expect(opened).toEqual(['0.2.0'])
     expect(phases()).toEqual(['checking', 'available'])
     expect(source.installed).toBe(false)
+  })
+
+  it('quits when the release page fails to open or takes too long', async () => {
+    for (const open of [() => Promise.reject(new Error('no browser')), () => new Promise<void>(() => undefined)]) {
+      const { service } = setup(new FakeSource(), open)
+      const done = service.run()
+      await tick()
+      void service.openReleasePage()
+      await expect(done).resolves.toBe('quit')
+    }
   })
 
   it('ignores the release page without a way to open it', async () => {
     const { service, phases } = setup()
     void service.run()
     await tick()
-    service.openReleasePage()
+    void service.openReleasePage()
     await tick()
     expect(phases()).toEqual(['checking', 'available'])
   })

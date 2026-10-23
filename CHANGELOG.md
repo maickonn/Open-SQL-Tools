@@ -4,6 +4,9 @@ User-facing changes per release. Add entries under **Unreleased** as you go; bef
 
 ## [Unreleased]
 
+- Update window: the release notes wrap instead of being cut with "…" (and scroll when long)
+- macOS: **Download** in the update window opens the release page and closes the app, so the new version can replace it
+
 ## [0.3.1]
 
 - Installation instructions for Windows and macOS, including how to open the unsigned macOS app the first time (System Settings → Privacy & Security → Open Anyway)
