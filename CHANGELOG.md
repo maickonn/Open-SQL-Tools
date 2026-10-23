@@ -4,6 +4,8 @@ User-facing changes per release. Add entries under **Unreleased** as you go; bef
 
 ## [Unreleased]
 
+## [0.2.1]
+
 - Firebird 6: CHARACTER SET NONE and OCTETS columns no longer fail with "string right truncation" or "Malformed string" (table structure, DDL, dumps, host information and BLOB files)
 
 ## [0.2.0]
