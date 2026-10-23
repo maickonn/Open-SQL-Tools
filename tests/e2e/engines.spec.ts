@@ -6,6 +6,7 @@ import { test, expect, _electron as electron, type ElectronApplication, type Pag
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { expandTables } from './tree'
 
 interface E2ETarget {
   id: string
@@ -123,6 +124,7 @@ for (const target of targets) {
 
       // Open the table data from the tree.
       for (const node of target.path) await page.getByRole('treeitem', { name: new RegExp(`^${node}$`) }).dblclick()
+      await expandTables(page)
       const item = page.getByRole('treeitem', { name: new RegExp(`^${target.table}( |$)`) })
       await expect(item).toBeVisible({ timeout: 15_000 })
       await item.dblclick()
@@ -315,6 +317,7 @@ for (const target of targets.filter((t) => t.engine === 'SQLite')) {
 
       const visible = <T extends ReturnType<typeof page.locator>>(l: T) => l.filter({ visible: true })
       const item = (n: string) => page.getByRole('treeitem', { name: new RegExp(`^${n}( |$)`) })
+      await expandTables(page)
       await expect(item(target.table)).toBeVisible({ timeout: 15_000 })
       await item(target.table).click({ button: 'right' })
       await page.getByRole('menuitem', { name: /^New trigger/ }).click()

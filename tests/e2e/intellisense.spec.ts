@@ -3,6 +3,7 @@ import { test, expect, _electron as electron, type Page } from '@playwright/test
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { expandTables } from './tree'
 
 async function replaceText(page: Page, text: string): Promise<void> {
   await page.locator('.monaco-editor').first().click()
@@ -25,6 +26,7 @@ test('suggests columns, shows types, signatures and unknown tables', async () =>
   await page.waitForSelector('.monaco-editor')
   await replaceText(page, 'CREATE TABLE e2e_items (id INTEGER PRIMARY KEY, title TEXT NOT NULL, price NUMERIC(10,2));')
   await page.keyboard.press('Control+Enter')
+  await expandTables(page)
   await expect(page.getByRole('treeitem', { name: /^e2e_items( |$)/ })).toBeVisible({ timeout: 15_000 })
 
   // alias. → the aliased table's columns.

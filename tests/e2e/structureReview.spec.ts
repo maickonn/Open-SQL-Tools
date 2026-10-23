@@ -3,6 +3,7 @@ import { test, expect, _electron as electron } from '@playwright/test'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { expandTables } from './tree'
 
 test('structure changes go through the review dialog', async () => {
   const app = await electron.launch({ args: ['.'], env: { ...process.env, OST_USER_DATA: mkdtempSync(join(tmpdir(), 'ost-sr-')) } })
@@ -19,6 +20,7 @@ test('structure changes go through the review dialog', async () => {
   await page.locator('.monaco-editor').first().click()
   await page.keyboard.type("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT); INSERT INTO t (name) VALUES ('a');")
   await page.keyboard.press('Control+Enter')
+  await expandTables(page)
   await page.getByRole('treeitem', { name: /^t( |$)/ }).click()
   await page.getByRole('button', { name: /^Structure$/ }).click()
   await expect(page.getByRole('button', { name: /SQL preview/ })).toHaveCount(0)
@@ -82,6 +84,7 @@ test('creates a SQLite table with an auto increment key from the editor', async 
   await expect(review.getByText('Successful').first()).toBeVisible({ timeout: 15_000 })
   await page.screenshot({ path: join(process.env.OST_SHOTS ?? tmpdir(), 'structure-create.png') })
   await review.getByRole('button', { name: 'Close' }).last().click()
+  await expandTables(page)
   await expect(page.getByRole('treeitem', { name: /^Tabela_de_testes( |$)/ })).toBeVisible({ timeout: 15_000 })
   await app.close()
 })

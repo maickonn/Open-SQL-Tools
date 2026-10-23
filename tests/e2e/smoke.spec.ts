@@ -2,6 +2,7 @@ import { test, expect, _electron as electron, type ElectronApplication, type Pag
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { expandTables } from './tree'
 
 let app: ElectronApplication
 let page: Page
@@ -71,6 +72,7 @@ test('edits table data through the grid and switches theme', async () => {
 
   // Expand testdb and open the table data.
   await page.getByRole('treeitem', { name: /^testdb$/ }).dblclick()
+  await expandTables(page)
   const item = page.getByRole('treeitem', { name: /^e2e_items( |$)/ })
   await expect(item).toBeVisible({ timeout: 10_000 })
   await item.dblclick()

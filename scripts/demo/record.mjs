@@ -132,6 +132,8 @@ await debugShot('connected')
 // 2. Object tree and data grid.
 scene('2')
 await caption('Load <b>200,000 rows</b> in a blink')
+// Categories start collapsed: open Tables first.
+await click(page.getByRole('treeitem', { name: /^Tables\s*\(\d+\)/ }).first(), { clickCount: 2 })
 const orders = page.getByRole('treeitem', { name: /^orders( |$)/ })
 await orders.waitFor({ timeout: 15_000 })
 await pause(400)

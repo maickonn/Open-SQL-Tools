@@ -3,6 +3,7 @@ import { test, expect, _electron as electron, type Page } from '@playwright/test
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { expandTables } from './tree'
 
 const PNG = '89504e470d0a1a0a0000000d49484452000000030000000208060000009d74661a0000001449444154789c63fccfc0f09f010a98600c100d002f1f0202b42aa96a0000000049454e44ae426082'
 const PDF = Buffer.from(
@@ -45,6 +46,7 @@ test('previews images and PDFs in BLOBs and exports them', async () => {
   await page.locator('.monaco-editor').first().click()
   await page.keyboard.insertText(`CREATE TABLE files (id INTEGER PRIMARY KEY, content BLOB); INSERT INTO files VALUES (1, X'${PNG}'), (2, X'${PDF}'), (3, NULL), (4, X'0102030405');`)
   await page.keyboard.press('Control+Enter')
+  await expandTables(page)
   const table = page.getByRole('treeitem', { name: /^files( |$)/ })
   await expect(table).toBeVisible({ timeout: 15_000 })
   await table.dblclick()

@@ -3,6 +3,7 @@ import { test, expect, _electron as electron, type Page } from '@playwright/test
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { expandTables } from './tree'
 
 async function run(page: Page, sql: string): Promise<void> {
   await page.locator('.monaco-editor').first().click()
@@ -25,6 +26,7 @@ test('edits a query result that comes from one table', async () => {
   await page.keyboard.press('Control+T')
   await page.waitForSelector('.monaco-editor')
   await run(page, "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT); INSERT INTO items VALUES (1, 'one'), (2, 'two');")
+  await expandTables(page)
   await expect(page.getByRole('treeitem', { name: /^items( |$)/ })).toBeVisible({ timeout: 15_000 })
 
   // A computed column stays read-only; the table's columns can be edited and posted.

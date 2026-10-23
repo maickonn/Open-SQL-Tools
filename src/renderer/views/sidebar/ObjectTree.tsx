@@ -132,8 +132,8 @@ export function ObjectTree() {
       for (const kind of kinds) {
         const list = byKind.get(kind)!.sort((a, b) => a.name.localeCompare(b.name))
         const key = `${base}|group|${kind}`
-        // Tables start expanded; a filter opens every category that has matches.
-        const open = f ? true : (expanded[key] ?? kind === 'table')
+        // Categories start collapsed; a filter opens every category that has matches.
+        const open = f ? true : !!expanded[key]
         out.push({ type: 'group', key, depth, session, database, schema, kind, count: list.length, open })
         if (!open) continue
         for (const o of list) out.push({ type: 'object', key: `${base}|${o.kind}|${o.name}|${o.args ?? ''}`, depth: depth + 1, session, database, schema, object: o })
