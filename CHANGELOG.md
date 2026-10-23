@@ -4,6 +4,8 @@ User-facing changes per release. Add entries under **Unreleased** as you go; bef
 
 ## [Unreleased]
 
+## [0.3.2]
+
 - Update window: the release notes wrap instead of being cut with "…" (and scroll when long)
 - macOS: **Download** in the update window opens the release page and closes the app, so the new version can replace it
 
