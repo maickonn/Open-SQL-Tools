@@ -54,14 +54,14 @@ export async function writeRows(
   ctx: BackupContext,
   ref: DbObjectRef,
   structure: TableStructure,
-  o: Pick<DataWriterOptions, 'maxStatementBytes' | 'maxLiteralChars' | 'executeBlock'> & { rawText?: boolean; insertRef?: DbObjectRef }
+  o: Pick<DataWriterOptions, 'maxStatementBytes' | 'maxLiteralChars' | 'executeBlock'> & { rawText?: boolean; insertRef?: DbObjectRef; readAs?: Record<string, string> }
 ): Promise<number> {
   const cols = dataColumns(structure)
   if (!cols.columns.length) return 0
   const mode = ctx.options.dataMode ?? 'insert'
   if (mode === 'delete_insert') await ctx.out.statement(`DELETE FROM ${ctx.dialect.qualify(o.insertRef ?? ref)}`)
   ctx.progress('data', ref.name, 0)
-  const r = await writeTableData(ctx.aux.connection, ctx.out, { ref, insertRef: o.insertRef, ...cols }, {
+  const r = await writeTableData(ctx.aux.connection, ctx.out, { ref, insertRef: o.insertRef, readAs: o.readAs, ...cols }, {
     engine: ctx.engine,
     dialect: ctx.dialect,
     verb: mode === 'replace' ? 'REPLACE' : mode === 'insert_ignore' ? 'INSERT IGNORE' : 'INSERT',

@@ -13,6 +13,8 @@ export interface TableDataSpec {
   keyColumns: string[]
   /** PostgreSQL: identity columns GENERATED ALWAYS need OVERRIDING SYSTEM VALUE. */
   overridingSystemValue?: boolean
+  /** Expressions read instead of the plain columns, by column name (Firebird: wide rows read as OCTETS). */
+  readAs?: Record<string, string>
 }
 
 export interface DataWriterOptions {
@@ -68,6 +70,7 @@ export async function writeTableData(conn: DbConnection, out: ScriptWriter, spec
   const table = d.qualify(spec.insertRef ?? spec.ref)
   const cols = spec.columns.map((c) => d.quoteIdent(c))
   const colList = cols.join(', ')
+  const readList = spec.readAs ? spec.columns.map((c, i) => spec.readAs![c] ?? cols[i]).join(', ') : colList
   const head = `${o.verb} INTO ${table} (${colList})${spec.overridingSystemValue ? ' OVERRIDING SYSTEM VALUE' : ''} VALUES`
   const warnings: string[] = []
   const fb = o.engine === 'firebird'
@@ -180,7 +183,7 @@ export async function writeTableData(conn: DbConnection, out: ScriptWriter, spec
   if (fb && o.executeBlock) await out.beginBlocks()
   try {
     await conn.run(
-      `SELECT ${colList} FROM ${source}`,
+      `SELECT ${readList} FROM ${source}`,
       {
         start: () => undefined,
         rows: (columns, n) => {

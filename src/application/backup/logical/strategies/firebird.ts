@@ -110,7 +110,8 @@ export class FirebirdStrategy implements LogicalStrategy {
         maxStatementBytes: big ? LARGE_STATEMENT : SMALL_STATEMENT,
         maxLiteralChars: MAX_LITERAL,
         executeBlock: true,
-        rawText: true
+        rawText: true,
+        readAs: wideRowReads(structures.get(t.name)!, d)
       })
     }
 
@@ -230,4 +231,26 @@ export function placeholder(ddl: string, procedure: boolean): string | null {
   const head = m[1]
   if (procedure) return `${head}\nAS\nBEGIN\n  ${/\bRETURNS\s*\(/i.test(head) ? 'SUSPEND' : 'EXIT'};\nEND`
   return `${head}\nAS\nBEGIN\n  RETURN NULL;\nEND`
+}
+
+/** Charsets of more than one byte per character: the server sends them as they are stored. */
+const MULTIBYTE = new Set(['UTF8', 'UNICODE_FSS', 'SJIS_0208', 'EUCJ_0208', 'BIG_5', 'GB_2312', 'KSC_5601', 'GBK', 'CP943C', 'GB18030'])
+/** A row travels as one message of at most 64 KB (less some room for null flags and alignment). */
+const MESSAGE_LIMIT = 60_000
+
+/**
+ * On a UTF8 connection the server converts text of single-byte charsets (WIN1252, ISO8859_1…) and
+ * reserves 4 bytes per character for it, so a table whose row fits on disk can exceed the 64 KB
+ * message: Firebird rejects the SELECT ("block size exceeds implementation restriction"). Such tables
+ * read those columns as OCTETS, their stored bytes, written back as hex literals into the same charset.
+ */
+export function wideRowReads(s: TableStructure, d: { quoteIdent(name: string): string }): Record<string, string> | undefined {
+  const text = (c: TableStructure['columns'][number]): boolean => (c.dataType === 'CHAR' || c.dataType === 'VARCHAR') && !!c.length
+  const singleByte = (c: TableStructure['columns'][number]): boolean => text(c) && !!c.charset && c.charset !== 'NONE' && c.charset !== 'OCTETS' && !MULTIBYTE.has(c.charset)
+  const columns = s.columns.filter((c) => !c.generated)
+  const size = columns.reduce((sum, c) => sum + (text(c) ? c.length! * (c.charset === 'NONE' || c.charset === 'OCTETS' ? 1 : 4) + 2 : 16), 0)
+  if (size <= MESSAGE_LIMIT) return undefined
+  const reads: Record<string, string> = {}
+  for (const c of columns) if (singleByte(c)) reads[c.name] = `CAST(${d.quoteIdent(c.name)} AS VARCHAR(${c.length}) CHARACTER SET OCTETS)`
+  return Object.keys(reads).length ? reads : undefined
 }
