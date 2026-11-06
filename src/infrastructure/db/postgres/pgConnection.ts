@@ -334,6 +334,13 @@ export class PgConnection implements DbConnection {
     this.inTx = false
   }
 
+  /** Read-only transaction over one snapshot (ended by commit / rollback). */
+  async beginSnapshot(): Promise<void> {
+    if (this.inTx) await this.commit()
+    await this.requireClient().query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY')
+    this.inTx = true
+  }
+
   inTransaction(): boolean {
     return this.inTx
   }

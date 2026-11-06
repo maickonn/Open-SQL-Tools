@@ -4,6 +4,7 @@ import { SessionService } from '@application/session/sessionService'
 import { openDatabase } from '@infrastructure/db/openDatabase'
 import { openSshTunnel } from '@infrastructure/ssh/sshTunnel'
 import { createFileWriter, readTextFile } from '@infrastructure/fs/fileWriter'
+import { backupFiles } from '@infrastructure/fs/backupFiles'
 import { availableTargets, profileFor } from './targets'
 
 // Firebird catalogs through an SSH tunnel: npm run test:db -- sshd firebird25 firebird5
@@ -32,7 +33,7 @@ describe.skipIf(!targets.length)('Firebird over SSH', () => {
       openDatabase,
       openTunnel: async (profile, secrets) => (profile.ssh.enabled ? openSshTunnel(profile.ssh, secrets, profile.host, profile.port) : null),
       createWriter: createFileWriter,
-      readText: readTextFile,
+      readText: readTextFile, files: backupFiles,
       emit: () => undefined
     })
     services.push(svc)

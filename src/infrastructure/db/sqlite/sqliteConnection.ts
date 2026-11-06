@@ -11,7 +11,7 @@ import type { ProcessColumn, ProcessRequest, ProcessResponse } from './sqlitePro
 const DEFAULT_LOCK_TIMEOUT_SEC = 30
 
 /** The bundle ships sqliteProcess.js next to connectionWorker.js; tests run the .mts source. */
-function processFile(): string {
+export function sqliteProcessFile(): string {
   const built = join(__dirname, 'sqliteProcess.js')
   return existsSync(built) ? built : join(__dirname, 'sqliteProcess.mts')
 }
@@ -81,7 +81,7 @@ export class SqliteConnection implements DbConnection {
   }
 
   private spawn(): ChildProcess {
-    const worker = fork(processFile(), [], {
+    const worker = fork(sqliteProcessFile(), [], {
       // Electron's executable runs the script as Node; "advanced" keeps Uint8Array and BigInt values.
       env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
       execArgv: [],
@@ -295,6 +295,13 @@ export class SqliteConnection implements DbConnection {
     const pragma = this.pendingForeignKeys
     this.pendingForeignKeys = null
     if (pragma) await this.exec(pragma)
+  }
+
+  /** Deferred read transaction: a snapshot in WAL mode, a shared lock otherwise. */
+  async beginSnapshot(): Promise<void> {
+    if (this.tx) await this.commit()
+    await this.exec('BEGIN')
+    this.tx = true
   }
 
   inTransaction(): boolean {

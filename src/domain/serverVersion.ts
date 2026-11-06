@@ -69,7 +69,7 @@ export function capabilitiesFor(engine: DbEngine, version: number): Capability[]
     case 'firebird':
       add(true, 'sequences', 'domains', 'exceptions', 'checkConstraints', 'killQuery', 'returning')
       add(version >= v(2, 1), 'cte', 'generatedColumns')
-      add(version >= v(3, 0), 'packages', 'identityColumns', 'booleanType', 'windowFunctions', 'roles')
+      add(version >= v(3, 0), 'packages', 'identityColumns', 'booleanType', 'windowFunctions', 'roles', 'largeStatements')
       add(version >= v(4, 0), 'int128', 'decfloat', 'timeZones')
       add(version >= v(5, 0), 'partialIndexes', 'skipLocked')
       add(version >= v(6, 0), 'schemas')

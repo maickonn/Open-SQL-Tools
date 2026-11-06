@@ -1,5 +1,5 @@
 import type { ConnectionProfile, ConnectionSecrets, MaterializedResult, ServerInfo } from '@shared/model'
-import type { DbConnection, OpenDatabase, SchemaInspector, SqlDialect } from '@domain/ports/database'
+import type { AuxiliaryConnection, DbConnection, OpenDatabase, SchemaInspector, SqlDialect } from '@domain/ports/database'
 import { Mutex } from '@application/util/mutex'
 import { MaterializingSink } from './common/columnar'
 import type { QueryFn } from './common/queryHelpers'
@@ -24,6 +24,20 @@ export async function runMaterialized(conn: DbConnection, sql: string, maxRows =
   const started = performance.now()
   const outcome = await conn.run(sql, sink, { maxRows, chunkSize: 10_000, readOnly, direct })
   return sink.toResult(Math.round(performance.now() - started), outcome.affectedRows)
+}
+
+function createInspector(info: ServerInfo, dialect: SqlDialect, query: QueryFn, useDatabase: (database?: string) => Promise<void>): SchemaInspector {
+  switch (info.engine) {
+    case 'mysql':
+    case 'mariadb':
+      return new MySqlInspector(query, dialect as MySqlDialect, info.engine, info.version)
+    case 'postgres':
+      return new PgInspector(query, dialect as PgDialect, useDatabase)
+    case 'firebird':
+      return new FbInspector(query, dialect as FbDialect, info.version)
+    case 'sqlite':
+      return new SqliteInspector(query, dialect as SqliteDialect)
+  }
 }
 
 function createConnection(profile: ConnectionProfile, secrets: ConnectionSecrets, endpoint: Endpoint, profiles: EncodingProfiles): DbConnection {
@@ -68,14 +82,12 @@ export async function openDatabase(profile: ConnectionProfile, secrets: Connecti
   const directMeta = (sql: string): Promise<MaterializedResult> => runMaterialized(meta, sql, 10, false, true)
 
   let dialect: SqlDialect
-  let inspector: SchemaInspector
   // info.engine comes from the handshake, so a "MySQL" profile pointing at MariaDB still gets the MariaDB dialect.
   switch (info.engine) {
     case 'mysql':
     case 'mariadb': {
       const conn = primary as MySqlConnection
       dialect = info.engine === 'mariadb' ? new MariaDbDialect(info.version, conn.noBackslashEscapes) : new MySqlDialect(info.version, conn.noBackslashEscapes)
-      inspector = new MySqlInspector(metaQuery, dialect as MySqlDialect, info.engine, info.version)
       conn.setKiller(async () => {
         await directMeta(`KILL QUERY ${conn.connectionId}`)
       })
@@ -87,21 +99,44 @@ export async function openDatabase(profile: ConnectionProfile, secrets: Connecti
       conn.setKiller(async (pid) => {
         await directMeta(`SELECT pg_cancel_backend(${pid})`)
       })
-      inspector = new PgInspector(metaQuery, dialect as PgDialect, (database) =>
-        database ? metaLock.run(() => meta.useDatabase(database)) : Promise.resolve()
-      )
       break
     }
     case 'firebird':
       dialect = new FbDialect(info.version)
-      inspector = new FbInspector(metaQuery, dialect as FbDialect, info.version)
       break
     case 'sqlite':
       dialect = new SqliteDialect(info.version)
-      inspector = new SqliteInspector(metaQuery, dialect as SqliteDialect)
       break
     default:
       throw new Error(`Unsupported engine: ${info.engine}`)
+  }
+  const inspector = createInspector(info, dialect, metaQuery, (database) => (database ? metaLock.run(() => meta.useDatabase(database)) : Promise.resolve()))
+
+  const openAuxiliary = async (): Promise<AuxiliaryConnection> => {
+    const connection = createConnection(profile, secrets, endpoint, textProfiles)
+    try {
+      await connection.connect()
+    } catch (err) {
+      await connection.close().catch(() => undefined)
+      throw err
+    }
+    if (connection instanceof MySqlConnection) {
+      connection.setKiller(async () => {
+        await directMeta(`KILL QUERY ${connection.connectionId}`)
+      })
+    } else if (connection instanceof PgConnection) {
+      connection.setKiller(async (pid) => {
+        await directMeta(`SELECT pg_cancel_backend(${pid})`)
+      })
+    }
+    const lock = new Mutex()
+    const query: QueryFn = (sql, maxRows) => lock.run(() => runMaterialized(connection, sql, maxRows, false, true))
+    return {
+      connection,
+      inspector: createInspector(info, dialect, query, (database) => (database ? lock.run(() => connection.useDatabase(database)) : Promise.resolve())),
+      query,
+      close: () => connection.close()
+    }
   }
 
   return {
@@ -113,6 +148,7 @@ export async function openDatabase(profile: ConnectionProfile, secrets: Connecti
     metaLock,
     metaQuery,
     textProfiles: info.engine === 'firebird' ? textProfiles : undefined,
+    openAuxiliary,
     close: async () => {
       await Promise.allSettled([primary.close(), meta.close()])
     }

@@ -3,6 +3,7 @@ import type { DbEngine } from '@shared/model'
 import { SessionService } from '@application/session/sessionService'
 import { openDatabase } from '@infrastructure/db/openDatabase'
 import { createFileWriter, readTextFile } from '@infrastructure/fs/fileWriter'
+import { backupFiles } from '@infrastructure/fs/backupFiles'
 import { availableTargets, profileFor, type Target } from './targets'
 
 // Batch catalog used by the editor's IntelliSense: one query per schema, same data as getTableStructure.
@@ -48,7 +49,7 @@ function fixture(engine: DbEngine): { setup: string[]; cleanup: string[]; routin
 
 describe.skipIf(!targets.length)('batch catalog', () => {
   describe.each(targets.map((t) => [t.id, t] as [string, Target]))('%s', (_id, target) => {
-    const svc = new SessionService({ openDatabase, openTunnel: async () => null, createWriter: createFileWriter, readText: readTextFile, emit: () => undefined })
+    const svc = new SessionService({ openDatabase, openTunnel: async () => null, createWriter: createFileWriter, readText: readTextFile, files: backupFiles, emit: () => undefined })
     const engine = target.engine
     const fx = fixture(engine)
     const database = isMy(engine) ? 'testdb' : undefined

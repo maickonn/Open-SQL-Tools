@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CheckCircle2, KeyRound } from 'lucide-react'
-import type { AiProviderId, AppSettings } from '@shared/model'
+import type { AiProviderId, AppSettings, BackupToolName, DbEngine } from '@shared/model'
 import { useSettings } from '../../stores/settingsStore'
 import { useChat } from '../../stores/chatStore'
 import { useUi } from '../../stores/uiStore'
@@ -10,7 +10,7 @@ import { api } from '../../gateways/api'
 import { SHORTCUT_ACTIONS, displayShortcut, normalizeShortcut, resolveShortcut, shortcutFromEvent } from '../../lib/shortcuts'
 import { notify } from '../../stores/toast'
 
-type Section = 'general' | 'editor' | 'grid' | 'shortcuts' | 'ai'
+type Section = 'general' | 'editor' | 'grid' | 'shortcuts' | 'ai' | 'tools'
 
 export function SettingsDialog({ section: initial }: { section?: string }) {
   const { t } = useTranslation()
@@ -25,7 +25,8 @@ export function SettingsDialog({ section: initial }: { section?: string }) {
     { id: 'editor', label: t('settings.editor') },
     { id: 'grid', label: t('settings.grid') },
     { id: 'shortcuts', label: t('keys.title') },
-    { id: 'ai', label: t('settings.ai') }
+    { id: 'ai', label: t('settings.ai') },
+    { id: 'tools', label: t('settings.tools') }
   ]
 
   return (
@@ -83,6 +84,7 @@ export function SettingsDialog({ section: initial }: { section?: string }) {
               </Field>
             </div>
           )}
+          {section === 'tools' && <BackupToolsSettings value={settings.backupTools} onChange={(backupTools) => set({ backupTools })} />}
           {section === 'shortcuts' && <ShortcutEditor overrides={settings.shortcuts} onChange={(shortcuts) => set({ shortcuts })} />}
           {section === 'ai' && (
             <div className="grid max-w-xl gap-5">
@@ -219,3 +221,66 @@ function ShortcutEditor({ overrides, onChange }: { overrides: Record<string, str
     </div>
   )
 }
+
+const TOOL_ENGINES: { engine: DbEngine; tools: BackupToolName[] }[] = [
+  { engine: 'mysql', tools: ['mysqldump', 'mysql'] },
+  { engine: 'mariadb', tools: ['mariadb-dump', 'mariadb'] },
+  { engine: 'postgres', tools: ['pg_dump', 'pg_restore', 'psql'] },
+  { engine: 'firebird', tools: ['gbak'] }
+]
+
+/** Paths of the external backup clients; empty fields use what is found on PATH and in install folders. */
+function BackupToolsSettings({ value, onChange }: { value: AppSettings['backupTools']; onChange(v: AppSettings['backupTools']): void }) {
+  const { t } = useTranslation()
+  const [found, setFound] = useState<Partial<Record<BackupToolName, { path: string; version: string }>> | null>(null)
+  const [dirs, setDirs] = useState(value.searchDirs.join('; '))
+  const detect = async (): Promise<void> => {
+    setFound(null)
+    const lists = await Promise.all(TOOL_ENGINES.map((e) => api.invoke('tools:detect', e.engine, value).catch(() => [])))
+    setFound(Object.fromEntries(lists.flat().map((x) => [x.tool, { path: x.path, version: x.version }])))
+  }
+  useEffect(() => {
+    void detect()
+  }, [value])
+  const setPath = (tool: BackupToolName, path: string): void => {
+    const paths = { ...value.paths }
+    if (path.trim()) paths[tool] = path.trim()
+    else delete paths[tool]
+    onChange({ ...value, paths })
+  }
+  return (
+    <div className="grid gap-4">
+      <p className="text-xs text-muted">{t('settings.toolsHint')}</p>
+      {TOOL_ENGINES.flatMap((e) => e.tools).map((tool) => {
+        const f = found?.[tool]
+        return (
+          <Field key={tool} label={tool} hint={found === null ? t('settings.toolsDetecting') : f ? t('settings.toolFound', { version: f.version || '?', path: f.path }) : t('settings.toolNotFound')}>
+            <div className="flex gap-1.5">
+              <Input defaultValue={value.paths[tool] ?? ''} placeholder={f?.path ?? ''} onBlur={(e) => setPath(tool, e.target.value)} className="font-mono text-xs" />
+              <Button
+                onClick={async () => {
+                  const p = await api.invoke('dialog:openFile', { filters: api.platform === 'win32' ? [{ name: tool, extensions: ['exe'] }] : [] })
+                  if (p) setPath(tool, p)
+                }}
+              >
+                {t('common.browse')}
+              </Button>
+            </div>
+          </Field>
+        )
+      })}
+      <Field label={t('settings.toolsSearchDirs')} hint={t('settings.toolsSearchDirsHint')}>
+        <Input
+          value={dirs}
+          onChange={(e) => setDirs(e.target.value)}
+          onBlur={() => onChange({ ...value, searchDirs: dirs.split(';').map((d) => d.trim()).filter(Boolean) })}
+          className="font-mono text-xs"
+        />
+      </Field>
+      <div>
+        <Button onClick={() => void detect()}>{t('backup.detectTools')}</Button>
+      </div>
+    </div>
+  )
+}
+

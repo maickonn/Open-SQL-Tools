@@ -28,6 +28,9 @@ const ImportSqlDialog = lazy(() => tools().then((m) => ({ default: m.ImportSqlDi
 const ImportCsvDialog = lazy(() => tools().then((m) => ({ default: m.ImportCsvDialog })))
 const FindTextDialog = lazy(() => tools().then((m) => ({ default: m.FindTextDialog })))
 const UsersDialog = lazy(() => tools().then((m) => ({ default: m.UsersDialog })))
+const backupDialogs = () => import('./views/dialogs/BackupDialogs')
+const BackupDialog = lazy(() => backupDialogs().then((m) => ({ default: m.BackupDialog })))
+const RestoreDialog = lazy(() => backupDialogs().then((m) => ({ default: m.RestoreDialog })))
 const tableDialogs = () => import('./views/dialogs/TableDialogs')
 const BulkEditDialog = lazy(() => tableDialogs().then((m) => ({ default: m.BulkEditDialog })))
 const CopyTableDialog = lazy(() => tableDialogs().then((m) => ({ default: m.CopyTableDialog })))
@@ -54,6 +57,10 @@ function DialogSwitch() {
       return <DumpDialog d={d} />
     case 'importSql':
       return <ImportSqlDialog d={d} />
+    case 'backup':
+      return <BackupDialog d={d} />
+    case 'restore':
+      return <RestoreDialog d={d} />
     case 'importCsv':
       return <ImportCsvDialog d={d} />
     case 'findText':

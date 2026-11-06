@@ -52,6 +52,8 @@ src/
     session/sessionService.ts everything a DB session does (runs inside the worker)
     chat/                     agentService.ts (tool loop, approvals), agentTools.ts (tool schemas + execution)
     copy/, export/, import/   copy table, export formatters (CSV…XLSX), CSV import
+    backup/                   backupService.ts (method routing), logical/ (SQL backup + per-engine strategies),
+                              restore/ (streaming script restore), native/ (mysqldump/pg_dump/gbak commands)
     connections/              session profiles + secrets
   infrastructure/
     db/mysql-family/          mysql2 connection, MySQL/MariaDB dialect + inspector, MariaDB auth plugins
@@ -154,6 +156,10 @@ Windows and macOS installs check GitHub releases on startup (`electron-builder.y
 ### README demo
 
 `scripts/demo/record.mjs` seeds a SQLite shop database (`seed.mjs`), drives the built app through a fixed storyboard, draws captions, title cards and a cursor with an injected DOM layer (`overlay.mjs`), captures frames with CDP `Page.startScreencast` and encodes `docs/demo.gif` with ffmpeg. `OST_DEMO_AI=1` replaces every AI provider with `infrastructure/llm/demoProvider.ts` (a scripted `run_select` turn answered from the real result) and makes `ai:hasKey` report true. Re-record after UI changes that the storyboard touches; `DEMO_DEBUG=1` prints scene timings and saves a screenshot per scene in `out/demo`.
+
+### Backup and restore
+
+`application/backup/backupService.ts` routes a `BackupRequest`/`RestoreRequest` (`shared/model.ts`) to the built-in SQL backup (`logical/`), an engine-native file (`infrastructure/backup/nativeBackup.ts`: node:sqlite `backup()` in a short-lived `sqliteProcess` child, Firebird services via node-firebird's `ServiceManager`, whose files live on the server; restoring through it is refused on Firebird 2.5, whose server segfaults now and then doing it while serving other attachments — `serviceRestoreSupported`) or an external client (`native/commands.ts` builds argv/env, `infrastructure/backup/toolLocator.ts` finds the tools in Settings → Backup tools, PATH and install folders, `toolRunner.ts` spawns them without a shell; MySQL passwords go in a 0600 `--defaults-extra-file`, PostgreSQL's in `PGPASSWORD`, gbak's in `ISC_PASSWORD`). Everything runs on `OpenDatabase.openAuxiliary()`, a third connection with its own inspector, inside `DbConnection.beginSnapshot()`. `logical/strategies/*` hold each engine's order (MySQL placeholder views and DELIMITER bodies; PostgreSQL empty `search_path`, FKs and indexes after the data via `alterTable(coreStructure(s), s)`, one file per database; Firebird placeholder routines, `EXECUTE BLOCK` batches, large values appended by key with `||`, NONE text read with `RunOptions.rawText`; SQLite from `sqlite_master`). Files go through `BackupFiles` (`infrastructure/fs/backupFiles.ts`: `.part` + rename, gzip). Restores and "Run SQL file" stream through `SqlScanner` (`domain/sql/splitter.ts`, the incremental form of `splitSql`) in `restore/scriptRestorer.ts`. The first line of a built-in backup is `-- OST-Backup: {json}` (`domain/backup/backupHeader.ts`). Tests: `tests/unit/backup.test.ts`, `splitterStream.test.ts`, `tests/integration/backup.test.ts` (round trip per target), `tests/e2e/backup.spec.ts` (SQLite).
 
 ### AI agent
 

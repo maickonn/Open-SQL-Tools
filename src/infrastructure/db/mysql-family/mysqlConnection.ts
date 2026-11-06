@@ -316,6 +316,13 @@ export class MySqlConnection implements DbConnection {
     this.inTx = false
   }
 
+  /** Read-only transaction over one consistent InnoDB snapshot (ended by commit / rollback). */
+  async beginSnapshot(): Promise<void> {
+    await this.simple('SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ')
+    await this.simple('START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY')
+    this.inTx = true
+  }
+
   inTransaction(): boolean {
     return this.inTx
   }

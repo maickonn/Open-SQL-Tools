@@ -216,10 +216,15 @@ export abstract class BaseDialect implements SqlDialect {
       .join(', ')
   }
 
+  /** `CONSTRAINT name ` before a constraint; engines drop names their server generated itself. */
+  protected constraintName(name: string | undefined): string {
+    return name ? `CONSTRAINT ${this.quoteIdent(name)} ` : ''
+  }
+
   protected foreignKeyClause(fk: ForeignKeyDef, ref: DbObjectRef): string {
     const target = this.qualify({ ...ref, database: fk.refDatabase ?? ref.database, schema: fk.refSchema ?? ref.schema, name: fk.refTable, kind: 'table' })
     const parts = [
-      `CONSTRAINT ${this.quoteIdent(fk.name)} FOREIGN KEY (${fk.columns.map((c) => this.quoteIdent(c)).join(', ')})`,
+      `${this.constraintName(fk.name)}FOREIGN KEY (${fk.columns.map((c) => this.quoteIdent(c)).join(', ')})`,
       `REFERENCES ${target} (${fk.refColumns.map((c) => this.quoteIdent(c)).join(', ')})`
     ]
     if (fk.onUpdate && fk.onUpdate !== 'NO ACTION') parts.push(`ON UPDATE ${fk.onUpdate}`)
@@ -230,7 +235,7 @@ export abstract class BaseDialect implements SqlDialect {
   protected checkClause(ck: CheckDef): string {
     const expr = ck.expression.trim().replace(/^CHECK\s*/i, '')
     const wrapped = expr.startsWith('(') ? expr : `(${expr})`
-    return `${ck.name ? `CONSTRAINT ${this.quoteIdent(ck.name)} ` : ''}CHECK ${wrapped}`
+    return `${this.constraintName(ck.name)}CHECK ${wrapped}`
   }
 
   /** Inline table elements other than columns (PK, unique, FKs, checks). */

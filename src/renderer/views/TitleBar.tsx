@@ -18,7 +18,9 @@ import {
   Square,
   Sun,
   Users,
-  Check
+  Check,
+  ArchiveRestore,
+  DatabaseBackup
 } from 'lucide-react'
 import { IconButton, Menubar, cx, type MenuItem } from '../components/ui'
 import { useConnections } from '../stores/connectionsStore'
@@ -80,6 +82,9 @@ export function TitleBar() {
     { label: t('menu.dumpSql'), disabled: !sid, onSelect: () => sid && ui.openDialog({ kind: 'dump', sessionId: sid }) },
     { label: t('menu.importSql'), icon: <FileUp size={14} />, disabled: !sid, onSelect: () => sid && ui.openDialog({ kind: 'importSql', sessionId: sid }) },
     { label: t('menu.importCsv'), disabled: !sid, onSelect: () => sid && ui.openDialog({ kind: 'importCsv', sessionId: sid }) },
+    { separator: true },
+    { label: t('menu.backup'), icon: <DatabaseBackup size={14} />, disabled: !sid, onSelect: () => sid && ui.openDialog({ kind: 'backup', sessionId: sid }) },
+    { label: t('menu.restore'), icon: <ArchiveRestore size={14} />, disabled: !sid, onSelect: () => sid && ui.openDialog({ kind: 'restore', sessionId: sid }) },
     { separator: true },
     { label: t('menu.findText'), icon: <Search size={14} />, shortcut: sc('findText'), disabled: !sid, onSelect: () => sid && ui.openDialog({ kind: 'findText', sessionId: sid }) },
     { label: t('menu.userManager'), icon: <Users size={14} />, disabled: !sid || isFileBased(activeSession?.info.engine), onSelect: () => sid && ui.openDialog({ kind: 'users', sessionId: sid }) }

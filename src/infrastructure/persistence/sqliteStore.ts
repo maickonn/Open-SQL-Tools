@@ -99,7 +99,12 @@ export class SqliteStore implements ConnectionRepository, ChatRepository {
   getSettingsValue(): AppSettings {
     const row = this.db.prepare("SELECT value FROM settings WHERE key = 'app'").get() as { value: string } | undefined
     const stored = row ? (JSON.parse(row.value) as Partial<AppSettings>) : {}
-    return { ...DEFAULT_SETTINGS, ...stored, ai: { ...DEFAULT_SETTINGS.ai, ...(stored.ai ?? {}) }, shortcuts: { ...DEFAULT_SETTINGS.shortcuts, ...(stored.shortcuts ?? {}) } }
+    return { ...DEFAULT_SETTINGS, ...stored, ai: { ...DEFAULT_SETTINGS.ai, ...(stored.ai ?? {}) }, shortcuts: { ...DEFAULT_SETTINGS.shortcuts, ...(stored.shortcuts ?? {}) },
+      backupTools: {
+        paths: { ...DEFAULT_SETTINGS.backupTools.paths, ...(stored.backupTools?.paths ?? {}) },
+        searchDirs: stored.backupTools?.searchDirs ?? DEFAULT_SETTINGS.backupTools.searchDirs
+      }
+    }
   }
 
   setSettings(settings: AppSettings): void {

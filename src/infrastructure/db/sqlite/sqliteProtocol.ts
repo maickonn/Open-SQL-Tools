@@ -4,6 +4,8 @@ export type ProcessRequest =
   | { id: number; type: 'open'; path: string; readOnly: boolean; busyTimeoutMs: number }
   | { id: number; type: 'run'; sql: string; maxRows: number; chunkSize: number; readOnly?: boolean; params?: (string | number | bigint | Uint8Array | null)[] }
   | { id: number; type: 'close' }
+  /** Copies `source` into `dest` with SQLite's online backup API (no open connection needed). */
+  | { id: number; type: 'backup'; source: string; dest: string; rate: number }
 
 export interface ProcessColumn {
   name: string
@@ -21,3 +23,4 @@ export type ProcessResponse =
   | { id: number; type: 'start'; columns: ProcessColumn[] }
   | { id: number; type: 'rows'; columns: unknown[][]; count: number }
   | { id: number; type: 'end'; rowCount: number; truncated: boolean; hasResultSet: boolean; changes?: number }
+  | { id: number; type: 'progress'; totalPages: number; remainingPages: number }

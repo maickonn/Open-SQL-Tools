@@ -130,6 +130,8 @@ export type Capability =
   | 'skipLocked'
   | 'partitions'
   | 'killQuery'
+  /** Firebird 3+: statements up to 10 MB (2.5 allows 64 KB). */
+  | 'largeStatements'
 
 export interface ServerInfo {
   engine: DbEngine
@@ -504,6 +506,167 @@ export interface ProgressInfo {
   total?: number
   finished?: boolean
   error?: string
+  /** Backups and restores: what is being done and on which object. */
+  phase?: BackupPhase
+  object?: string
+  /** Bytes written (backup) or read (restore) so far. */
+  bytes?: number
+  /** Restores: size of the file being read (progress = bytes / totalBytes). */
+  totalBytes?: number
+}
+
+/* -------------------------------- Backup -------------------------------- */
+
+export type BackupPhase = 'schema' | 'data' | 'post' | 'restore' | 'tool'
+
+/**
+ * How a backup is made: the built-in SQL script, an engine-native file (SQLite backup API, Firebird
+ * services), or an external client tool.
+ */
+export type BackupMethod = 'logical' | 'sqlite-file' | 'firebird-service' | 'mysqldump' | 'pg_dump' | 'gbak'
+
+/** Restores also run the clients that read what the tools wrote. */
+export type RestoreMethod = 'logical' | 'sqlite-file' | 'firebird-service' | 'mysql' | 'pg_restore' | 'psql' | 'gbak'
+
+export type BackupToolName = 'mysqldump' | 'mariadb-dump' | 'mysql' | 'mariadb' | 'pg_dump' | 'pg_restore' | 'psql' | 'gbak'
+
+export const BACKUP_TOOLS_BY_ENGINE: Record<DbEngine, BackupToolName[]> = {
+  mysql: ['mysqldump', 'mysql'],
+  mariadb: ['mariadb-dump', 'mariadb', 'mysqldump', 'mysql'],
+  postgres: ['pg_dump', 'pg_restore', 'psql'],
+  firebird: ['gbak'],
+  sqlite: []
+}
+
+export interface BackupTableSelection {
+  schema?: string
+  name: string
+  /** False: structure only. */
+  data: boolean
+}
+
+export interface BackupObjectKinds {
+  views: boolean
+  routines: boolean
+  triggers: boolean
+  sequences: boolean
+  /** PostgreSQL domains, enum and composite types; Firebird domains and exceptions. */
+  domainsAndTypes: boolean
+  events: boolean
+  materializedViews: boolean
+  /** PostgreSQL extensions. */
+  extensions: boolean
+}
+
+export interface LogicalBackupOptions {
+  /** Databases to back up ([''] on single-database engines). PostgreSQL writes one file per database. */
+  databases: string[]
+  /** Tables per database (absent: every table, with data). */
+  tables?: Record<string, BackupTableSelection[]>
+  objects: BackupObjectKinds
+  /** Current values of sequences, generators and identity / auto-increment counters. */
+  sequenceValues: boolean
+  usersAndGrants: boolean
+  /** MySQL family: CREATE DATABASE + USE in the script (and DROP DATABASE with dropObjects). */
+  createDatabase: boolean
+  /** DROP … IF EXISTS before each object. */
+  dropObjects: boolean
+  /** MySQL family: leave DEFINER clauses out, so restores need no SUPER / SET_USER_ID. */
+  stripDefiners: boolean
+  /** PostgreSQL: ALTER … OWNER TO statements. */
+  includeOwners: boolean
+  /** Read everything inside one consistent snapshot transaction. */
+  consistentSnapshot: boolean
+  rowsPerInsert: number
+  /** How rows are written (the Dump SQL dialog's modes). */
+  dataMode?: 'insert' | 'insert_ignore' | 'replace' | 'delete_insert'
+}
+
+export interface NativeBackupOptions {
+  /** Path of the external tool (else the detected one). */
+  toolPath?: string
+  /** pg_dump: custom archive (restored with pg_restore) or plain SQL. */
+  pgFormat?: 'custom' | 'plain'
+  /** Firebird services / gbak -se: backup file path on the database server. */
+  serverPath?: string
+  extraArgs?: string[]
+}
+
+export interface BackupRequest {
+  operationId: string
+  filePath: string
+  method: BackupMethod
+  /** gzip the output (.gz). */
+  compress: boolean
+  logical?: LogicalBackupOptions
+  native?: NativeBackupOptions
+}
+
+export interface RestoreRequest {
+  operationId: string
+  filePath: string
+  method: RestoreMethod
+  /** Target database (multi-database engines); default: the one in the file / the current one. */
+  database?: string
+  /** Create this database first and restore into it. */
+  createDatabase?: string
+  stopOnError: boolean
+  /** PostgreSQL / SQLite: everything in one transaction (rolled back on the first error). */
+  singleTransaction: boolean
+  /** Statements per commit when not in a single transaction. */
+  commitEvery: number
+  native?: NativeBackupOptions & { clean?: boolean; jobs?: number }
+  /** Firebird services / gbak and SQLite file restores. */
+  file?: { targetPath: string; replace: boolean; pageSize?: number }
+}
+
+export interface BackupHeader {
+  v: number
+  engine: DbEngine
+  serverVersion: number
+  serverLabel: string
+  databases: string[]
+  createdAt: string
+  app: string
+}
+
+export type BackupFileKind = 'sql' | 'pg-custom' | 'fbk' | 'sqlite' | 'unknown'
+
+export interface BackupFileInfo {
+  kind: BackupFileKind
+  compressed: boolean
+  size: number
+  header?: BackupHeader
+  /** Restore methods able to read the file, best first. */
+  methods: RestoreMethod[]
+  /** Plain PostgreSQL dumps with COPY … FROM stdin or psql meta-commands need psql. */
+  needsPsql?: boolean
+}
+
+export interface BackupToolInfo {
+  tool: BackupToolName
+  path: string
+  version: string
+  compatible: boolean
+  /** Why the tool is incompatible or limited with this server. */
+  reason?: string
+}
+
+export interface BackupResult {
+  method: BackupMethod
+  /** Files written (PostgreSQL logical backups write one per database). */
+  files: string[]
+  bytes: number
+  statements: number
+  warnings: string[]
+  durationMs: number
+}
+
+export interface RestoreResult {
+  statements: number
+  errors: number
+  warnings: string[]
+  durationMs: number
 }
 
 export interface ServerUser {
@@ -572,6 +735,8 @@ export interface AppSettings {
     maxRowsToModel: number
   }
   shortcuts: Record<string, string>
+  /** Paths of external backup tools chosen by the user, and extra directories to search. */
+  backupTools: { paths: Partial<Record<BackupToolName, string>>; searchDirs: string[] }
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -590,7 +755,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
     effort: 'medium',
     maxRowsToModel: 200
   },
-  shortcuts: {}
+  shortcuts: {},
+  backupTools: { paths: {}, searchDirs: [] }
 }
 
 /** A column of the batch catalog the SQL editor's IntelliSense reads (one query per schema). */

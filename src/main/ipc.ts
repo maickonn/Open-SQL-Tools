@@ -13,6 +13,7 @@ import type { SessionManager } from './sessions/sessionManager'
 import { demoAi, type ProviderRegistry } from './providers'
 import { applyTitleBarTheme } from './window'
 import { setAppMenu } from './appMenu'
+import { toolLocator } from '@infrastructure/backup/toolLocator'
 
 export interface IpcServices {
   store: SqliteStore
@@ -139,6 +140,9 @@ export function registerIpc(s: IpcServices): void {
   handle('fs:writeText', (_e, filePath, content) => writeFile(filePath, content, 'utf8'))
   handle('fs:writeBytes', (_e, filePath, content) => writeFile(filePath, content))
   handle('shell:showItem', (_e, filePath) => shell.showItemInFolder(filePath))
+  handle('tools:detect', async (_e, engine, settings) =>
+    (await toolLocator.detect(engine, settings?.paths, settings?.searchDirs)).map((t) => ({ tool: t.tool, path: t.path, version: t.version }))
+  )
   handle('shell:openExternal', async (_e, url) => {
     if (!isHttpUrl(url)) throw new Error('Only http(s) links can be opened')
     await shell.openExternal(url)

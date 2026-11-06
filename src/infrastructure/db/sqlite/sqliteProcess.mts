@@ -7,6 +7,7 @@
  * Self-contained on purpose (Node built-ins and type-only imports): the bundle runs it as
  * sqliteProcess.js and integration tests run this .mts file directly with Node's type stripping.
  */
+import * as sqlite from 'node:sqlite'
 import { DatabaseSync, type SQLInputValue, type StatementSync } from 'node:sqlite'
 import type { ProcessRequest, ProcessResponse, ProcessColumn } from './sqliteProtocol'
 
@@ -99,6 +100,9 @@ process.on('message', (msg: ProcessRequest) => {
           requireDb().exec('PRAGMA query_only = OFF')
         }
         break
+      case 'backup':
+        void backupFile(msg.id, msg.source, msg.dest, msg.rate)
+        break
       case 'close':
         db?.close()
         db = null
@@ -111,6 +115,25 @@ process.on('message', (msg: ProcessRequest) => {
     send({ id: msg.id, type: 'error', message: e.message ?? String(err), code: e.errstr ?? e.code, errcode: e.errcode })
   }
 })
+
+/** Online backup page by page (VACUUM INTO where node:sqlite has no backup()). */
+async function backupFile(id: number, source: string, dest: string, rate: number): Promise<void> {
+  const src = new DatabaseSync(source, { readOnly: true })
+  try {
+    const backup = (sqlite as unknown as { backup?: (db: DatabaseSync, path: string, o: { rate: number; progress: (p: { totalPages: number; remainingPages: number }) => void }) => Promise<number> }).backup
+    if (backup) {
+      await backup(src, dest, { rate, progress: (p) => send({ id, type: 'progress', totalPages: p.totalPages, remainingPages: p.remainingPages }) })
+    } else {
+      src.prepare('VACUUM INTO ?').run(dest)
+    }
+    send({ id, type: 'ok' })
+  } catch (err) {
+    const e = err as { message?: string; code?: string; errcode?: number; errstr?: string }
+    send({ id, type: 'error', message: e.message ?? String(err), code: e.errstr ?? e.code, errcode: e.errcode })
+  } finally {
+    src.close()
+  }
+}
 
 // The session worker went away (closed or crashed): release the file.
 process.on('disconnect', () => {

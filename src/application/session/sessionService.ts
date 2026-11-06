@@ -1,4 +1,12 @@
 import type {
+  AppSettings,
+  BackupFileInfo,
+  BackupRequest,
+  BackupResult,
+  BackupToolInfo,
+  ProgressInfo,
+  RestoreRequest,
+  RestoreResult,
   BulkTableOperations,
   CellValue,
   ColumnMeta,
@@ -26,6 +34,9 @@ import type { ExecuteParams, ExecuteSummary, ExportSource, StatementSummary, Wor
 import { toErrorPayload } from '@shared/rpc'
 import type { BoundStatement, OpenDatabase, ResultSink, TextWriter } from '@domain/ports/database'
 import { splitSql } from '@domain/sql/splitter'
+import type { BackupFiles } from '@domain/ports/backup'
+import { BackupService, type BackupToolDeps, type ConnectionTarget, type NativeBackupFactory } from '../backup/backupService'
+import { RestoreCancelled, restoreScript } from '../backup/restore/scriptRestorer'
 import { hasTransactionalDdl, isFileBased, isSingleDatabase } from '@domain/engineTraits'
 import { LegacyTextWriter } from './legacyTextWriter'
 import { extractDmlStatements } from '@domain/sql/psqlStatements'
@@ -43,6 +54,11 @@ export interface SessionDeps {
   openTunnel(profile: ConnectionProfile, secrets: ConnectionSecrets): Promise<{ localPort: number; close(): Promise<void> } | null>
   createWriter(filePath: string): Promise<TextWriter>
   readText(filePath: string): Promise<string>
+  files: BackupFiles
+  /** External client tools (mysqldump, pg_dump, gbak…); absent where they cannot run. */
+  backupTools?: BackupToolDeps
+  /** Engine-native backups that need no client tools (SQLite backup API, Firebird services). */
+  nativeBackup?: NativeBackupFactory
   emit<K extends keyof WorkerEvents & string>(name: K, payload: WorkerEvents[K]): void
 }
 
@@ -55,6 +71,8 @@ const CONNECTION_LOST = /ECONNRESET|EPIPE|PROTOCOL_CONNECTION_LOST|Connection te
 
 interface Running {
   cancelled: boolean
+  /** Interrupts the statement or process the operation is waiting on. */
+  abort?: (() => Promise<void>) | null
 }
 
 /** Converts a columnar chunk into row-major rows. */
@@ -85,7 +103,11 @@ export class SessionService {
   private readonly operations = new Map<string, Running>()
   private keepAlive: NodeJS.Timeout | null = null
 
-  constructor(private readonly deps: SessionDeps) {}
+  private readonly backups: BackupService
+
+  constructor(private readonly deps: SessionDeps) {
+    this.backups = new BackupService({ files: deps.files, tools: deps.backupTools, native: deps.nativeBackup })
+  }
 
   /** Encodes NONE text as stored (Firebird on a UTF8 connection); null elsewhere. */
   private legacyText(): LegacyTextWriter | null {
@@ -688,7 +710,90 @@ export class SessionService {
 
   cancelOperation(p: { operationId: string }): void {
     const ctl = this.operations.get(p.operationId)
-    if (ctl) ctl.cancelled = true
+    if (!ctl) return
+    ctl.cancelled = true
+    void ctl.abort?.().catch(() => undefined)
+  }
+
+  /* -------------------------------- Backup -------------------------------- */
+
+  async backupDatabase(p: BackupRequest): Promise<BackupResult> {
+    const db = this.require()
+    const ctl = this.startOperation(p.operationId)
+    const report = (x: Omit<ProgressInfo, 'operationId' | 'label'>): void => this.deps.emit('progress', { operationId: p.operationId, label: 'backup', ...x })
+    try {
+      const result = await this.backups.backup(db, p, this.connectionTarget(), {
+        isCancelled: () => ctl.cancelled,
+        onAbort: (abort) => (ctl.abort = abort),
+        progress: (x) => report({ done: x.done, total: x.total, phase: x.phase, object: x.object, bytes: x.bytes })
+      })
+      report({ done: result.statements, finished: true, bytes: result.bytes })
+      this.log('info', `Backup written: ${result.files.join(', ')}`)
+      for (const w of result.warnings) this.log('info', `Backup: ${w}`)
+      return result
+    } catch (err) {
+      const message = ctl.cancelled ? 'Backup cancelled' : toErrorPayload(err).message
+      report({ done: 0, finished: true, error: message })
+      throw ctl.cancelled ? new Error(message) : err
+    } finally {
+      this.operations.delete(p.operationId)
+    }
+  }
+
+  async restoreDatabase(p: RestoreRequest): Promise<RestoreResult> {
+    const db = this.require()
+    const ctl = this.startOperation(p.operationId)
+    let last: Omit<ProgressInfo, 'operationId' | 'label'> = { done: 0 }
+    const report = (x: Omit<ProgressInfo, 'operationId' | 'label'>): void => {
+      last = x
+      this.deps.emit('progress', { operationId: p.operationId, label: 'restore', phase: 'restore', ...x })
+    }
+    try {
+      const result = await this.backups.restore(db, p, this.connectionTarget(), {
+        isCancelled: () => ctl.cancelled,
+        onAbort: (abort) => (ctl.abort = abort),
+        progress: (x) => report({ done: x.done, bytes: x.bytes, totalBytes: x.totalBytes }),
+        error: (message, sql) => this.log('error', `${message}
+${sql.slice(0, 500)}`),
+        reopen: () => this.reopen()
+      })
+      report({ ...last, done: result.statements, finished: true })
+      this.log('info', `Restore finished: ${result.statements} statements, ${result.errors} errors`)
+      for (const w of result.warnings) this.log('info', `Restore: ${w}`)
+      return result
+    } catch (err) {
+      const message = ctl.cancelled ? 'Restore cancelled' : toErrorPayload(err).message
+      report({ ...last, finished: true, error: message })
+      throw ctl.cancelled ? new Error(message) : err
+    } finally {
+      this.operations.delete(p.operationId)
+    }
+  }
+
+  async inspectBackupFile(p: { filePath: string }): Promise<BackupFileInfo> {
+    return this.backups.inspect(this.require(), p.filePath)
+  }
+
+  async detectBackupTools(p: { paths?: AppSettings['backupTools'] }): Promise<BackupToolInfo[]> {
+    return this.backups.detectTools(this.require(), p.paths)
+  }
+
+  /** Where the session connects (the local end of its SSH tunnel, if any), for engine services and client tools. */
+  private connectionTarget(): ConnectionTarget {
+    if (!this.profile || !this.endpoint) throw new Error('Not connected')
+    return { profile: this.profile, secrets: this.secrets, endpoint: this.endpoint }
+  }
+
+  /** Closes and reopens the database connections (after a restore replaced the database file). */
+  private async reopen(): Promise<void> {
+    await this.primaryLock.run(async () => {
+      const old = this.db
+      this.db = null
+      this.legacy = null
+      await old?.close().catch(() => undefined)
+      const target = this.connectionTarget()
+      this.db = await this.deps.openDatabase(target.profile, target.secrets, target.endpoint)
+    })
   }
 
   /** Streams a query or a whole table into a file. */
@@ -864,33 +969,50 @@ export class SessionService {
     return statements
   }
 
+  /** Runs a script file (streamed, gzip compressed or not) on the primary connection. */
   async importSqlFile(p: { operationId: string; filePath: string; database?: string; stopOnError: boolean }): Promise<{ statements: number; errors: number }> {
     const ctl = this.startOperation(p.operationId)
-    const script = await this.deps.readText(p.filePath)
-    const parts = splitSql(script, this.engine)
     let done = 0
     let errors = 0
+    let bytes: { read: number; size: number } = { read: 0, size: 0 }
+    const report = (finished = false, error?: string): void =>
+      this.deps.emit('progress', { operationId: p.operationId, label: 'import', done, finished, error, bytes: bytes.read, totalBytes: bytes.size })
     try {
-      await this.primaryLock.run(async () => {
-        const conn = this.require().primary
-        if (p.database && p.database !== conn.currentDatabase()) await conn.useDatabase(p.database)
-        for (const st of parts) {
-          if (ctl.cancelled) break
-          try {
-            await conn.run(st.sql, null, { maxRows: 1_000, chunkSize: 1_000 })
-          } catch (err) {
-            errors++
-            this.log('error', `${toErrorPayload(err).message}\n${st.sql.slice(0, 500)}`)
-            if (p.stopOnError) throw err
-          }
-          done++
-          if (done % 50 === 0) this.progress(p.operationId, 'import', done, parts.length)
-        }
-      })
-      this.progress(p.operationId, 'import', done, parts.length, true)
+      const reader = await this.deps.files.openScript(p.filePath)
+      bytes = { read: 0, size: reader.size }
+      try {
+        await this.primaryLock.run(async () => {
+          const conn = this.require().primary
+          if (p.database && p.database !== conn.currentDatabase()) await conn.useDatabase(p.database)
+          const r = await restoreScript(reader, conn, {
+            engine: this.engine,
+            mode: 'none',
+            commitEvery: 0,
+            stopOnError: p.stopOnError,
+            isCancelled: () => ctl.cancelled,
+            onProgress: (x) => {
+              done = x.statements
+              errors = x.errors
+              bytes = { read: x.bytesRead, size: x.totalBytes }
+              report()
+            },
+            onError: (message, sql) => this.log('error', `${message}
+${sql.slice(0, 500)}`)
+          })
+          done = r.statements
+          errors = r.errors
+        })
+      } finally {
+        await reader.close()
+      }
+      report(true)
       return { statements: done, errors }
     } catch (err) {
-      this.progress(p.operationId, 'import', done, parts.length, true, toErrorPayload(err).message)
+      if (err instanceof RestoreCancelled) {
+        report(true)
+        return { statements: done, errors }
+      }
+      report(true, toErrorPayload(err).message)
       throw err
     } finally {
       this.operations.delete(p.operationId)

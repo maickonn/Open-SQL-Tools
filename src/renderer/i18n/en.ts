@@ -15,6 +15,7 @@ export const en = {
     runAll: 'Run', runCurrent: 'Run current statement', runSelection: 'Run selection', stop: 'Stop', explain: 'Explain',
     format: 'Format SQL', commit: 'Commit', rollback: 'Rollback', autocommit: 'Auto-commit',
     exportGrid: 'Export grid rows…', dumpSql: 'Export database as SQL…', importSql: 'Run SQL file…', importCsv: 'Import CSV file…',
+    backup: 'Backup database…', restore: 'Restore database…',
     findText: 'Find text on server…', userManager: 'User manager…', maintenance: 'Maintenance', settings: 'Preferences…',
     toggleSidebar: 'Toggle sidebar', toggleLog: 'Toggle SQL log', toggleChat: 'Toggle AI assistant', theme: 'Theme',
     themeDark: 'Dark', themeLight: 'Light', themeSystem: 'System', about: 'About', shortcuts: 'Keyboard shortcuts',
@@ -122,6 +123,46 @@ export const en = {
     createTables: 'Create tables', dropTables: 'Drop tables', data: 'Data', dataNone: 'No data', dataInsert: 'INSERT', dataInsertIgnore: 'INSERT IGNORE',
     dataReplace: 'REPLACE', dataDeleteInsert: 'DELETE + INSERT', views: 'Views', routines: 'Routines', triggers: 'Triggers', done: 'Dump finished: {{file}}'
   },
+  backup: {
+    title: 'Backup {{engine}} database', method: 'Method', methodLogical: 'Built-in SQL script (no tools needed)',
+    methodSqliteFile: 'Database file copy (SQLite backup API)', methodFirebirdService: 'Server backup file (.fbk, Firebird services)',
+    methodHint: {
+      logical: 'Readable SQL script, restorable here or with the server’s own client. Read inside one consistent snapshot.',
+      'sqlite-file': 'Exact page-by-page copy of the database file, taken while it stays in use.',
+      'firebird-service': 'gbak inside the server: fastest, the file is written on the server’s disk.',
+      mysqldump: 'Runs the installed client tool with the session’s credentials (never on the command line).',
+      pg_dump: 'Runs the installed client tool with the session’s credentials (never on the command line).',
+      gbak: 'Runs the installed gbak; without a server path the backup travels to this computer.'
+    },
+    toolMissing: '{{tool}} (not found)', detectTools: 'Detect tools', start: 'Start backup', objects: 'Objects',
+    materializedViews: 'Materialized views', sequences: 'Sequences / generators', domainsTypes: 'Domains and types',
+    domainsExceptions: 'Domains and exceptions', events: 'Events', extensions: 'Extensions', tables: 'Tables',
+    tablesAll: 'Every table of the selected databases, with data', filter: 'Filter', table: 'Table', data: 'Data', rows: 'Rows', size: 'Size',
+    sequenceValues: 'Sequence and counter values', dropObjects: 'Drop existing objects', snapshot: 'Consistent snapshot',
+    stripDefiners: 'Leave out DEFINER', owners: 'Owners', usersGrants: 'Users, roles and privileges', privileges: 'Privileges',
+    usersGrantsHint: 'Needs administrator rights. The file will contain password hashes: keep it safe.',
+    usersGrantsHintFb: 'Roles and privileges are backed up; Firebird users live in the server’s security database.',
+    pgOneFilePerDb: 'PostgreSQL restores one database per connection: one file per database.',
+    format: 'Format', formatCustom: 'Custom archive (pg_restore)', formatPlain: 'Plain SQL',
+    serverPath: 'Backup file on the server', serverPathHint: 'Path on the database server’s disk, not on this computer.',
+    serverPathOptional: 'Optional: written by the server (faster); empty sends the backup to this computer.',
+    extraArgs: 'Extra arguments', compress: 'Compress (gzip)', done: 'Backup finished: {{file}} ({{size}})',
+    phase: { schema: 'Structure', data: 'Data', post: 'Objects', restore: 'Restore', tool: 'Tool' }
+  },
+  restore: {
+    title: 'Restore database', file: 'Backup file', backupFiles: 'Backups', start: 'Start restore',
+    kind: { sql: 'SQL script', 'pg-custom': 'pg_dump archive', fbk: 'gbak backup', sqlite: 'SQLite file', unknown: 'Unknown format' },
+    detected: '{{server}} · {{date}} · {{databases}}', engineMismatch: 'Made on {{engine}}: statements may fail here.',
+    needsPsql: 'Uses COPY … FROM stdin or psql commands: restore it with psql.',
+    methodLogical: 'Built-in (runs the script here)', methodSqliteFile: 'Replace the database file', methodFirebirdService: 'Firebird services (file on the server)',
+    methodTool: '{{tool}}', serverFile: 'Backup file on the server', existing: 'Into database', asInFile: 'As in the file / current',
+    newDatabase: 'Into a new database', targetPath: 'Database file', targetPathHint: 'On the server; created by the restore.',
+    pageSize: 'Page size', replace: 'Replace an existing database', singleTransaction: 'All in one transaction',
+    commitEvery: 'Commit every N statements', clean: 'Drop objects first (--clean)', jobs: 'Parallel jobs',
+    confirmReplace: 'Replace {{target}} with the backup? Its current contents are lost.',
+    confirmInto: 'Restore into {{target}}? Existing objects with the same names may be replaced.',
+    done: 'Restore finished: {{count}} statements', doneErrors: 'Restore finished with {{errors}} errors ({{count}} statements): see the SQL log'
+  },
   import: {
     sqlTitle: 'Run SQL file', csvTitle: 'Import CSV file', stopOnError: 'Stop on first error', skipLines: 'Skip first lines',
     targetTable: 'Target table', columnsMap: 'Columns (in file order)', batchSize: 'Rows per INSERT', done: '{{count}} statements executed, {{errors}} errors',
@@ -142,7 +183,10 @@ export const en = {
     nullText: 'NULL display text', autocommit: 'Auto-commit by default', confirmDangerous: 'Confirm before running data-changing scripts',
     restoreTabs: 'Restore query tabs on start', checkForUpdates: 'Check for updates on start', anthropicKey: 'Anthropic API key', openaiKey: 'OpenAI API key', keySaved: 'Key saved',
     keyMissing: 'Not set', defaultProvider: 'Default provider', effort: 'Reasoning effort', low: 'Low', medium: 'Medium',
-    high: 'High', maxRowsModel: 'Max rows sent to the model', clearKey: 'Remove key', setKey: 'Save key'
+    high: 'High', maxRowsModel: 'Max rows sent to the model', clearKey: 'Remove key', setKey: 'Save key',
+    tools: 'Backup tools', toolsHint: 'Client tools offered in the Backup and Restore dialogs. Leave a path empty to use the one found on PATH or in the usual install folders.',
+    toolsDetecting: 'Looking for it…', toolFound: 'Found: {{version}} · {{path}}', toolNotFound: 'Not found',
+    toolsSearchDirs: 'Extra folders to search', toolsSearchDirsHint: 'Separated by ;'
   },
   chat: {
     title: 'AI assistant', placeholder: 'Ask about your database…', send: 'Send', stop: 'Stop', newChat: 'New chat', conversations: 'Conversations',

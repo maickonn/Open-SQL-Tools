@@ -8,6 +8,7 @@ import { SessionService } from '@application/session/sessionService'
 import { copyTable, type CopySession } from '@application/copy/copyTable'
 import { openDatabase } from '@infrastructure/db/openDatabase'
 import { createFileWriter, readTextFile } from '@infrastructure/fs/fileWriter'
+import { backupFiles } from '@infrastructure/fs/backupFiles'
 
 // SQLite-specific behaviour (no container needed): file handling, table rebuilds, dumps.
 const wanted = process.env.DB_TARGETS?.split(',').map((s) => s.trim())
@@ -43,7 +44,7 @@ function service(): SessionService {
       throw new Error('SQLite must not open an SSH tunnel')
     },
     createWriter: createFileWriter,
-    readText: readTextFile,
+    readText: readTextFile, files: backupFiles,
     emit: () => undefined
   })
 }

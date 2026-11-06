@@ -9,6 +9,7 @@ import { LOB_CUT_MARK, lobKind } from '@domain/lob'
 import { encodeText } from '@domain/text/legacyText'
 import { openDatabase } from '@infrastructure/db/openDatabase'
 import { createFileWriter, readTextFile } from '@infrastructure/fs/fileWriter'
+import { backupFiles } from '@infrastructure/fs/backupFiles'
 import { availableTargets, profileFor, type Target } from './targets'
 
 const targets = await availableTargets()
@@ -24,7 +25,7 @@ function newService(c: Collected): SessionService {
     openDatabase,
     openTunnel: async () => null,
     createWriter: createFileWriter,
-    readText: readTextFile,
+    readText: readTextFile, files: backupFiles,
     emit: <K extends keyof WorkerEvents & string>(name: K, payload: WorkerEvents[K]) => {
       c.events.push({ name, payload })
     }

@@ -4,6 +4,7 @@ import { SessionService } from '@application/session/sessionService'
 import { openDatabase } from '@infrastructure/db/openDatabase'
 import { openSshTunnel } from '@infrastructure/ssh/sshTunnel'
 import { createFileWriter, readTextFile } from '@infrastructure/fs/fileWriter'
+import { backupFiles } from '@infrastructure/fs/backupFiles'
 import { ALL_TARGETS, profileFor } from './targets'
 
 // Opt-in: PERF=1 npm run test:db -- sshd postgres18
@@ -53,7 +54,7 @@ describe.skipIf(!ready)(`object tree over SSH (${RTT_MS} ms RTT)`, () => {
       openDatabase,
       openTunnel: async (profile, secrets) => openSshTunnel({ ...profile.ssh, port: proxyPort }, secrets, profile.host, profile.port),
       createWriter: createFileWriter,
-      readText: readTextFile,
+      readText: readTextFile, files: backupFiles,
       emit: () => undefined
     })
     const target = ALL_TARGETS.find((t) => t.id === 'postgres18')!

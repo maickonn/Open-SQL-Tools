@@ -1,11 +1,13 @@
 import type {
   AiProviderId,
   AppSettings,
+  BackupToolName,
   ChatConversation,
   ChatEvent,
   ChatMessage,
   ConnectionProfile,
   ConnectionSecrets,
+  DbEngine,
   ProgressInfo,
   QueryHistoryEntry,
   ServerInfo,
@@ -86,6 +88,8 @@ export interface IpcInvokeMap {
   'fs:writeBytes': { args: [filePath: string, content: Uint8Array]; result: void }
   'shell:showItem': { args: [filePath: string]; result: void }
   'shell:openExternal': { args: [url: string]; result: void }
+  /** External backup tools found for an engine (Settings → Tools), with their versions. */
+  'tools:detect': { args: [engine: DbEngine, settings: AppSettings['backupTools']]; result: { tool: BackupToolName; path: string; version: string }[] }
 
   'app:info': { args: []; result: { version: string; electron: string; chrome: string; userData: string } }
   'app:setNativeTheme': { args: [theme: 'dark' | 'light' | 'system']; result: void }

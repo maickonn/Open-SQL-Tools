@@ -35,7 +35,9 @@ import {
   Play,
   Power,
   PowerOff,
-  TerminalSquare
+  TerminalSquare,
+  ArchiveRestore,
+  DatabaseBackup
 } from 'lucide-react'
 import type { DbObjectInfo, DbObjectRef, ObjectKind } from '@shared/model'
 import { ContextMenu, Input, Spinner, cx, type MenuItem } from '../../components/ui'
@@ -476,6 +478,8 @@ function contextItems(row: Row, t: (k: string, o?: Record<string, unknown>) => s
     if (engine !== 'postgres') items.push({ label: t('bulk.menu'), icon: <Pencil size={14} />, onSelect: () => ui.openDialog({ kind: 'bulkEdit', sessionId: sid, database: row.database }) })
     items.push({ label: t('menu.dumpSql'), icon: <FileDown size={14} />, onSelect: () => ui.openDialog({ kind: 'dump', sessionId: sid, database: row.database }) })
     items.push({ label: t('menu.importSql'), onSelect: () => ui.openDialog({ kind: 'importSql', sessionId: sid, database: row.database }) })
+    items.push({ label: t('menu.backup'), icon: <DatabaseBackup size={14} />, onSelect: () => ui.openDialog({ kind: 'backup', sessionId: sid, database: row.database }) })
+    items.push({ label: t('menu.restore'), icon: <ArchiveRestore size={14} />, onSelect: () => ui.openDialog({ kind: 'restore', sessionId: sid, database: row.database }) })
     items.push({
       label: t('tree.drop'),
       icon: <Trash2 size={14} />,
@@ -510,6 +514,9 @@ function contextItems(row: Row, t: (k: string, o?: Record<string, unknown>) => s
       }
     })
     items.push({ label: t('tabs.host'), icon: <Server size={14} />, onSelect: () => ws.openTab({ sessionId: sid, kind: 'host', title: session.profile.name }) })
+    items.push({ separator: true })
+    items.push({ label: t('menu.backup'), icon: <DatabaseBackup size={14} />, onSelect: () => ui.openDialog({ kind: 'backup', sessionId: sid }) })
+    items.push({ label: t('menu.restore'), icon: <ArchiveRestore size={14} />, onSelect: () => ui.openDialog({ kind: 'restore', sessionId: sid }) })
     items.push({ separator: true })
     items.push({ label: t('menu.disconnect'), icon: <X size={14} />, onSelect: () => void ws.closeSession(sid) })
   }

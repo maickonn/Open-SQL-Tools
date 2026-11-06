@@ -4,6 +4,7 @@ import type { WorkerEvents } from '@shared/workerApi'
 import { SessionService } from '@application/session/sessionService'
 import { openDatabase } from '@infrastructure/db/openDatabase'
 import { createFileWriter, readTextFile } from '@infrastructure/fs/fileWriter'
+import { backupFiles } from '@infrastructure/fs/backupFiles'
 import { copyTable, type CopySession } from '@application/copy/copyTable'
 import { availableTargets, profileFor, type Target } from './targets'
 
@@ -17,7 +18,7 @@ async function liveSession(target: Target, id: string): Promise<{ state: CopySes
     openDatabase,
     openTunnel: async () => null,
     createWriter: createFileWriter,
-    readText: readTextFile,
+    readText: readTextFile, files: backupFiles,
     emit: <K extends keyof WorkerEvents & string>(name: K, payload: WorkerEvents[K]) => {
       for (const l of listeners.get(name) ?? []) l(payload)
     }

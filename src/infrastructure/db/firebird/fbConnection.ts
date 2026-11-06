@@ -307,9 +307,11 @@ export class FbConnection implements DbConnection {
       let truncated = false
       // NONE text is decoded with its column's evidence: the first rows are held back until they
       // have all been learned, so even they get the column's code page.
-      let held: unknown[][] | null = output.some(mayHoldNoneText) ? [] : null
+      // Raw text (backups): NONE values keep their bytes, so nothing waits for the profiles.
+      const decode = options.rawText ? rawRow : (r: unknown[]): unknown[] => this.decodeRow(r)
+      let held: unknown[][] | null = !options.rawText && output.some(mayHoldNoneText) ? [] : null
       const release = (): void => {
-        for (const r of held ?? []) buffer?.pushRow(this.decodeRow(r))
+        for (const r of held ?? []) buffer?.pushRow(decode(r))
         held = null
       }
       try {
@@ -323,7 +325,9 @@ export class FbConnection implements DbConnection {
             }
             for (let c = 0; c < row.length; c++) {
               const v = row[c]
-              if (v instanceof LegacyText) this.profiles.learn(v.bytes, v.column)
+              if (v instanceof LegacyText) {
+                if (!options.rawText) this.profiles.learn(v.bytes, v.column)
+              }
               else if (typeof v === 'function') row[c] = await readBinaryBlob(v as never, tx)
               else if (converters[c] && v !== null) row[c] = converters[c]!(v)
             }
@@ -332,7 +336,7 @@ export class FbConnection implements DbConnection {
               held.push(row)
               if (held.length >= HELD_ROWS) release()
             } else {
-              buffer?.pushRow(this.decodeRow(row))
+              buffer?.pushRow(decode(row))
             }
           },
           { asObject: false } as never
@@ -367,6 +371,7 @@ export class FbConnection implements DbConnection {
   }
 
   /** Decodes the NONE text of a row (LegacyText) with what the profiles learned. */
+  // (rawRow below keeps the bytes instead, for backups.)
   private decodeRow(row: unknown[]): unknown[] {
     for (let c = 0; c < row.length; c++) {
       const v = row[c]
@@ -422,7 +427,28 @@ export class FbConnection implements DbConnection {
     if (tx) await tx.rollbackAsync()
   }
 
+  /**
+   * Read-only SNAPSHOT (concurrency) transaction: every statement until commit / rollback sees the
+   * database as it was when it started. Manual-commit mode keeps run() inside it.
+   */
+  async beginSnapshot(): Promise<void> {
+    if (this.tx) await this.commit()
+    this.autocommit = false
+    this.tx = await this.requireDb().transactionAsync({ isolation: Firebird.ISOLATION_REPEATABLE_READ, readOnly: true, wait: true })
+  }
+
   inTransaction(): boolean {
     return this.tx !== null
   }
+}
+
+const ASCII = new TextDecoder('utf-8')
+
+/** NONE text as stored: ASCII as a string, anything else as its bytes (written as x'…' literals). */
+function rawRow(row: unknown[]): unknown[] {
+  for (let c = 0; c < row.length; c++) {
+    const v = row[c]
+    if (v instanceof LegacyText) row[c] = v.bytes.every((b) => b < 0x80) ? ASCII.decode(v.bytes) : new Uint8Array(v.bytes)
+  }
+  return row
 }

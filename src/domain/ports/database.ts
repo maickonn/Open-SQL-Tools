@@ -42,6 +42,11 @@ export interface RunOptions {
   lockTimeoutSec?: number
   /** Values of the statement's placeholders (`?`, or `$n` on PostgreSQL). */
   params?: CellValue[]
+  /**
+   * Firebird: text without a charset (NONE) and text BLOBs that are not valid UTF-8 arrive as their
+   * stored bytes (Uint8Array) instead of being decoded, so backups keep them byte for byte.
+   */
+  rawText?: boolean
 }
 
 /** A generated statement whose binary values travel as parameters instead of literals. */
@@ -72,6 +77,11 @@ export interface DbConnection {
   commit(): Promise<void>
   rollback(): Promise<void>
   inTransaction(): boolean
+  /**
+   * Starts a read-only transaction over one consistent snapshot (backups). It lasts until commit()
+   * or rollback(); call setAutocommit(true) afterwards.
+   */
+  beginSnapshot(): Promise<void>
   /** Execution plan of a statement, prepared but not executed (engines that expose it at prepare time). */
   explainPlan?(sql: string): Promise<string>
 }
@@ -185,6 +195,20 @@ export interface OpenDatabase {
   metaQuery(sql: string, maxRows?: number): Promise<MaterializedResult>
   /** Firebird: what the session learned about how NONE text is encoded (reads and writes use it). */
   textProfiles?: EncodingProfiles
+  /**
+   * Opens one more connection with its own inspector, for long jobs (backups, restores) that must
+   * not hold the primary or metadata connection nor change their session state.
+   */
+  openAuxiliary(): Promise<AuxiliaryConnection>
+  close(): Promise<void>
+}
+
+export interface AuxiliaryConnection {
+  connection: DbConnection
+  /** Catalog reads on `connection` (inside its transaction, if one is open). */
+  inspector: SchemaInspector
+  /** Small query on `connection`, materialized. */
+  query(sql: string, maxRows?: number): Promise<MaterializedResult>
   close(): Promise<void>
 }
 

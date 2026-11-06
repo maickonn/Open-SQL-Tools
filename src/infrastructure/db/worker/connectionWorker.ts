@@ -10,6 +10,10 @@ import { SessionService } from '@application/session/sessionService'
 import { openDatabase } from '../openDatabase'
 import { openSshTunnel } from '../../ssh/sshTunnel'
 import { createFileWriter, readTextFile } from '../../fs/fileWriter'
+import { backupFiles } from '../../fs/backupFiles'
+import { nativeBackupFor } from '../../backup/nativeBackup'
+import { toolLocator } from '../../backup/toolLocator'
+import { toolRunner } from '../../backup/toolRunner'
 
 interface ParentPort {
   on(event: 'message', listener: (e: { data: unknown; ports: MessagePortMain[] }) => void): void
@@ -24,6 +28,9 @@ const service = new SessionService({
   openTunnel: async (profile, secrets) => (profile.ssh.enabled ? openSshTunnel(profile.ssh, secrets, profile.host, profile.port) : null),
   createWriter: createFileWriter,
   readText: readTextFile,
+  files: backupFiles,
+  nativeBackup: nativeBackupFor,
+  backupTools: { locator: toolLocator, runner: toolRunner },
   // Events fan out to every attached port (main + renderer windows).
   emit: (name, payload) => {
     for (const ep of endpoints) ep.emit(name, payload)
@@ -37,7 +44,8 @@ const METHODS: (keyof WorkerApi & string)[] = [
   'generateTableDDL', 'executeStatements', 'objectAction', 'setEnabled', 'setSequenceValue', 'setExceptionMessage', 'listSequences',
   'listExceptions', 'getDependencies', 'getRoutineCall', 'getRoutineOperations', 'createTemplate',
   'getTrigger', 'triggerBodyTemplate', 'triggerStatements', 'saveTrigger', 'bulkAlterTables', 'insertRows', 'hostInfo', 'killProcess', 'listUsers', 'getUserPrivileges',
-  'userStatements', 'exportQuery', 'dumpSql', 'importSqlFile', 'importCsv', 'findText', 'cancelOperation'
+  'userStatements', 'exportQuery', 'dumpSql', 'importSqlFile', 'importCsv', 'findText', 'cancelOperation',
+  'backupDatabase', 'restoreDatabase', 'inspectBackupFile', 'detectBackupTools'
 ]
 
 function wrapPort(port: MessagePortMain): PortLike {

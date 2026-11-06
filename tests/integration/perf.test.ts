@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { SessionService } from '@application/session/sessionService'
 import { openDatabase } from '@infrastructure/db/openDatabase'
 import { createFileWriter, readTextFile } from '@infrastructure/fs/fileWriter'
+import { backupFiles } from '@infrastructure/fs/backupFiles'
 import { availableTargets, profileFor } from './targets'
 
 // Opt-in: PERF=1 npm run test:db -- postgres18
@@ -15,7 +16,7 @@ describe.skipIf(!targets.length)('streaming throughput', () => {
       openDatabase,
       openTunnel: async () => null,
       createWriter: createFileWriter,
-      readText: readTextFile,
+      readText: readTextFile, files: backupFiles,
       emit: (name, payload) => {
         if (name !== 'result:rows') return
         if (!firstChunkAt) firstChunkAt = performance.now()

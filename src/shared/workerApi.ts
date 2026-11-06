@@ -1,4 +1,11 @@
 import type {
+  AppSettings,
+  BackupFileInfo,
+  BackupRequest,
+  BackupResult,
+  BackupToolInfo,
+  RestoreRequest,
+  RestoreResult,
   BulkTableOperations,
   CatalogColumn,
   CatalogRoutine,
@@ -180,6 +187,13 @@ export interface WorkerApi {
   findText(p: { operationId: string; text: string; databases: string[]; caseSensitive: boolean; matchType: 'like' | 'exact' | 'regexp' }): {
     matches: { database?: string; schema?: string; table: string; column: string; count: number }[]
   }
+  /** Backup with the built-in SQL script, an engine-native file or an external tool. */
+  backupDatabase(p: BackupRequest): BackupResult
+  restoreDatabase(p: RestoreRequest): RestoreResult
+  /** What a backup file holds and which restore methods can read it. */
+  inspectBackupFile(p: { filePath: string }): BackupFileInfo
+  /** External client tools for this session's engine, with their compatibility. */
+  detectBackupTools(p: { paths?: AppSettings['backupTools'] }): BackupToolInfo[]
   cancelOperation(p: { operationId: string }): void
 }
 

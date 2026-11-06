@@ -7,6 +7,8 @@ export type DialogState =
   | { kind: 'export'; sessionId: string; source: { ref?: DbObjectRef; sql?: string; database?: string }; result?: ResultSet; title?: string }
   | { kind: 'dump'; sessionId: string; database?: string }
   | { kind: 'importSql'; sessionId: string; database?: string }
+  | { kind: 'backup'; sessionId: string; database?: string }
+  | { kind: 'restore'; sessionId: string; database?: string }
   | { kind: 'importCsv'; sessionId: string; ref?: DbObjectRef }
   | { kind: 'findText'; sessionId: string }
   | { kind: 'users'; sessionId: string }

@@ -3,6 +3,7 @@ import type { Capability, DbEngine, DbObjectRef } from '@shared/model'
 import { SessionService } from '@application/session/sessionService'
 import { openDatabase } from '@infrastructure/db/openDatabase'
 import { createFileWriter, readTextFile } from '@infrastructure/fs/fileWriter'
+import { backupFiles } from '@infrastructure/fs/backupFiles'
 import { creatableKinds, triggerCapabilities } from '@domain/objectCapabilities'
 import { availableTargets, profileFor, type Target } from './targets'
 
@@ -117,7 +118,7 @@ function fixtureFor(target: Target): Fixture {
 describe.skipIf(!targets.length)('object utilities', () => {
   describe.each(targets.map((t) => [t.id, t] as [string, Target]))('%s', (_id, target) => {
     const fx = fixtureFor(target)
-    const svc = new SessionService({ openDatabase, openTunnel: async () => null, createWriter: createFileWriter, readText: readTextFile, emit: () => undefined })
+    const svc = new SessionService({ openDatabase, openTunnel: async () => null, createWriter: createFileWriter, readText: readTextFile, files: backupFiles, emit: () => undefined })
     const run = async (sql: string, stopOnError = true): Promise<void> => {
       const r = await svc.execute({ queryId: 'obj', sql, maxRows: 100, database: fx.database, stopOnError })
       if (stopOnError) expect(r.statements.find((s) => s.error)?.error?.message ?? null).toBeNull()
@@ -150,7 +151,7 @@ describe.skipIf(!targets.length)('object utilities', () => {
 
     it.skipIf(target.engine !== 'firebird')('reads the catalog while another attachment has an uncommitted trigger change', async () => {
       // Another tool compiled a trigger and has not committed yet: catalog reads must not wait for it.
-      const other = new SessionService({ openDatabase, openTunnel: async () => null, createWriter: createFileWriter, readText: readTextFile, emit: () => undefined })
+      const other = new SessionService({ openDatabase, openTunnel: async () => null, createWriter: createFileWriter, readText: readTextFile, files: backupFiles, emit: () => undefined })
       await other.connect({ profile: profileFor(target), secrets: { password: target.password } })
       try {
         await other.setAutocommit({ enabled: false })

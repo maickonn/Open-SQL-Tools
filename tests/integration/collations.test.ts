@@ -4,6 +4,7 @@ import type { CollationInfo } from '@shared/workerApi'
 import { SessionService } from '@application/session/sessionService'
 import { openDatabase } from '@infrastructure/db/openDatabase'
 import { createFileWriter, readTextFile } from '@infrastructure/fs/fileWriter'
+import { backupFiles } from '@infrastructure/fs/backupFiles'
 import { availableTargets, profileFor } from './targets'
 
 // Every collation the table editor offers for a new text column must be accepted by the server.
@@ -22,7 +23,7 @@ function offered(engine: string, all: CollationInfo[]): CollationInfo[] {
 describe.skipIf(!targets.length)('collations offered by the table editor', () => {
   for (const target of targets) {
     it(target.id, async () => {
-      const svc = new SessionService({ openDatabase, openTunnel: async () => null, createWriter: createFileWriter, readText: readTextFile, emit: () => undefined })
+      const svc = new SessionService({ openDatabase, openTunnel: async () => null, createWriter: createFileWriter, readText: readTextFile, files: backupFiles, emit: () => undefined })
       await svc.connect({ profile: profileFor(target), secrets: { password: target.password } })
       const e = target.engine
       const my = e === 'mysql' || e === 'mariadb'

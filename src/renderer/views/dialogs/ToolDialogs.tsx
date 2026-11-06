@@ -2,38 +2,28 @@ import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { FolderOpen, Search } from 'lucide-react'
 import type { DbObjectRef, DumpOptions, ExportFormat, ExportOptions, ProgressInfo } from '@shared/model'
-import { useWorkspace, type SessionState } from '../../stores/workspaceStore'
+import { useWorkspace } from '../../stores/workspaceStore'
 import { useUi, type DialogState } from '../../stores/uiStore'
 import { Badge, Button, Checkbox, Dialog, Field, Input, Select, Spinner, Textarea } from '../../components/ui'
 import { api } from '../../gateways/api'
 import { notify } from '../../stores/toast'
-import { uid } from '../../lib/format'
+import { formatBytes, uid } from '../../lib/format'
 import { parseCsv } from '@application/import/csv'
 import { SHORTCUT_ACTIONS, displayShortcut, resolveShortcut } from '../../lib/shortcuts'
 import { useSettings } from '../../stores/settingsStore'
 import { isSingleDatabase } from '@domain/engineTraits'
+import { useProgress } from './useProgress'
 
 const EXTENSIONS: Record<ExportFormat, string> = { csv: 'csv', tsv: 'tsv', json: 'json', sql: 'sql', html: 'html', xml: 'xml', markdown: 'md', latex: 'tex', xlsx: 'xlsx' }
-
-/** Tracks worker progress events for one operation. */
-function useProgress(session: SessionState | undefined, operationId: string): ProgressInfo | null {
-  const [p, setP] = useState<ProgressInfo | null>(null)
-  useEffect(() => {
-    if (!session) return
-    return session.client.on('progress', (e) => {
-      if (e.operationId === operationId) setP(e)
-    })
-  }, [session, operationId])
-  return p
-}
 
 function ProgressLine({ p }: { p: ProgressInfo | null }) {
   if (!p) return null
   return (
     <span className="mr-auto flex items-center gap-2 text-xs text-muted">
       {!p.finished && <Spinner size={12} />}
-      {p.label} · {p.done.toLocaleString()}
+      {p.object ?? p.label} · {p.done.toLocaleString()}
       {p.total ? ` / ${p.total.toLocaleString()}` : ''}
+      {p.totalBytes ? ` · ${Math.min(100, Math.floor(((p.bytes ?? 0) / p.totalBytes) * 100))}%` : p.bytes ? ` · ${formatBytes(p.bytes)}` : ''}
       {p.error && <span className="text-danger">{p.error}</span>}
     </span>
   )
@@ -310,7 +300,7 @@ export function ImportSqlDialog({ d }: { d: Extract<DialogState, { kind: 'import
           <div className="flex gap-1.5">
             <Input value={file} onChange={(e) => setFile(e.target.value)} className="font-mono text-xs" />
             <Button icon={<FolderOpen size={13} />} onClick={async () => {
-              const f = await api.invoke('dialog:openFile', { filters: [{ name: 'SQL', extensions: ['sql', 'txt'] }] })
+              const f = await api.invoke('dialog:openFile', { filters: [{ name: 'SQL', extensions: ['sql', 'txt', 'gz'] }] })
               if (f) setFile(f)
             }}>
               {t('common.browse')}

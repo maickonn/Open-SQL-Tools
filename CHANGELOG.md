@@ -4,6 +4,12 @@ User-facing changes per release. Add entries under **Unreleased** as you go; bef
 
 ## [Unreleased]
 
+- **Backup database** and **Restore database** (Tools menu and the object tree): a built-in SQL backup read inside one consistent snapshot, with sequence values, views in dependency order, foreign keys and indexes after the data, and optional users, roles and privileges; choose tables (or structure only) and compress to .sql.gz
+- Backups that keep each engine's details: MySQL/MariaDB DEFINER can be left out and events and sequences are included; PostgreSQL extensions, types, domains, identity columns and materialized views; Firebird domains, exceptions, generators, procedures that call each other, NONE text byte for byte and large BLOBs on Firebird 2.5; SQLite AUTOINCREMENT counters
+- Native backups: SQLite file copy with the backup API, Firebird server backups (.fbk) through the services API (restoring them that way needs Firebird 3 or later; on 2.5 use gbak), and the installed mysqldump / mariadb-dump, pg_dump / pg_restore / psql and gbak (paths in Preferences → Backup tools; passwords never go on the command line)
+- Backups and restores run on a connection of their own, so queries and the object tree keep working, and can be cancelled
+- Run SQL file reads the script as it runs (large dumps no longer load into memory) and opens .sql.gz files
+
 ## [0.3.2]
 
 - Update window: the release notes wrap instead of being cut with "…" (and scroll when long)
