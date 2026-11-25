@@ -619,7 +619,7 @@ export interface RestoreRequest {
   commitEvery: number
   native?: NativeBackupOptions & { clean?: boolean; jobs?: number }
   /** Firebird services / gbak and SQLite file restores. */
-  file?: { targetPath: string; replace: boolean; pageSize?: number; verbose?: boolean }
+  file?: { targetPath: string; replace: boolean; pageSize?: number; verbose?: boolean; noValidity?: boolean }
 }
 
 /** Restore of a Firebird backup into a database file, without an open session (Session Manager). */
@@ -639,6 +639,8 @@ export interface StandaloneRestoreRequest {
   toolPath?: string
   /** gbak / services: report every object restored (slower; the lines arrive in ProgressInfo.lines). */
   verbose?: boolean
+  /** gbak / services: leave NOT NULL and CHECK out (-no_validity) so rows that break them restore; default true. */
+  noValidity?: boolean
 }
 
 export interface BackupHeader {

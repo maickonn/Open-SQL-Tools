@@ -9,6 +9,8 @@ import { openDatabase } from '@infrastructure/db/openDatabase'
 import { createFileWriter, readTextFile } from '@infrastructure/fs/fileWriter'
 import { backupFiles } from '@infrastructure/fs/backupFiles'
 import { nativeBackupFor } from '@infrastructure/backup/nativeBackup'
+import { toolLocator } from '@infrastructure/backup/toolLocator'
+import { toolRunner } from '@infrastructure/backup/toolRunner'
 import { availableTargets, profileFor, type Target } from './targets'
 
 const targets = await availableTargets()
@@ -33,6 +35,7 @@ function service(emit: SessionDeps['emit'] = () => undefined): SessionService {
     readText: readTextFile,
     files: backupFiles,
     nativeBackup: nativeBackupFor,
+    backupTools: { locator: toolLocator, runner: toolRunner },
     emit
   })
 }
@@ -379,6 +382,38 @@ describe.each(targets.map((t) => [t.id, t] as const))('backup %s', (id, target) 
     // Verbose: the server reports each restored object.
     await restoreTo('firebird-service', fbk, fromFbk, true, true)
     expect(lines.some((l) => /Z_PARENT/i.test(l))).toBe(true)
+  })
+
+  // Firebird 2.5 adds a NOT NULL column to a table with rows and leaves them NULL; gbak then
+  // refuses them (later versions reject such a column, but databases upgraded from 2.5 keep the rows).
+  it.runIf(id === 'firebird25')('restores rows that break NOT NULL (validity rules are left out by default)', async () => {
+    const profile = await emptyTarget(target, `bk_bad_${id}_${++seq}`)
+    const src = await connect(profile, target.password)
+    await run(src, 'CREATE TABLE BAD (ID INTEGER NOT NULL PRIMARY KEY)')
+    await run(src, 'INSERT INTO BAD VALUES (1)')
+    await run(src, 'ALTER TABLE BAD ADD S VARCHAR(10) NOT NULL')
+    const fbk = `/tmp/ost_bad_${id}_${RUN}.fbk`
+    await src.backupDatabase({ operationId: 'n', filePath: '', method: 'firebird-service', compress: false, native: { serverPath: fbk } })
+    const gbak = (await toolLocator.detect('firebird')).find((t) => t.tool === 'gbak')
+    const local = join(tmp, `bad-${id}.fbk`)
+    if (gbak) await src.backupDatabase({ operationId: 'g', filePath: local, method: 'gbak', compress: false, native: { toolPath: gbak.path } })
+    await src.disconnect()
+    const restore = (method: 'firebird-service' | 'gbak', targetPath: string, noValidity?: boolean) =>
+      service().restoreStandalone({
+        profile: { ...profileFor(target), database: targetPath },
+        secrets: { password: target.password },
+        request: { operationId: 'v', method, filePath: method === 'gbak' ? local : fbk, targetPath, replace: false, pageSize: 8192, stopOnError: true, noValidity, toolPath: gbak?.path }
+      })
+    // Through the services and, when installed here, gbak: the installed one reads a local file.
+    for (const method of gbak ? (['firebird-service', 'gbak'] as const) : (['firebird-service'] as const)) {
+      // The first gbak error explains the failure (not "record could not be restored").
+      await expect(restore(method, `/var/lib/firebird/data/bk_bad1_${method}_${RUN}.fdb`, false)).rejects.toThrow(/validation error for column/i)
+      const ok = `/var/lib/firebird/data/bk_bad2_${method}_${RUN}.fdb`
+      await restore(method, ok)
+      const copy = await connect({ ...profileFor(target), database: ok }, target.password)
+      expect(await rows(copy, 'SELECT ID FROM BAD')).toEqual([[1]])
+      await copy.disconnect()
+    }
   })
 
   it.runIf(engine === 'sqlite')('copies the file with the SQLite backup API', async () => {

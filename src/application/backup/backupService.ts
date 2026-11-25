@@ -129,7 +129,7 @@ export class BackupService {
     if (!req.targetPath) throw new Error('Choose the database file to restore into')
     if (!req.filePath) throw new Error('Choose the backup file')
     const native = this.native('firebird', target)
-    const file = { targetPath: req.targetPath, replace: req.replace, pageSize: req.pageSize, verbose: req.verbose }
+    const file = { targetPath: req.targetPath, replace: req.replace, pageSize: req.pageSize, verbose: req.verbose, noValidity: req.noValidity }
     const done = (r: Partial<RestoreResult> = {}): RestoreResult => ({ statements: 0, errors: 0, warnings: [], ...r, durationMs: Date.now() - started })
     switch (req.method) {
       case 'firebird-service': {

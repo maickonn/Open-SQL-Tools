@@ -204,12 +204,15 @@ export function gbakBackupInvocation(path: string, t: ToolTarget, serverPath: st
 export function gbakRestoreInvocation(
   path: string,
   t: ToolTarget,
-  o: { targetPath: string; replace: boolean; pageSize?: number; serverFile?: boolean; verbose?: boolean },
+  o: { targetPath: string; replace: boolean; pageSize?: number; serverFile?: boolean; verbose?: boolean; noValidity?: boolean },
   source: string | 'stdin',
   extraArgs: string[] = []
 ): ToolInvocation {
   const args = [o.replace ? '-rep' : '-c']
   if (o.verbose) args.push('-v')
+  // Backups often hold rows that break NOT NULL or CHECK (Firebird 2.5 leaves NULLs in NOT NULL columns
+  // added to tables with rows): restore them anyway, without those rules. false keeps the rules.
+  if (o.noValidity !== false) args.push('-no_validity')
   if (o.pageSize) args.push('-page_size', String(o.pageSize))
   args.push(...extraArgs)
   if (o.serverFile) args.push('-se', `${t.endpoint.host}/${t.endpoint.port}:service_mgr`, source, o.targetPath)

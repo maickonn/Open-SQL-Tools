@@ -141,11 +141,14 @@ export async function runToolRestore(db: ToolRestoreDb, tools: BackupToolDeps, f
   const extra = req.native?.extraArgs ?? []
   let lines = 0
   let errors = 0
+  /** gbak: the first ERROR line says why (later ones follow from it); stderr's tail may have lost it. */
+  let firstError = ''
   const onLine = (line: string): void => {
     lines++
     if (/\berror\b/i.test(line)) {
       errors++
       ctl.error(line, '')
+      if (!firstError && /^gbak:\s*ERROR/i.test(line)) firstError = line.replace(/^gbak:\s*ERROR:\s*/i, '')
     }
     ctl.progress({ done: lines, errors, bytes: 0, totalBytes: 0, line })
   }
@@ -168,7 +171,12 @@ export async function runToolRestore(db: ToolRestoreDb, tools: BackupToolDeps, f
       break
     case 'gbak': {
       if (!req.file?.targetPath) throw new Error('Choose the database file to restore into')
-      await run(tools, gbakRestoreInvocation(tool.path, t, req.file, 'stdin', extra), { stdinFile: req.filePath }, ctl, onLine)
+      try {
+        await run(tools, gbakRestoreInvocation(tool.path, t, req.file, 'stdin', extra), { stdinFile: req.filePath }, ctl, onLine)
+      } catch (err) {
+        if (firstError && !(err instanceof BackupCancelled)) throw new Error(firstError)
+        throw err
+      }
       break
     }
     default:

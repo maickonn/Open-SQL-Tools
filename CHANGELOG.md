@@ -9,6 +9,7 @@ User-facing changes per release. Add entries under **Unreleased** as you go; bef
 - Native backups: SQLite file copy with the backup API, Firebird server backups (.fbk) through the services API (restoring them that way needs Firebird 3 or later; on 2.5 use gbak), and the installed mysqldump / mariadb-dump, pg_dump / pg_restore / psql and gbak (paths in Preferences → Backup tools; passwords never go on the command line)
 - **Restore backup…** in the Session Manager (Firebird): builds the database file from a .fbk (installed gbak, or a file on the server through the services API) or a built-in SQL backup before anything connects to it, then connects
 - Restores of .fbk files (gbak or Firebird services) no longer run in verbose mode, which slowed large databases; turn on **Show each restored object** to follow the server's output live in the dialog
+- .fbk restores (gbak or Firebird services) use gbak's -no_validity, so backups whose rows break a NOT NULL or CHECK rule (common in databases from Firebird 2.5) restore; the restored database has no NOT NULL or CHECK rules. A failed gbak restore reports its first error (the reason) instead of the last
 - Backups and restores run on a connection of their own, so queries and the object tree keep working, and can be cancelled
 - Run SQL file reads the script as it runs (large dumps no longer load into memory) and opens .sql.gz files
 

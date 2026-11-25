@@ -203,11 +203,13 @@ describe('client tool commands', () => {
     expect(inv.env).toEqual({ ISC_USER: 'admin', ISC_PASSWORD: 's3cr"et' })
   })
 
-  it('restores with gbak verbosely only when asked', () => {
+  it('restores with gbak without validity rules, verbosely only when asked', () => {
     const quiet = gbakRestoreInvocation('gbak', target, { targetPath: '/data/y.fdb', replace: false }, 'stdin')
-    expect(quiet.args).toEqual(['-c', 'stdin', '127.0.0.1/40000:/data/y.fdb'])
+    expect(quiet.args).toEqual(['-c', '-no_validity', 'stdin', '127.0.0.1/40000:/data/y.fdb'])
     const loud = gbakRestoreInvocation('gbak', target, { targetPath: '/data/y.fdb', replace: true, verbose: true, pageSize: 8192 }, 'stdin')
-    expect(loud.args).toEqual(['-rep', '-v', '-page_size', '8192', 'stdin', '127.0.0.1/40000:/data/y.fdb'])
+    expect(loud.args).toEqual(['-rep', '-v', '-no_validity', '-page_size', '8192', 'stdin', '127.0.0.1/40000:/data/y.fdb'])
+    const strict = gbakRestoreInvocation('gbak', target, { targetPath: '/data/y.fdb', replace: false, noValidity: false }, 'stdin')
+    expect(strict.args).toEqual(['-c', 'stdin', '127.0.0.1/40000:/data/y.fdb'])
   })
 })
 

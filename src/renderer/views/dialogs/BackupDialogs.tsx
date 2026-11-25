@@ -444,7 +444,13 @@ export function BackupDialog({
       }
     >
       <div className="grid grid-cols-[minmax(0,1fr)] gap-4 p-4">
-        <div inert={busy} className={cx("grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4", busy && "opacity-60")}>
+        <div
+          inert={busy}
+          className={cx(
+            "grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4",
+            busy && "opacity-60",
+          )}
+        >
           <div className="grid grid-cols-[1fr_auto] items-start gap-2">
             <Field
               label={t("backup.method")}
@@ -1078,7 +1084,13 @@ export function RestoreDialog({
       }
     >
       <div className="grid grid-cols-[minmax(0,1fr)] gap-3 p-4">
-        <div inert={busy} className={cx("grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3", busy && "opacity-60")}>
+        <div
+          inert={busy}
+          className={cx(
+            "grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3",
+            busy && "opacity-60",
+          )}
+        >
           {!usesServerFile && (
             <Field label={t("restore.file")}>
               <div className="flex gap-1.5">
@@ -1514,7 +1526,13 @@ export function FirebirdRestoreDialog({
       }
     >
       <div className="grid grid-cols-[minmax(0,1fr)] gap-3 p-4">
-        <div inert={busy} className={cx("grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3", busy && "opacity-60")}>
+        <div
+          inert={busy}
+          className={cx(
+            "grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3",
+            busy && "opacity-60",
+          )}
+        >
           <p className="text-xs text-muted">
             {t("restore.standalone.intro", {
               server: `${profile.host}:${profile.port}`,

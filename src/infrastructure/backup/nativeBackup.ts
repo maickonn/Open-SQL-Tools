@@ -113,7 +113,7 @@ function firebirdService(target: ConnectionTarget): EngineNativeBackup {
 
   const follow = async (output: Readable, progress: NativeProgress, signal: AbortSignal): Promise<void> => {
     let lines = 0
-    let lastError = ''
+    let firstError = ''
     await new Promise<void>((resolve, reject) => {
       const onAbort = (): void => {
         output.destroy()
@@ -123,12 +123,13 @@ function firebirdService(target: ConnectionTarget): EngineNativeBackup {
       output.on('data', (line: Buffer | string) => {
         const text = String(line).trim()
         lines++
-        if (/^gbak:\s*ERROR/i.test(text)) lastError = text
+        // The first error says why (e.g. a NOT NULL column holding NULL); later ones only follow from it.
+        if (/^gbak:\s*ERROR/i.test(text) && !firstError) firstError = text.replace(/^gbak:\s*ERROR:\s*/i, '')
         progress(lines, undefined, text)
       })
       output.on('end', () => {
         signal.removeEventListener('abort', onAbort)
-        if (lastError) reject(new Error(lastError))
+        if (firstError) reject(new Error(firstError))
         else resolve()
       })
       output.on('error', (e) => reject(e))
@@ -186,7 +187,7 @@ function firebirdService(target: ConnectionTarget): EngineNativeBackup {
       ),
     backup: (dest, _o, progress, signal) => run('backup', { database: target.profile.database, files: dest, verbose: true }, progress, signal),
     restore: (source, o, progress, signal) =>
-      run('restore', { files: source, database: o.targetPath, replace: o.replace, pagesize: o.pageSize ?? 8192, verbose: !!o.verbose }, progress, signal)
+      run('restore', { files: source, database: o.targetPath, replace: o.replace, pagesize: o.pageSize ?? 8192, verbose: !!o.verbose, novalidity: o.noValidity !== false }, progress, signal)
   }
 }
 
