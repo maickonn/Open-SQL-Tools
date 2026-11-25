@@ -95,6 +95,7 @@ export async function runLogicalBackup(
           serverVersion: db.info.version,
           serverLabel: db.info.label,
           databases: target.databases.filter(Boolean),
+          ...(db.info.defaultCharset ? { charset: db.info.defaultCharset } : {}),
           createdAt: new Date().toISOString(),
           app: 'Open SQL Tools'
         })

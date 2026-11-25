@@ -8,8 +8,11 @@ import type {
   ConnectionSecrets,
   DbEngine,
   RestoreRequest,
-  RestoreResult
+  RestoreResult,
+  ServerInfo,
+  StandaloneRestoreRequest
 } from '@shared/model'
+import { capabilitiesFor, encodeVersion } from '@domain/serverVersion'
 import type { OpenDatabase } from '@domain/ports/database'
 import type { BackupFiles, EngineNativeBackup, NativeToolRunner, ToolLocator } from '@domain/ports/backup'
 import { sniffBackupFile } from '@domain/backup/backupHeader'
@@ -88,7 +91,7 @@ export class BackupService {
         if (replacesCurrent) await db.close()
         const signal = abortSignal(ctl)
         try {
-          await native.restore(req.filePath, req.file, (done, total) => ctl.progress({ done: 0, errors: 0, bytes: done, totalBytes: total ?? 0 }), signal.signal)
+          await native.restore(req.filePath, req.file, (done, total, line) => ctl.progress({ done, errors: 0, bytes: 0, totalBytes: total ?? 0, line }), signal.signal)
         } finally {
           signal.dispose()
           if (replacesCurrent) await ctl.reopen()
@@ -101,7 +104,14 @@ export class BackupService {
         const replacesCurrent = req.method === 'gbak' && !!req.file?.targetPath && !!current && samePath(req.file.targetPath, current)
         if (replacesCurrent) await db.close()
         try {
-          return await runToolRestore(db, this.requireTools(), this.deps.files, req, target, ctl)
+          const toolDb = {
+            info: db.info,
+            createDatabase: (name: string) =>
+              db.metaLock.run(async () => {
+                await db.meta.run(`CREATE DATABASE ${db.dialect.quoteIdent(name)}`, null, { maxRows: 1, chunkSize: 1 })
+              })
+          }
+          return await runToolRestore(toolDb, this.requireTools(), this.deps.files, req, target, ctl)
         } finally {
           if (replacesCurrent) await ctl.reopen()
         }
@@ -109,15 +119,70 @@ export class BackupService {
     }
   }
 
-  async inspect(db: OpenDatabase, filePath: string): Promise<BackupFileInfo> {
-    const head = await this.deps.files.head(filePath, 64 * 1024)
-    const sniffed = sniffBackupFile(head.bytes, head.compressed, head.size, db.info.engine)
-    const info = serviceRestoreSupported(db) ? sniffed : { ...sniffed, methods: sniffed.methods.filter((m) => m !== 'firebird-service') }
-    // Firebird backups (.fbk) carry no magic number.
-    if (info.kind === 'unknown' && db.info.engine === 'firebird' && /\.(fbk|gbk)(\.gz)?$/i.test(filePath)) {
-      return { ...info, kind: 'fbk', methods: serviceRestoreSupported(db) ? ['gbak', 'firebird-service'] : ['gbak'] }
+  /**
+   * Firebird restore into a database file with nothing attached (the Session Manager's restore):
+   * gbak or the services API rebuild it from a .fbk, a built-in SQL backup runs into a new file.
+   */
+  async restoreStandalone(target: ConnectionTarget, req: StandaloneRestoreRequest, ctl: RestoreControl, open: (profile: ConnectionProfile) => Promise<OpenDatabase>): Promise<RestoreResult> {
+    const started = Date.now()
+    if (target.profile.engine !== 'firebird') throw new Error('Restoring without a session is only available for Firebird')
+    if (!req.targetPath) throw new Error('Choose the database file to restore into')
+    if (!req.filePath) throw new Error('Choose the backup file')
+    const native = this.native('firebird', target)
+    const file = { targetPath: req.targetPath, replace: req.replace, pageSize: req.pageSize, verbose: req.verbose }
+    const done = (r: Partial<RestoreResult> = {}): RestoreResult => ({ statements: 0, errors: 0, warnings: [], ...r, durationMs: Date.now() - started })
+    switch (req.method) {
+      case 'firebird-service': {
+        const signal = abortSignal(ctl)
+        try {
+          await native.restore(req.filePath, file, (n, total, line) => ctl.progress({ done: n, errors: 0, bytes: 0, totalBytes: total ?? 0, line }), signal.signal)
+        } finally {
+          signal.dispose()
+        }
+        return done()
+      }
+      case 'gbak': {
+        const info = firebirdServerInfo(await native.serverVersion?.().catch(() => '') ?? '')
+        const r = await runToolRestore({ info }, this.requireTools(), this.deps.files, {
+          operationId: req.operationId,
+          filePath: req.filePath,
+          method: 'gbak',
+          stopOnError: req.stopOnError,
+          singleTransaction: false,
+          commitEvery: 100,
+          file,
+          native: req.toolPath ? { toolPath: req.toolPath } : undefined
+        }, target, ctl)
+        return done(r)
+      }
+      case 'logical': {
+        if (!native.createDatabase || !native.dropDatabase) throw new Error('This server cannot create databases here')
+        if (req.replace) await native.dropDatabase(req.targetPath).catch(() => undefined)
+        await native.createDatabase(req.targetPath, { pageSize: req.pageSize, charset: req.charset })
+        let db: OpenDatabase | null = null
+        try {
+          db = await open({ ...target.profile, database: req.targetPath })
+          const r = await runLogicalRestore(db, this.deps.files, { operationId: req.operationId, filePath: req.filePath, method: 'logical', stopOnError: req.stopOnError, singleTransaction: false, commitEvery: 100 }, ctl)
+          return done(r)
+        } catch (err) {
+          // A cancelled restore leaves no half-built database behind.
+          if (ctl.isCancelled()) {
+            await db?.close().catch(() => undefined)
+            db = null
+            await native.dropDatabase(req.targetPath).catch(() => undefined)
+          }
+          throw err
+        } finally {
+          await db?.close().catch(() => undefined)
+        }
+      }
+      default:
+        throw new Error(`Unknown restore method: ${String(req.method)}`)
     }
-    return info
+  }
+
+  async inspect(db: OpenDatabase, filePath: string): Promise<BackupFileInfo> {
+    return inspectBackupHead(filePath, await this.deps.files.head(filePath, 64 * 1024), db.info.engine, serviceRestoreSupported(db))
   }
 
   async detectTools(db: OpenDatabase, paths?: AppSettings['backupTools']): Promise<BackupToolInfo[]> {
@@ -154,6 +219,24 @@ function abortSignal(ctl: { onAbort(abort: (() => Promise<void>) | null): void }
   const controller = new AbortController()
   ctl.onAbort(async () => controller.abort())
   return { signal: controller.signal, dispose: () => ctl.onAbort(null) }
+}
+
+/** What a backup file holds, from its first bytes; `serviceRestore` offers the Firebird services restore. */
+export function inspectBackupHead(filePath: string, head: { bytes: Uint8Array; compressed: boolean; size: number }, engine: DbEngine, serviceRestore = true): BackupFileInfo {
+  const sniffed = sniffBackupFile(head.bytes, head.compressed, head.size, engine)
+  const info = serviceRestore ? sniffed : { ...sniffed, methods: sniffed.methods.filter((m) => m !== 'firebird-service') }
+  // Firebird backups (.fbk) carry no magic number.
+  if (info.kind === 'unknown' && engine === 'firebird' && /\.(fbk|gbk)(\.gz)?$/i.test(filePath)) {
+    return { ...info, kind: 'fbk', methods: serviceRestore ? ['gbak', 'firebird-service'] : ['gbak'] }
+  }
+  return info
+}
+
+/** ServerInfo of a Firebird server known only by its services version string (e.g. "LI-V2.5.9.27139 Firebird 2.5"). */
+export function firebirdServerInfo(versionString: string): ServerInfo {
+  const m = /V(\d+)\.(\d+)\.(\d+)/.exec(versionString) ?? /(\d+)\.(\d+)(?:\.(\d+))?/.exec(versionString)
+  const version = m ? encodeVersion(Number(m[1]), Number(m[2]), Number(m[3] ?? 0)) : 0
+  return { engine: 'firebird', versionString, version, label: m ? `Firebird ${m[1]}.${m[2]}.${m[3] ?? 0}` : 'Firebird', capabilities: capabilitiesFor('firebird', version) }
 }
 
 function samePath(a: string, b: string): boolean {

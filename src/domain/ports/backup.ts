@@ -77,5 +77,11 @@ export type NativeProgress = (done: number, total?: number, line?: string) => vo
 export interface EngineNativeBackup {
   /** `dest`: local file (SQLite) or path on the server (Firebird services). */
   backup(dest: string, options: { gzip?: boolean }, progress: NativeProgress, signal: AbortSignal): Promise<void>
-  restore(source: string, options: { targetPath: string; replace: boolean; pageSize?: number }, progress: NativeProgress, signal: AbortSignal): Promise<void>
+  restore(source: string, options: { targetPath: string; replace: boolean; pageSize?: number; verbose?: boolean }, progress: NativeProgress, signal: AbortSignal): Promise<void>
+  /** Firebird: the server's version string, read through the services API (no database attached). */
+  serverVersion?(): Promise<string>
+  /** Firebird: creates an empty database file on the server. */
+  createDatabase?(path: string, options: { pageSize?: number; charset?: string }): Promise<void>
+  /** Firebird: drops the database file on the server (fails while others are attached to it). */
+  dropDatabase?(path: string): Promise<void>
 }

@@ -7,7 +7,7 @@ import { restoreScript, type RestoreTransactionMode } from './scriptRestorer'
 export interface RestoreControl {
   isCancelled(): boolean
   onAbort(abort: (() => Promise<void>) | null): void
-  progress(p: { done: number; errors: number; bytes: number; totalBytes: number }): void
+  progress(p: { done: number; errors: number; bytes: number; totalBytes: number; line?: string }): void
   error(message: string, sql: string): void
 }
 

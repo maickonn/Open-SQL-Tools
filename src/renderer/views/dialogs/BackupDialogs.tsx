@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { FolderOpen, RefreshCw, Search } from "lucide-react";
 import type {
@@ -7,10 +7,13 @@ import type {
   BackupObjectKinds,
   BackupTableSelection,
   BackupToolInfo,
+  ConnectionProfile,
+  ConnectionSecrets,
   DbEngine,
   LogicalBackupOptions,
   ProgressInfo,
   RestoreMethod,
+  StandaloneRestoreRequest,
 } from "@shared/model";
 import { ENGINE_LABELS } from "@shared/model";
 import { hasCapability } from "@domain/serverVersion";
@@ -42,6 +45,21 @@ function Progress({ p }: { p: ProgressInfo | null }) {
   const pct = p.totalBytes
     ? Math.min(100, Math.floor(((p.bytes ?? 0) / p.totalBytes) * 100))
     : null;
+  // A restore has a single phase, already shown by the busy button: only its statements and
+  // share of the file read are news. gbak / services restores report neither (only errors).
+  if (p.phase === "restore") {
+    if (!p.error && pct === null) return null;
+    return (
+      <span className="mr-auto flex min-w-0 items-center gap-2 text-xs text-muted">
+        {pct !== null && !p.error && (
+          <span className="truncate">
+            {p.done.toLocaleString()} · {pct}%
+          </span>
+        )}
+        {p.error && <span className="truncate text-danger">{p.error}</span>}
+      </span>
+    );
+  }
   return (
     <span className="mr-auto flex min-w-0 items-center gap-2 text-xs text-muted">
       {!p.finished && <Spinner size={12} />}
@@ -57,6 +75,67 @@ function Progress({ p }: { p: ProgressInfo | null }) {
       </span>
       {p.error && <span className="truncate text-danger">{p.error}</span>}
     </span>
+  );
+}
+
+/** Most recent output lines kept on screen. */
+const LOG_LINES = 5_000;
+
+/** Accumulates the output lines of a verbose restore from its progress events. */
+function useRestoreLog(p: ProgressInfo | null): string[] {
+  const [lines, setLines] = useState<string[]>([]);
+  useEffect(() => {
+    const add = p?.lines;
+    if (add?.length) setLines((l) => [...l, ...add].slice(-LOG_LINES));
+  }, [p]);
+  return lines;
+}
+
+/** gbak / Firebird services: report every restored object (off by default: it slows big restores). */
+function VerboseOption({
+  checked,
+  onChange,
+}: {
+  checked: boolean;
+  onChange(v: boolean): void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="grid gap-0.5">
+      <Checkbox
+        checked={checked}
+        onChange={onChange}
+        label={t("restore.verbose")}
+      />
+      <span className="pl-6 text-[11px] text-subtle">
+        {t("restore.verboseHint")}
+      </span>
+    </div>
+  );
+}
+
+/** Output of a verbose restore, following the newest line unless scrolled up. */
+function RestoreLog({ lines }: { lines: string[] }) {
+  const { t } = useTranslation();
+  const ref = useRef<HTMLPreElement>(null);
+  const stick = useRef(true);
+  useEffect(() => {
+    const el = ref.current;
+    if (el && stick.current) el.scrollTop = el.scrollHeight;
+  }, [lines]);
+  return (
+    <Field label={t("restore.log")} className="min-w-0">
+      <pre
+        ref={ref}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+        }}
+        className="h-48 w-full min-w-0 overflow-auto whitespace-pre rounded-md border border-border bg-sunken px-2 py-1.5 font-mono text-[11px] leading-4 text-muted select-text"
+      >
+        {lines.join("\n")}
+      </pre>
+    </Field>
   );
 }
 
@@ -331,7 +410,12 @@ export function BackupDialog({
   return (
     <Dialog
       open
-      onOpenChange={(v) => !v && !busy && close()}
+      locked={busy}
+      onOpenChange={(v) => {
+        if (v) return;
+        if (busy) vm.cancel(session.id, opId);
+        else close();
+      }}
       title={t("backup.title", { engine: ENGINE_LABELS[engine] })}
       width={820}
       footer={
@@ -359,401 +443,406 @@ export function BackupDialog({
         </>
       }
     >
-      <div className="grid gap-4 p-4">
-        <div className="grid grid-cols-[1fr_auto] items-start gap-2">
-          <Field
-            label={t("backup.method")}
-            hint={
-              current?.hint ??
-              t(`backup.methodHint.${method}`, { defaultValue: "" })
-            }
-          >
-            <Select
-              value={method}
-              onChange={(e) => setMethod(e.target.value as BackupMethod)}
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-4 p-4">
+        <div inert={busy} className={cx("grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4", busy && "opacity-60")}>
+          <div className="grid grid-cols-[1fr_auto] items-start gap-2">
+            <Field
+              label={t("backup.method")}
+              hint={
+                current?.hint ??
+                t(`backup.methodHint.${method}`, { defaultValue: "" })
+              }
             >
-              {methods.map((m) => (
-                <option key={m.value} value={m.value} disabled={m.disabled}>
-                  {m.label}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          {!isFileBased(engine) && (
-            // The label above the select is 20px tall: line the button up with the select, not the hint.
-            <div className="mt-5">
-              <Button
-                icon={
-                  tools === null ? (
-                    <Spinner size={13} />
-                  ) : (
-                    <RefreshCw size={13} />
-                  )
-                }
-                onClick={() => {
-                  setTools(null);
-                  vm.detectTools(session.id, true).then(setTools, () =>
-                    setTools([]),
-                  );
-                }}
+              <Select
+                value={method}
+                onChange={(e) => setMethod(e.target.value as BackupMethod)}
               >
-                {t("backup.detectTools")}
-              </Button>
+                {methods.map((m) => (
+                  <option key={m.value} value={m.value} disabled={m.disabled}>
+                    {m.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            {!isFileBased(engine) && (
+              // The label above the select is 20px tall: line the button up with the select, not the hint.
+              <div className="mt-5">
+                <Button
+                  icon={
+                    tools === null ? (
+                      <Spinner size={13} />
+                    ) : (
+                      <RefreshCw size={13} />
+                    )
+                  }
+                  onClick={() => {
+                    setTools(null);
+                    vm.detectTools(session.id, true).then(setTools, () =>
+                      setTools([]),
+                    );
+                  }}
+                >
+                  {t("backup.detectTools")}
+                </Button>
+              </div>
+            )}
+          </div>
+
+          {(logical || native) && (
+            <div className="grid grid-cols-[260px_1fr] gap-4">
+              <div className="flex flex-col gap-2">
+                {!single && (
+                  <Field
+                    label={t("dump.databases")}
+                    hint={
+                      isPg && dbs.length > 1
+                        ? t("backup.pgOneFilePerDb")
+                        : undefined
+                    }
+                  >
+                    <div className="h-40 overflow-auto rounded-md border border-border bg-sunken p-2">
+                      {(session.databases ?? []).map((db) => (
+                        <Checkbox
+                          key={db}
+                          block
+                          className="py-0.5"
+                          checked={dbs.includes(db)}
+                          onChange={(v) =>
+                            setDbs((x) =>
+                              v ? [...x, db] : x.filter((y) => y !== db),
+                            )
+                          }
+                          label={db}
+                        />
+                      ))}
+                    </div>
+                  </Field>
+                )}
+                {logical && (
+                  <div className="flex flex-col gap-1.5">
+                    <span className="text-xs font-medium text-muted">
+                      {t("backup.objects")}
+                    </span>
+                    <Checkbox
+                      checked={o.objects.views}
+                      onChange={(v) => setKind({ views: v })}
+                      label={t("dump.views")}
+                    />
+                    {hasCapability(caps, "materializedViews") && (
+                      <Checkbox
+                        checked={o.objects.materializedViews}
+                        onChange={(v) => setKind({ materializedViews: v })}
+                        label={t("backup.materializedViews")}
+                      />
+                    )}
+                    {engine !== "sqlite" && (
+                      <Checkbox
+                        checked={o.objects.routines}
+                        onChange={(v) => setKind({ routines: v })}
+                        label={t("dump.routines")}
+                      />
+                    )}
+                    <Checkbox
+                      checked={o.objects.triggers}
+                      onChange={(v) => setKind({ triggers: v })}
+                      label={t("dump.triggers")}
+                    />
+                    {hasCapability(caps, "sequences") && (
+                      <Checkbox
+                        checked={o.objects.sequences}
+                        onChange={(v) => setKind({ sequences: v })}
+                        label={t("backup.sequences")}
+                      />
+                    )}
+                    {(hasCapability(caps, "domains") || isPg) && (
+                      <Checkbox
+                        checked={o.objects.domainsAndTypes}
+                        onChange={(v) => setKind({ domainsAndTypes: v })}
+                        label={
+                          isFb
+                            ? t("backup.domainsExceptions")
+                            : t("backup.domainsTypes")
+                        }
+                      />
+                    )}
+                    {hasCapability(caps, "events") && (
+                      <Checkbox
+                        checked={o.objects.events}
+                        onChange={(v) => setKind({ events: v })}
+                        label={t("backup.events")}
+                      />
+                    )}
+                    {isPg && (
+                      <Checkbox
+                        checked={o.objects.extensions}
+                        onChange={(v) => setKind({ extensions: v })}
+                        label={t("backup.extensions")}
+                      />
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <Field
+                label={t("backup.tables")}
+                hint={tableDb === null ? t("backup.tablesAll") : undefined}
+              >
+                {tableDb === null ? (
+                  <div className="flex h-64 items-center justify-center rounded-md border border-border bg-sunken text-xs text-subtle">
+                    {t("backup.tablesAll")}
+                  </div>
+                ) : !tables ? (
+                  <div className="flex h-64 items-center justify-center rounded-md border border-border bg-sunken">
+                    <Spinner />
+                  </div>
+                ) : (
+                  <div className="flex h-64 flex-col rounded-md border border-border bg-sunken">
+                    <div className="flex items-center gap-2 border-b border-border px-2 py-1">
+                      <Search size={12} className="text-subtle" />
+                      <input
+                        className="min-w-0 flex-1 bg-transparent text-xs outline-none"
+                        placeholder={t("backup.filter")}
+                        value={filter}
+                        onChange={(e) => setFilter(e.target.value)}
+                      />
+                    </div>
+                    <div className="grid grid-cols-[1fr_64px_64px_80px] items-center gap-2 border-b border-border px-2 py-1 text-[11px] text-muted">
+                      <Checkbox
+                        checked={allIncluded}
+                        onChange={(v) => setAll("include", v)}
+                        label={t("backup.table")}
+                      />
+                      <Checkbox
+                        checked={allData}
+                        onChange={(v) => setAll("data", v)}
+                        label={t("backup.data")}
+                      />
+                      <span className="text-right">{t("backup.rows")}</span>
+                      <span className="text-right">{t("backup.size")}</span>
+                    </div>
+                    <div className="flex-1 overflow-auto">
+                      {visible.map((r) => {
+                        const c = choice[key(r)] ?? {
+                          include: true,
+                          data: true,
+                        };
+                        const upd = (patch: Partial<typeof c>): void =>
+                          setChoice((x) => ({
+                            ...x,
+                            [key(r)]: { ...c, ...patch },
+                          }));
+                        return (
+                          <div
+                            key={key(r)}
+                            className={cx(
+                              "grid grid-cols-[1fr_64px_64px_80px] items-center gap-2 px-2 py-0.5 text-xs",
+                              !c.include && "opacity-60",
+                            )}
+                          >
+                            <Checkbox
+                              checked={c.include}
+                              onChange={(v) => upd({ include: v })}
+                              label={
+                                <span className="truncate font-mono">
+                                  {r.schema && isPg
+                                    ? `${r.schema}.${r.name}`
+                                    : r.name}
+                                </span>
+                              }
+                            />
+                            <Checkbox
+                              checked={c.data}
+                              disabled={!c.include}
+                              onChange={(v) => upd({ data: v })}
+                            />
+                            <span className="text-right tabular-nums text-subtle">
+                              {r.rows?.toLocaleString() ?? ""}
+                            </span>
+                            <span className="text-right tabular-nums text-subtle">
+                              {formatBytes(r.sizeBytes)}
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </Field>
             </div>
           )}
-        </div>
 
-        {(logical || native) && (
-          <div className="grid grid-cols-[260px_1fr] gap-4">
-            <div className="flex flex-col gap-2">
-              {!single && (
-                <Field
-                  label={t("dump.databases")}
-                  hint={
-                    isPg && dbs.length > 1
-                      ? t("backup.pgOneFilePerDb")
-                      : undefined
-                  }
-                >
-                  <div className="h-40 overflow-auto rounded-md border border-border bg-sunken p-2">
-                    {(session.databases ?? []).map((db) => (
-                      <Checkbox
-                        key={db}
-                        block
-                        className="py-0.5"
-                        checked={dbs.includes(db)}
-                        onChange={(v) =>
-                          setDbs((x) =>
-                            v ? [...x, db] : x.filter((y) => y !== db),
-                          )
-                        }
-                        label={db}
-                      />
-                    ))}
-                  </div>
-                </Field>
+          {logical && (
+            <div className="grid grid-cols-3 gap-x-4 gap-y-1.5">
+              <Checkbox
+                checked={o.sequenceValues}
+                onChange={(v) => set({ sequenceValues: v })}
+                label={t("backup.sequenceValues")}
+              />
+              {/* Firebird has no DROP … IF EXISTS: restore into a new database file instead. */}
+              {!isFb && (
+                <Checkbox
+                  checked={o.dropObjects}
+                  onChange={(v) => set({ dropObjects: v })}
+                  label={t("backup.dropObjects")}
+                />
               )}
-              {logical && (
-                <div className="flex flex-col gap-1.5">
-                  <span className="text-xs font-medium text-muted">
-                    {t("backup.objects")}
-                  </span>
-                  <Checkbox
-                    checked={o.objects.views}
-                    onChange={(v) => setKind({ views: v })}
-                    label={t("dump.views")}
-                  />
-                  {hasCapability(caps, "materializedViews") && (
-                    <Checkbox
-                      checked={o.objects.materializedViews}
-                      onChange={(v) => setKind({ materializedViews: v })}
-                      label={t("backup.materializedViews")}
-                    />
-                  )}
-                  {engine !== "sqlite" && (
-                    <Checkbox
-                      checked={o.objects.routines}
-                      onChange={(v) => setKind({ routines: v })}
-                      label={t("dump.routines")}
-                    />
-                  )}
-                  <Checkbox
-                    checked={o.objects.triggers}
-                    onChange={(v) => setKind({ triggers: v })}
-                    label={t("dump.triggers")}
-                  />
-                  {hasCapability(caps, "sequences") && (
-                    <Checkbox
-                      checked={o.objects.sequences}
-                      onChange={(v) => setKind({ sequences: v })}
-                      label={t("backup.sequences")}
-                    />
-                  )}
-                  {(hasCapability(caps, "domains") || isPg) && (
-                    <Checkbox
-                      checked={o.objects.domainsAndTypes}
-                      onChange={(v) => setKind({ domainsAndTypes: v })}
-                      label={
-                        isFb
-                          ? t("backup.domainsExceptions")
-                          : t("backup.domainsTypes")
-                      }
-                    />
-                  )}
-                  {hasCapability(caps, "events") && (
-                    <Checkbox
-                      checked={o.objects.events}
-                      onChange={(v) => setKind({ events: v })}
-                      label={t("backup.events")}
-                    />
-                  )}
-                  {isPg && (
-                    <Checkbox
-                      checked={o.objects.extensions}
-                      onChange={(v) => setKind({ extensions: v })}
-                      label={t("backup.extensions")}
-                    />
-                  )}
-                </div>
+              <Checkbox
+                checked={o.consistentSnapshot}
+                onChange={(v) => set({ consistentSnapshot: v })}
+                label={t("backup.snapshot")}
+              />
+              {isMy && (
+                <Checkbox
+                  checked={o.createDatabase}
+                  onChange={(v) => set({ createDatabase: v })}
+                  label={t("dump.createDatabase")}
+                />
+              )}
+              {isMy && (
+                <Checkbox
+                  checked={o.stripDefiners}
+                  onChange={(v) => set({ stripDefiners: v })}
+                  label={t("backup.stripDefiners")}
+                />
+              )}
+              {isPg && (
+                <Checkbox
+                  checked={o.includeOwners}
+                  onChange={(v) => set({ includeOwners: v })}
+                  label={t("backup.owners")}
+                />
+              )}
+              {engine !== "sqlite" && (
+                <Checkbox
+                  checked={o.usersAndGrants}
+                  onChange={(v) => set({ usersAndGrants: v })}
+                  label={t("backup.usersGrants")}
+                />
               )}
             </div>
-
-            <Field
-              label={t("backup.tables")}
-              hint={tableDb === null ? t("backup.tablesAll") : undefined}
-            >
-              {tableDb === null ? (
-                <div className="flex h-64 items-center justify-center rounded-md border border-border bg-sunken text-xs text-subtle">
-                  {t("backup.tablesAll")}
-                </div>
-              ) : !tables ? (
-                <div className="flex h-64 items-center justify-center rounded-md border border-border bg-sunken">
-                  <Spinner />
-                </div>
-              ) : (
-                <div className="flex h-64 flex-col rounded-md border border-border bg-sunken">
-                  <div className="flex items-center gap-2 border-b border-border px-2 py-1">
-                    <Search size={12} className="text-subtle" />
-                    <input
-                      className="min-w-0 flex-1 bg-transparent text-xs outline-none"
-                      placeholder={t("backup.filter")}
-                      value={filter}
-                      onChange={(e) => setFilter(e.target.value)}
-                    />
-                  </div>
-                  <div className="grid grid-cols-[1fr_64px_64px_80px] items-center gap-2 border-b border-border px-2 py-1 text-[11px] text-muted">
-                    <Checkbox
-                      checked={allIncluded}
-                      onChange={(v) => setAll("include", v)}
-                      label={t("backup.table")}
-                    />
-                    <Checkbox
-                      checked={allData}
-                      onChange={(v) => setAll("data", v)}
-                      label={t("backup.data")}
-                    />
-                    <span className="text-right">{t("backup.rows")}</span>
-                    <span className="text-right">{t("backup.size")}</span>
-                  </div>
-                  <div className="flex-1 overflow-auto">
-                    {visible.map((r) => {
-                      const c = choice[key(r)] ?? { include: true, data: true };
-                      const upd = (patch: Partial<typeof c>): void =>
-                        setChoice((x) => ({
-                          ...x,
-                          [key(r)]: { ...c, ...patch },
-                        }));
-                      return (
-                        <div
-                          key={key(r)}
-                          className={cx(
-                            "grid grid-cols-[1fr_64px_64px_80px] items-center gap-2 px-2 py-0.5 text-xs",
-                            !c.include && "opacity-60",
-                          )}
-                        >
-                          <Checkbox
-                            checked={c.include}
-                            onChange={(v) => upd({ include: v })}
-                            label={
-                              <span className="truncate font-mono">
-                                {r.schema && isPg
-                                  ? `${r.schema}.${r.name}`
-                                  : r.name}
-                              </span>
-                            }
-                          />
-                          <Checkbox
-                            checked={c.data}
-                            disabled={!c.include}
-                            onChange={(v) => upd({ data: v })}
-                          />
-                          <span className="text-right tabular-nums text-subtle">
-                            {r.rows?.toLocaleString() ?? ""}
-                          </span>
-                          <span className="text-right tabular-nums text-subtle">
-                            {formatBytes(r.sizeBytes)}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </Field>
-          </div>
-        )}
-
-        {logical && (
-          <div className="grid grid-cols-3 gap-x-4 gap-y-1.5">
-            <Checkbox
-              checked={o.sequenceValues}
-              onChange={(v) => set({ sequenceValues: v })}
-              label={t("backup.sequenceValues")}
-            />
-            {/* Firebird has no DROP … IF EXISTS: restore into a new database file instead. */}
-            {!isFb && (
+          )}
+          {logical && o.usersAndGrants && (
+            <p className="text-[11px] text-warning">
+              {t(isFb ? "backup.usersGrantsHintFb" : "backup.usersGrantsHint")}
+            </p>
+          )}
+          {native && (
+            <div className="grid grid-cols-3 gap-x-4 gap-y-1.5">
               <Checkbox
                 checked={o.dropObjects}
                 onChange={(v) => set({ dropObjects: v })}
                 label={t("backup.dropObjects")}
               />
-            )}
-            <Checkbox
-              checked={o.consistentSnapshot}
-              onChange={(v) => set({ consistentSnapshot: v })}
-              label={t("backup.snapshot")}
-            />
-            {isMy && (
-              <Checkbox
-                checked={o.createDatabase}
-                onChange={(v) => set({ createDatabase: v })}
-                label={t("dump.createDatabase")}
-              />
-            )}
-            {isMy && (
-              <Checkbox
-                checked={o.stripDefiners}
-                onChange={(v) => set({ stripDefiners: v })}
-                label={t("backup.stripDefiners")}
-              />
-            )}
-            {isPg && (
-              <Checkbox
-                checked={o.includeOwners}
-                onChange={(v) => set({ includeOwners: v })}
-                label={t("backup.owners")}
-              />
-            )}
-            {engine !== "sqlite" && (
-              <Checkbox
-                checked={o.usersAndGrants}
-                onChange={(v) => set({ usersAndGrants: v })}
-                label={t("backup.usersGrants")}
-              />
-            )}
-          </div>
-        )}
-        {logical && o.usersAndGrants && (
-          <p className="text-[11px] text-warning">
-            {t(isFb ? "backup.usersGrantsHintFb" : "backup.usersGrantsHint")}
-          </p>
-        )}
-        {native && (
-          <div className="grid grid-cols-3 gap-x-4 gap-y-1.5">
-            <Checkbox
-              checked={o.dropObjects}
-              onChange={(v) => set({ dropObjects: v })}
-              label={t("backup.dropObjects")}
-            />
-            {isMy && (
-              <Checkbox
-                checked={o.createDatabase}
-                onChange={(v) => set({ createDatabase: v })}
-                label={t("dump.createDatabase")}
-              />
-            )}
-            {isPg && (
-              <Checkbox
-                checked={o.includeOwners}
-                onChange={(v) => set({ includeOwners: v })}
-                label={t("backup.owners")}
-              />
-            )}
-            {isPg && (
-              <Checkbox
-                checked={o.usersAndGrants}
-                onChange={(v) => set({ usersAndGrants: v })}
-                label={t("backup.privileges")}
-              />
-            )}
-          </div>
-        )}
+              {isMy && (
+                <Checkbox
+                  checked={o.createDatabase}
+                  onChange={(v) => set({ createDatabase: v })}
+                  label={t("dump.createDatabase")}
+                />
+              )}
+              {isPg && (
+                <Checkbox
+                  checked={o.includeOwners}
+                  onChange={(v) => set({ includeOwners: v })}
+                  label={t("backup.owners")}
+                />
+              )}
+              {isPg && (
+                <Checkbox
+                  checked={o.usersAndGrants}
+                  onChange={(v) => set({ usersAndGrants: v })}
+                  label={t("backup.privileges")}
+                />
+              )}
+            </div>
+          )}
 
-        <div className="grid grid-cols-2 gap-3">
-          {method === "pg_dump" && (
-            <Field label={t("backup.format")}>
-              <Select
-                value={pgFormat}
-                onChange={(e) =>
-                  setPgFormat(e.target.value as "custom" | "plain")
+          <div className="grid grid-cols-2 gap-3">
+            {method === "pg_dump" && (
+              <Field label={t("backup.format")}>
+                <Select
+                  value={pgFormat}
+                  onChange={(e) =>
+                    setPgFormat(e.target.value as "custom" | "plain")
+                  }
+                >
+                  <option value="custom">{t("backup.formatCustom")}</option>
+                  <option value="plain">{t("backup.formatPlain")}</option>
+                </Select>
+              </Field>
+            )}
+            {(method === "firebird-service" || method === "gbak") && (
+              <Field
+                label={t("backup.serverPath")}
+                hint={
+                  method === "gbak"
+                    ? t("backup.serverPathOptional")
+                    : t("backup.serverPathHint")
                 }
+                className="col-span-2"
               >
-                <option value="custom">{t("backup.formatCustom")}</option>
-                <option value="plain">{t("backup.formatPlain")}</option>
-              </Select>
-            </Field>
-          )}
-          {(method === "firebird-service" || method === "gbak") && (
-            <Field
-              label={t("backup.serverPath")}
-              hint={
-                method === "gbak"
-                  ? t("backup.serverPathOptional")
-                  : t("backup.serverPathHint")
-              }
-              className="col-span-2"
-            >
-              <Input
-                value={serverPath}
-                onChange={(e) => setServerPath(e.target.value)}
-                className="font-mono text-xs"
-                placeholder={defaultServerPath(session.profile.database)}
-              />
-            </Field>
-          )}
-          {native && (
-            <Field
-              label={t("backup.extraArgs")}
-              className={method === "pg_dump" ? "" : "col-span-2"}
-            >
-              <Input
-                value={extraArgs}
-                onChange={(e) => setExtraArgs(e.target.value)}
-                className="font-mono text-xs"
-              />
-            </Field>
-          )}
-          {logical && (
-            <Field label={t("export.rowsPerInsert")}>
-              <Input
-                type="number"
-                min={1}
-                value={o.rowsPerInsert}
-                onChange={(e) =>
-                  set({ rowsPerInsert: Number(e.target.value) || 1 })
-                }
-              />
-            </Field>
-          )}
-        </div>
-
-        {!usesServerPath && (
-          <div className="grid grid-cols-[1fr_auto] items-end gap-2">
-            <Field label={t("export.file")}>
-              <div className="flex gap-1.5">
                 <Input
-                  value={file}
-                  onChange={(e) => setFile(e.target.value)}
+                  value={serverPath}
+                  onChange={(e) => setServerPath(e.target.value)}
+                  className="font-mono text-xs"
+                  placeholder={defaultServerPath(session.profile.database)}
+                />
+              </Field>
+            )}
+            {native && (
+              <Field
+                label={t("backup.extraArgs")}
+                className={method === "pg_dump" ? "" : "col-span-2"}
+              >
+                <Input
+                  value={extraArgs}
+                  onChange={(e) => setExtraArgs(e.target.value)}
                   className="font-mono text-xs"
                 />
-                <Button
-                  icon={<FolderOpen size={13} />}
-                  onClick={() => void browse()}
-                >
-                  {t("common.browse")}
-                </Button>
-              </div>
-            </Field>
-            {canCompress && (
-              <Checkbox
-                className="pb-2"
-                checked={compress}
-                onChange={setCompress}
-                label={t("backup.compress")}
-              />
+              </Field>
+            )}
+            {logical && (
+              <Field label={t("export.rowsPerInsert")}>
+                <Input
+                  type="number"
+                  min={1}
+                  value={o.rowsPerInsert}
+                  onChange={(e) =>
+                    set({ rowsPerInsert: Number(e.target.value) || 1 })
+                  }
+                />
+              </Field>
             )}
           </div>
-        )}
+
+          {!usesServerPath && (
+            <div className="grid grid-cols-[1fr_auto] items-end gap-2">
+              <Field label={t("export.file")}>
+                <div className="flex gap-1.5">
+                  <Input
+                    value={file}
+                    onChange={(e) => setFile(e.target.value)}
+                    className="font-mono text-xs"
+                  />
+                  <Button
+                    icon={<FolderOpen size={13} />}
+                    onClick={() => void browse()}
+                  >
+                    {t("common.browse")}
+                  </Button>
+                </div>
+              </Field>
+              {canCompress && (
+                <Checkbox
+                  className="pb-2"
+                  checked={compress}
+                  onChange={setCompress}
+                  label={t("backup.compress")}
+                />
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </Dialog>
   );
@@ -795,6 +884,8 @@ export function RestoreDialog({
   const vm = useBackup();
   const [opId] = useState(uid);
   const progress = useProgress(session, opId);
+  const log = useRestoreLog(progress);
+  const [verbose, setVerbose] = useState(false);
   const [busy, setBusy] = useState(false);
   const engine = session?.info.engine ?? "mysql";
   const single = isSingleDatabase(engine);
@@ -929,6 +1020,7 @@ export function RestoreDialog({
               targetPath,
               replace: replace || targetPath === session.profile.database,
               pageSize,
+              verbose: engine === "firebird" && verbose,
             }
           : undefined,
       });
@@ -956,7 +1048,12 @@ export function RestoreDialog({
   return (
     <Dialog
       open
-      onOpenChange={(v) => !v && !busy && close()}
+      locked={busy}
+      onOpenChange={(v) => {
+        if (v) return;
+        if (busy) vm.cancel(session.id, opId);
+        else close();
+      }}
       title={t("restore.title")}
       width={640}
       footer={
@@ -980,148 +1077,518 @@ export function RestoreDialog({
         </>
       }
     >
-      <div className="grid gap-3 p-4">
-        {!usesServerFile && (
-          <Field label={t("restore.file")}>
-            <div className="flex gap-1.5">
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-3 p-4">
+        <div inert={busy} className={cx("grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3", busy && "opacity-60")}>
+          {!usesServerFile && (
+            <Field label={t("restore.file")}>
+              <div className="flex gap-1.5">
+                <Input
+                  value={file}
+                  onChange={(e) => setFile(e.target.value)}
+                  className="font-mono text-xs"
+                />
+                <Button
+                  icon={<FolderOpen size={13} />}
+                  onClick={() => void browse()}
+                >
+                  {t("common.browse")}
+                </Button>
+              </div>
+            </Field>
+          )}
+          {info && (
+            <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-sunken px-3 py-2 text-xs text-muted">
+              <Badge tone="accent">{t(`restore.kind.${info.kind}`)}</Badge>
+              {info.compressed && <Badge>gzip</Badge>}
+              <span>{formatBytes(info.size)}</span>
+              {info.header && (
+                <span>
+                  {t("restore.detected", {
+                    server: info.header.serverLabel,
+                    date: new Date(info.header.createdAt).toLocaleString(),
+                    databases: info.header.databases.join(", ") || "—",
+                  })}
+                </span>
+              )}
+              {mismatch && (
+                <span className="text-warning">
+                  {t("restore.engineMismatch", {
+                    engine: ENGINE_LABELS[info.header!.engine],
+                  })}
+                </span>
+              )}
+              {info.needsPsql && (
+                <span className="text-warning">{t("restore.needsPsql")}</span>
+              )}
+            </div>
+          )}
+
+          <Field
+            label={t("backup.method")}
+            hint={
+              methodTool?.reason ??
+              (TOOL_FOR_METHOD[method] && !methodTool
+                ? t("backup.toolMissing", { tool: TOOL_FOR_METHOD[method]![0] })
+                : undefined)
+            }
+          >
+            <Select
+              value={method}
+              onChange={(e) => setMethod(e.target.value as RestoreMethod)}
+            >
+              {(info?.methods.length
+                ? info.methods
+                : (["logical"] as RestoreMethod[])
+              )
+                .concat(
+                  engine === "firebird" &&
+                    session.info.version >= 30000 &&
+                    !info?.methods.includes("firebird-service")
+                    ? ["firebird-service"]
+                    : [],
+                )
+                .map((m) => {
+                  const tool = toolFor(tools, m);
+                  return (
+                    <option
+                      key={m}
+                      value={m}
+                      disabled={!!TOOL_FOR_METHOD[m] && !tool?.compatible}
+                    >
+                      {t(RESTORE_LABELS[m], {
+                        tool: tool ? `${tool.tool} ${tool.version}` : m,
+                      })}
+                    </option>
+                  );
+                })}
+            </Select>
+          </Field>
+
+          {usesServerFile && (
+            <Field
+              label={t("restore.serverFile")}
+              hint={t("backup.serverPathHint")}
+            >
               <Input
-                value={file}
-                onChange={(e) => setFile(e.target.value)}
+                value={serverFile}
+                onChange={(e) => setServerFile(e.target.value)}
                 className="font-mono text-xs"
               />
-              <Button
-                icon={<FolderOpen size={13} />}
-                onClick={() => void browse()}
+            </Field>
+          )}
+
+          {!fileMethod && !single && (
+            <div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-2">
+              <label className="flex items-center gap-2 text-[13px]">
+                <input
+                  type="radio"
+                  checked={target === "existing"}
+                  onChange={() => setTarget("existing")}
+                />
+                {t("restore.existing")}
+              </label>
+              <Select
+                value={database}
+                disabled={target !== "existing"}
+                onChange={(e) => setDatabase(e.target.value)}
               >
-                {t("common.browse")}
-              </Button>
-            </div>
-          </Field>
-        )}
-        {info && (
-          <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-sunken px-3 py-2 text-xs text-muted">
-            <Badge tone="accent">{t(`restore.kind.${info.kind}`)}</Badge>
-            {info.compressed && <Badge>gzip</Badge>}
-            <span>{formatBytes(info.size)}</span>
-            {info.header && (
-              <span>
-                {t("restore.detected", {
-                  server: info.header.serverLabel,
-                  date: new Date(info.header.createdAt).toLocaleString(),
-                  databases: info.header.databases.join(", ") || "—",
-                })}
-              </span>
-            )}
-            {mismatch && (
-              <span className="text-warning">
-                {t("restore.engineMismatch", {
-                  engine: ENGINE_LABELS[info.header!.engine],
-                })}
-              </span>
-            )}
-            {info.needsPsql && (
-              <span className="text-warning">{t("restore.needsPsql")}</span>
-            )}
-          </div>
-        )}
-
-        <Field
-          label={t("backup.method")}
-          hint={
-            methodTool?.reason ??
-            (TOOL_FOR_METHOD[method] && !methodTool
-              ? t("backup.toolMissing", { tool: TOOL_FOR_METHOD[method]![0] })
-              : undefined)
-          }
-        >
-          <Select
-            value={method}
-            onChange={(e) => setMethod(e.target.value as RestoreMethod)}
-          >
-            {(info?.methods.length
-              ? info.methods
-              : (["logical"] as RestoreMethod[])
-            )
-              .concat(
-                engine === "firebird" &&
-                  session.info.version >= 30000 &&
-                  !info?.methods.includes("firebird-service")
-                  ? ["firebird-service"]
-                  : [],
-              )
-              .map((m) => {
-                const tool = toolFor(tools, m);
-                return (
-                  <option
-                    key={m}
-                    value={m}
-                    disabled={!!TOOL_FOR_METHOD[m] && !tool?.compatible}
-                  >
-                    {t(RESTORE_LABELS[m], {
-                      tool: tool ? `${tool.tool} ${tool.version}` : m,
-                    })}
-                  </option>
-                );
-              })}
-          </Select>
-        </Field>
-
-        {usesServerFile && (
-          <Field
-            label={t("restore.serverFile")}
-            hint={t("backup.serverPathHint")}
-          >
-            <Input
-              value={serverFile}
-              onChange={(e) => setServerFile(e.target.value)}
-              className="font-mono text-xs"
-            />
-          </Field>
-        )}
-
-        {!fileMethod && !single && (
-          <div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-2">
-            <label className="flex items-center gap-2 text-[13px]">
-              <input
-                type="radio"
-                checked={target === "existing"}
-                onChange={() => setTarget("existing")}
+                <option value="">{t("restore.asInFile")}</option>
+                {(session.databases ?? []).map((db) => (
+                  <option key={db}>{db}</option>
+                ))}
+              </Select>
+              <label className="flex items-center gap-2 text-[13px]">
+                <input
+                  type="radio"
+                  checked={target === "new"}
+                  onChange={() => setTarget("new")}
+                />
+                {t("restore.newDatabase")}
+              </label>
+              <Input
+                value={newDatabase}
+                disabled={target !== "new"}
+                onChange={(e) => setNewDatabase(e.target.value)}
               />
-              {t("restore.existing")}
-            </label>
-            <Select
-              value={database}
-              disabled={target !== "existing"}
-              onChange={(e) => setDatabase(e.target.value)}
+            </div>
+          )}
+
+          {fileMethod && (
+            <div className="grid grid-cols-[1fr_120px] gap-3">
+              <Field
+                label={t("restore.targetPath")}
+                hint={
+                  engine === "firebird"
+                    ? t("restore.targetPathHint")
+                    : undefined
+                }
+              >
+                <Input
+                  value={targetPath}
+                  onChange={(e) => setTargetPath(e.target.value)}
+                  className="font-mono text-xs"
+                />
+              </Field>
+              {engine === "firebird" && (
+                <Field label={t("restore.pageSize")}>
+                  <Select
+                    value={pageSize}
+                    onChange={(e) => setPageSize(Number(e.target.value))}
+                  >
+                    {[4096, 8192, 16384, 32768].map((n) => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              )}
+              {engine === "firebird" && (
+                <Checkbox
+                  checked={replace}
+                  onChange={setReplace}
+                  label={t("restore.replace")}
+                />
+              )}
+            </div>
+          )}
+          {fileMethod && engine === "firebird" && (
+            <VerboseOption checked={verbose} onChange={setVerbose} />
+          )}
+
+          {!fileMethod && (
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+              <Checkbox
+                checked={stopOnError}
+                onChange={setStopOnError}
+                label={t("import.stopOnError")}
+              />
+              {(transactional ||
+                method === "pg_restore" ||
+                method === "psql") && (
+                <Checkbox
+                  checked={singleTx && stopOnError}
+                  disabled={
+                    !stopOnError || (method === "pg_restore" && jobs > 1)
+                  }
+                  onChange={setSingleTx}
+                  label={t("restore.singleTransaction")}
+                />
+              )}
+              {method === "logical" && !transactional && (
+                <Field label={t("restore.commitEvery")}>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={commitEvery}
+                    onChange={(e) =>
+                      setCommitEvery(Number(e.target.value) || 1)
+                    }
+                  />
+                </Field>
+              )}
+              {method === "pg_restore" && (
+                <Checkbox
+                  checked={clean}
+                  onChange={setClean}
+                  label={t("restore.clean")}
+                />
+              )}
+              {method === "pg_restore" && (
+                <Field label={t("restore.jobs")}>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={16}
+                    value={jobs}
+                    onChange={(e) =>
+                      setJobs(Math.max(1, Number(e.target.value) || 1))
+                    }
+                  />
+                </Field>
+              )}
+            </div>
+          )}
+        </div>
+        {fileMethod &&
+          engine === "firebird" &&
+          verbose &&
+          (busy || log.length > 0) && <RestoreLog lines={log} />}
+      </div>
+    </Dialog>
+  );
+}
+
+const isMyFamily = (e: DbEngine): boolean => e === "mysql" || e === "mariadb";
+
+/* ------------------------------------------------------------------------ */
+
+type StandaloneMethod = StandaloneRestoreRequest["method"];
+
+/**
+ * Session Manager: restores a Firebird backup into a database file on the server before anything
+ * connects to it (a throwaway worker runs gbak, the services API or the built-in SQL script).
+ */
+export function FirebirdRestoreDialog({
+  profile,
+  secrets,
+  onClose,
+  onConnect,
+}: {
+  profile: ConnectionProfile;
+  secrets: ConnectionSecrets | null;
+  onClose(): void;
+  onConnect(): void;
+}) {
+  const { t } = useTranslation();
+  const vm = useBackup();
+  const [opId] = useState(uid);
+  const [progress, setProgress] = useState<ProgressInfo | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [restored, setRestored] = useState(false);
+  const [file, setFile] = useState("");
+  const [info, setInfo] = useState<BackupFileInfo | null>(null);
+  const [method, setMethod] = useState<StandaloneMethod>("logical");
+  const [gbak, setGbak] = useState<BackupToolInfo | null | undefined>(
+    undefined,
+  );
+  const [serverFile, setServerFile] = useState("");
+  const [targetPath, setTargetPath] = useState(profile.database ?? "");
+  const [replace, setReplace] = useState(false);
+  const [pageSize, setPageSize] = useState(8192);
+  const [charset, setCharset] = useState("UTF8");
+  const [stopOnError, setStopOnError] = useState(true);
+  const [verbose, setVerbose] = useState(false);
+  const log = useRestoreLog(progress);
+
+  useEffect(
+    () =>
+      api.on("progress", (e) => {
+        if (e.operationId === opId) setProgress(e);
+      }),
+    [opId],
+  );
+
+  useEffect(() => {
+    vm.detectLocalTools("firebird").then(
+      (tools) => setGbak(tools.find((x) => x.tool === "gbak") ?? null),
+      () => setGbak(null),
+    );
+  }, []);
+
+  useEffect(() => {
+    if (!file) return setInfo(null);
+    let live = true;
+    vm.inspectFile(file, "firebird").then(
+      (i) => {
+        if (!live) return;
+        setInfo(i);
+        if (i.kind === "sql") setMethod("logical");
+        else if (i.kind === "fbk")
+          setMethod(gbak ? "gbak" : "firebird-service");
+        if (i.header?.charset) setCharset(i.header.charset);
+      },
+      () => live && setInfo(null),
+    );
+    return () => {
+      live = false;
+    };
+  }, [file, gbak]);
+
+  const usesServerFile = method === "firebird-service";
+  const mismatch = info?.header && info.header.engine !== "firebird";
+
+  const browse = async (): Promise<void> => {
+    const f = await api.invoke("dialog:openFile", {
+      filters: [
+        {
+          name: t("restore.backupFiles"),
+          extensions: ["fbk", "gbk", "sql", "gz"],
+        },
+      ],
+    });
+    if (f) setFile(f);
+  };
+
+  const run = async (): Promise<void> => {
+    if (
+      replace &&
+      !(await confirmDialog(
+        t("restore.standalone.title"),
+        t("restore.confirmReplace", { target: targetPath }),
+        true,
+      ))
+    )
+      return;
+    setBusy(true);
+    setProgress(null);
+    try {
+      const r = await vm.restoreStandalone(profile, secrets, {
+        operationId: opId,
+        filePath: usesServerFile ? serverFile : file,
+        method,
+        targetPath,
+        replace,
+        pageSize,
+        charset: method === "logical" ? charset : undefined,
+        stopOnError,
+        toolPath: method === "gbak" ? gbak?.path : undefined,
+        verbose: method !== "logical" && verbose,
+      });
+      if (r.errors)
+        notify.error(
+          t("restore.standalone.doneErrors", {
+            errors: r.errors,
+            path: targetPath,
+          }),
+        );
+      else notify.success(t("restore.standalone.done", { path: targetPath }));
+      setRestored(true);
+    } catch (err) {
+      notify.error(err);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const blocked =
+    !targetPath ||
+    (usesServerFile ? !serverFile : !file) ||
+    (method === "gbak" && !gbak) ||
+    (method === "logical" && !!info && info.kind !== "sql");
+
+  const methods: {
+    value: StandaloneMethod;
+    label: string;
+    disabled?: boolean;
+  }[] = [
+    { value: "logical", label: t("restore.standalone.methodLogical") },
+    {
+      value: "gbak",
+      label: gbak
+        ? t("restore.standalone.methodGbak", {
+            tool: `${gbak.tool} ${gbak.version}`,
+          })
+        : t("restore.standalone.methodGbakMissing"),
+      disabled: !gbak,
+    },
+    { value: "firebird-service", label: t("restore.standalone.methodService") },
+  ];
+
+  return (
+    <Dialog
+      open
+      locked={busy}
+      onOpenChange={(v) => {
+        if (v) return;
+        if (busy) vm.cancelStandalone(opId);
+        else onClose();
+      }}
+      title={t("restore.standalone.title")}
+      width={640}
+      footer={
+        <>
+          <Progress p={progress} />
+          {busy ? (
+            <Button onClick={() => vm.cancelStandalone(opId)}>
+              {t("common.cancel")}
+            </Button>
+          ) : (
+            <Button onClick={onClose}>{t("common.close")}</Button>
+          )}
+          {restored && !busy ? (
+            <Button variant="primary" onClick={onConnect}>
+              {t("restore.standalone.connect")}
+            </Button>
+          ) : (
+            <Button
+              variant="primary"
+              loading={busy}
+              disabled={blocked}
+              onClick={() => void run()}
             >
-              <option value="">{t("restore.asInFile")}</option>
-              {(session.databases ?? []).map((db) => (
-                <option key={db}>{db}</option>
+              {t("restore.start")}
+            </Button>
+          )}
+        </>
+      }
+    >
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-3 p-4">
+        <div inert={busy} className={cx("grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3", busy && "opacity-60")}>
+          <p className="text-xs text-muted">
+            {t("restore.standalone.intro", {
+              server: `${profile.host}:${profile.port}`,
+            })}
+          </p>
+          <Field label={t("backup.method")}>
+            <Select
+              value={method}
+              onChange={(e) => setMethod(e.target.value as StandaloneMethod)}
+            >
+              {methods.map((m) => (
+                <option key={m.value} value={m.value} disabled={m.disabled}>
+                  {m.label}
+                </option>
               ))}
             </Select>
-            <label className="flex items-center gap-2 text-[13px]">
-              <input
-                type="radio"
-                checked={target === "new"}
-                onChange={() => setTarget("new")}
-              />
-              {t("restore.newDatabase")}
-            </label>
-            <Input
-              value={newDatabase}
-              disabled={target !== "new"}
-              onChange={(e) => setNewDatabase(e.target.value)}
-            />
-          </div>
-        )}
+          </Field>
 
-        {fileMethod && (
+          {usesServerFile ? (
+            <Field
+              label={t("restore.serverFile")}
+              hint={t("backup.serverPathHint")}
+            >
+              <Input
+                value={serverFile}
+                onChange={(e) => setServerFile(e.target.value)}
+                className="font-mono text-xs"
+              />
+            </Field>
+          ) : (
+            <Field label={t("restore.file")}>
+              <div className="flex gap-1.5">
+                <Input
+                  value={file}
+                  onChange={(e) => setFile(e.target.value)}
+                  className="font-mono text-xs"
+                />
+                <Button
+                  icon={<FolderOpen size={13} />}
+                  onClick={() => void browse()}
+                >
+                  {t("common.browse")}
+                </Button>
+              </div>
+            </Field>
+          )}
+          {info && !usesServerFile && (
+            <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-sunken px-3 py-2 text-xs text-muted">
+              <Badge tone="accent">{t(`restore.kind.${info.kind}`)}</Badge>
+              {info.compressed && <Badge>gzip</Badge>}
+              <span>{formatBytes(info.size)}</span>
+              {info.header && (
+                <span>
+                  {t("restore.detected", {
+                    server: info.header.serverLabel,
+                    date: new Date(info.header.createdAt).toLocaleString(),
+                    databases: info.header.databases.join(", ") || "—",
+                  })}
+                </span>
+              )}
+              {mismatch && (
+                <span className="text-warning">
+                  {t("restore.engineMismatch", {
+                    engine: ENGINE_LABELS[info.header!.engine],
+                  })}
+                </span>
+              )}
+            </div>
+          )}
+
           <div className="grid grid-cols-[1fr_120px] gap-3">
             <Field
               label={t("restore.targetPath")}
-              hint={
-                engine === "firebird" ? t("restore.targetPathHint") : undefined
-              }
+              hint={t("restore.targetPathHint")}
             >
               <Input
                 value={targetPath}
@@ -1129,82 +1596,54 @@ export function RestoreDialog({
                 className="font-mono text-xs"
               />
             </Field>
-            {engine === "firebird" && (
-              <Field label={t("restore.pageSize")}>
-                <Select
-                  value={pageSize}
-                  onChange={(e) => setPageSize(Number(e.target.value))}
-                >
-                  {[4096, 8192, 16384, 32768].map((n) => (
-                    <option key={n} value={n}>
-                      {n}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-            )}
-            {engine === "firebird" && (
-              <Checkbox
-                checked={replace}
-                onChange={setReplace}
-                label={t("restore.replace")}
-              />
-            )}
+            <Field label={t("restore.pageSize")}>
+              <Select
+                value={pageSize}
+                onChange={(e) => setPageSize(Number(e.target.value))}
+              >
+                {[4096, 8192, 16384, 32768].map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))}
+              </Select>
+            </Field>
           </div>
-        )}
-
-        {!fileMethod && (
+          {method === "logical" && (
+            <Field
+              className="w-64"
+              label={t("restore.standalone.charset")}
+              hint={t("restore.standalone.charsetHint")}
+            >
+              <Input
+                value={charset}
+                onChange={(e) => setCharset(e.target.value.toUpperCase())}
+                className="font-mono text-xs"
+              />
+            </Field>
+          )}
           <div className="grid grid-cols-2 gap-x-4 gap-y-2">
             <Checkbox
-              checked={stopOnError}
-              onChange={setStopOnError}
-              label={t("import.stopOnError")}
+              checked={replace}
+              onChange={setReplace}
+              label={t("restore.replace")}
             />
-            {(transactional ||
-              method === "pg_restore" ||
-              method === "psql") && (
+            {method === "logical" && (
               <Checkbox
-                checked={singleTx && stopOnError}
-                disabled={!stopOnError || (method === "pg_restore" && jobs > 1)}
-                onChange={setSingleTx}
-                label={t("restore.singleTransaction")}
+                checked={stopOnError}
+                onChange={setStopOnError}
+                label={t("import.stopOnError")}
               />
-            )}
-            {method === "logical" && !transactional && (
-              <Field label={t("restore.commitEvery")}>
-                <Input
-                  type="number"
-                  min={1}
-                  value={commitEvery}
-                  onChange={(e) => setCommitEvery(Number(e.target.value) || 1)}
-                />
-              </Field>
-            )}
-            {method === "pg_restore" && (
-              <Checkbox
-                checked={clean}
-                onChange={setClean}
-                label={t("restore.clean")}
-              />
-            )}
-            {method === "pg_restore" && (
-              <Field label={t("restore.jobs")}>
-                <Input
-                  type="number"
-                  min={1}
-                  max={16}
-                  value={jobs}
-                  onChange={(e) =>
-                    setJobs(Math.max(1, Number(e.target.value) || 1))
-                  }
-                />
-              </Field>
             )}
           </div>
+          {method !== "logical" && (
+            <VerboseOption checked={verbose} onChange={setVerbose} />
+          )}
+        </div>
+        {method !== "logical" && verbose && (busy || log.length > 0) && (
+          <RestoreLog lines={log} />
         )}
       </div>
     </Dialog>
   );
 }
-
-const isMyFamily = (e: DbEngine): boolean => e === "mysql" || e === "mariadb";

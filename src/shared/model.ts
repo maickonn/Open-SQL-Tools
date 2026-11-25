@@ -513,6 +513,8 @@ export interface ProgressInfo {
   bytes?: number
   /** Restores: size of the file being read (progress = bytes / totalBytes). */
   totalBytes?: number
+  /** Verbose restores (gbak, Firebird services): output lines since the previous event. */
+  lines?: string[]
 }
 
 /* -------------------------------- Backup -------------------------------- */
@@ -617,7 +619,26 @@ export interface RestoreRequest {
   commitEvery: number
   native?: NativeBackupOptions & { clean?: boolean; jobs?: number }
   /** Firebird services / gbak and SQLite file restores. */
-  file?: { targetPath: string; replace: boolean; pageSize?: number }
+  file?: { targetPath: string; replace: boolean; pageSize?: number; verbose?: boolean }
+}
+
+/** Restore of a Firebird backup into a database file, without an open session (Session Manager). */
+export interface StandaloneRestoreRequest {
+  operationId: string
+  /** Local .fbk (gbak) or SQL script (logical), or the .fbk's path on the server (firebird-service). */
+  filePath: string
+  method: 'logical' | 'gbak' | 'firebird-service'
+  /** Database file created on the server. */
+  targetPath: string
+  /** Replace the database already at targetPath. */
+  replace: boolean
+  pageSize?: number
+  /** Logical: default character set of the new database. */
+  charset?: string
+  stopOnError: boolean
+  toolPath?: string
+  /** gbak / services: report every object restored (slower; the lines arrive in ProgressInfo.lines). */
+  verbose?: boolean
 }
 
 export interface BackupHeader {
@@ -626,6 +647,8 @@ export interface BackupHeader {
   serverVersion: number
   serverLabel: string
   databases: string[]
+  /** Firebird: the database's default character set, for restores into a new database. */
+  charset?: string
   createdAt: string
   app: string
 }

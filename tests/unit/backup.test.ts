@@ -12,7 +12,7 @@ import { stripDefiner } from '@application/backup/logical/strategies/types'
 import { placeholder } from '@application/backup/logical/strategies/firebird'
 import { backupFileNames } from '@application/backup/logical/logicalBackup'
 import { restoreScript, NeedsPsqlError } from '@application/backup/restore/scriptRestorer'
-import { gbakBackupInvocation, mysqlDumpInvocations, pgDumpInvocation, CREDENTIAL_PLACEHOLDER, type ToolTarget } from '@application/backup/native/commands'
+import { gbakBackupInvocation, gbakRestoreInvocation, mysqlDumpInvocations, pgDumpInvocation, CREDENTIAL_PLACEHOLDER, type ToolTarget } from '@application/backup/native/commands'
 import { MySqlDialect } from '@infrastructure/db/mysql-family/mysqlDialect'
 import { FbDialect } from '@infrastructure/db/firebird/fbDialect'
 import { PgDialect } from '@infrastructure/db/postgres/pgDialect'
@@ -201,6 +201,13 @@ describe('client tool commands', () => {
     const inv = gbakBackupInvocation('gbak', { ...target, profile: { ...profile, database: '/data/x.fdb' } }, undefined)
     expect(inv.args).toEqual(['-b', '127.0.0.1/40000:/data/x.fdb', 'stdout'])
     expect(inv.env).toEqual({ ISC_USER: 'admin', ISC_PASSWORD: 's3cr"et' })
+  })
+
+  it('restores with gbak verbosely only when asked', () => {
+    const quiet = gbakRestoreInvocation('gbak', target, { targetPath: '/data/y.fdb', replace: false }, 'stdin')
+    expect(quiet.args).toEqual(['-c', 'stdin', '127.0.0.1/40000:/data/y.fdb'])
+    const loud = gbakRestoreInvocation('gbak', target, { targetPath: '/data/y.fdb', replace: true, verbose: true, pageSize: 8192 }, 'stdin')
+    expect(loud.args).toEqual(['-rep', '-v', '-page_size', '8192', 'stdin', '127.0.0.1/40000:/data/y.fdb'])
   })
 })
 

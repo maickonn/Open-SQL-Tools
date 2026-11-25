@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { gunzipSync } from 'node:zlib'
 import type { BackupObjectKinds, CellValue, ConnectionProfile, DbEngine, LogicalBackupOptions } from '@shared/model'
-import { SessionService } from '@application/session/sessionService'
+import { SessionService, type SessionDeps } from '@application/session/sessionService'
 import { openDatabase } from '@infrastructure/db/openDatabase'
 import { createFileWriter, readTextFile } from '@infrastructure/fs/fileWriter'
 import { backupFiles } from '@infrastructure/fs/backupFiles'
@@ -25,7 +25,7 @@ const RUN = Date.now().toString(36)
 
 const isMy = (e: DbEngine): boolean => e === 'mysql' || e === 'mariadb'
 
-function service(): SessionService {
+function service(emit: SessionDeps['emit'] = () => undefined): SessionService {
   return new SessionService({
     openDatabase,
     openTunnel: async () => null,
@@ -33,7 +33,7 @@ function service(): SessionService {
     readText: readTextFile,
     files: backupFiles,
     nativeBackup: nativeBackupFor,
-    emit: () => undefined
+    emit
   })
 }
 
@@ -340,6 +340,45 @@ describe.each(targets.map((t) => [t.id, t] as const))('backup %s', (id, target) 
     const copy = await connect({ ...profileFor(target), database: targetPath }, target.password)
     expect(await snapshot(copy, engine)).toEqual(before)
     await copy.disconnect()
+  })
+
+  it.runIf(engine === 'firebird')('restores into a new database file without a session (Session Manager)', async () => {
+    const src = await sourceSession()
+    const before = await snapshot(src, engine)
+    const sql = join(tmp, `${id}-standalone.sql.gz`)
+    await src.backupDatabase({ operationId: 'b', filePath: sql, method: 'logical', compress: true, logical: options(['']) })
+    const fbk = `/tmp/ost_sa_${id}_${RUN}.fbk`
+    await src.backupDatabase({ operationId: 'n', filePath: '', method: 'firebird-service', compress: false, native: { serverPath: fbk } })
+    const info = await src.inspectBackupFile({ filePath: sql })
+    expect(info.header?.charset).toBeTruthy()
+    await src.disconnect()
+
+    const secrets = { password: target.password }
+    const lines: string[] = []
+    const restoreTo = async (method: 'logical' | 'firebird-service', filePath: string, targetPath: string, replace: boolean, verbose = false): Promise<void> => {
+      const r = await service((name, payload) => {
+        if (name === 'progress') lines.push(...((payload as { lines?: string[] }).lines ?? []))
+      }).restoreStandalone({
+        profile: { ...profileFor(target), database: targetPath },
+        secrets,
+        request: { operationId: 's', method, filePath, targetPath, replace, pageSize: 8192, charset: info.header?.charset, stopOnError: true, verbose }
+      })
+      expect(r.errors).toBe(0)
+      const copy = await connect({ ...profileFor(target), database: targetPath }, target.password)
+      expect(await snapshot(copy, engine)).toEqual(before)
+      await copy.disconnect()
+    }
+    const fromSql = `/var/lib/firebird/data/bk_sa_sql_${id}_${RUN}.fdb`
+    await restoreTo('logical', sql, fromSql, false)
+    // Replacing the file drops the old database first: no duplicated rows.
+    await restoreTo('logical', sql, fromSql, true)
+    const fromFbk = `/var/lib/firebird/data/bk_sa_fbk_${id}_${RUN}.fdb`
+    await restoreTo('firebird-service', fbk, fromFbk, false)
+    // Without verbose only warnings come back (Firebird 5: the page size it reduced), not each object.
+    expect(lines.some((l) => /Z_PARENT/i.test(l))).toBe(false)
+    // Verbose: the server reports each restored object.
+    await restoreTo('firebird-service', fbk, fromFbk, true, true)
+    expect(lines.some((l) => /Z_PARENT/i.test(l))).toBe(true)
   })
 
   it.runIf(engine === 'sqlite')('copies the file with the SQLite backup API', async () => {

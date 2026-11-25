@@ -45,7 +45,7 @@ const METHODS: (keyof WorkerApi & string)[] = [
   'listExceptions', 'getDependencies', 'getRoutineCall', 'getRoutineOperations', 'createTemplate',
   'getTrigger', 'triggerBodyTemplate', 'triggerStatements', 'saveTrigger', 'bulkAlterTables', 'insertRows', 'hostInfo', 'killProcess', 'listUsers', 'getUserPrivileges',
   'userStatements', 'exportQuery', 'dumpSql', 'importSqlFile', 'importCsv', 'findText', 'cancelOperation',
-  'backupDatabase', 'restoreDatabase', 'inspectBackupFile', 'detectBackupTools'
+  'backupDatabase', 'restoreDatabase', 'restoreStandalone', 'inspectBackupFile', 'detectBackupTools'
 ]
 
 function wrapPort(port: MessagePortMain): PortLike {

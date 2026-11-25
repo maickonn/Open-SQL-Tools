@@ -1,5 +1,6 @@
 import type {
   AppSettings,
+  StandaloneRestoreRequest,
   BackupFileInfo,
   BackupRequest,
   BackupResult,
@@ -190,6 +191,8 @@ export interface WorkerApi {
   /** Backup with the built-in SQL script, an engine-native file or an external tool. */
   backupDatabase(p: BackupRequest): BackupResult
   restoreDatabase(p: RestoreRequest): RestoreResult
+  /** Firebird: restores a backup into a database file without connecting to it first (Session Manager). */
+  restoreStandalone(p: { profile: ConnectionProfile; secrets: ConnectionSecrets; request: StandaloneRestoreRequest }): RestoreResult
   /** What a backup file holds and which restore methods can read it. */
   inspectBackupFile(p: { filePath: string }): BackupFileInfo
   /** External client tools for this session's engine, with their compatibility. */

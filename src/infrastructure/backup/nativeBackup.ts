@@ -147,10 +147,46 @@ function firebirdService(target: ConnectionTarget): EngineNativeBackup {
     }
   }
 
+  /** Options for attaching to (or creating) a database file on the same server. */
+  const dbOptions = (path: string, extra: Record<string, unknown> = {}): Firebird.Options =>
+    ({
+      host: target.endpoint.host,
+      port: target.endpoint.port,
+      user: target.profile.user,
+      password: target.secrets.password ?? '',
+      database: path,
+      role: target.profile.options.role,
+      wireCrypt: target.profile.options.wireCrypt === 'disabled' ? Firebird.WIRE_CRYPT_DISABLE : Firebird.WIRE_CRYPT_ENABLE,
+      ...extra
+    }) as never
+
   return {
+    async serverVersion() {
+      const svc = await attach()
+      try {
+        const info = await new Promise<Record<string, unknown>>((resolve, reject) =>
+          (svc as unknown as { getFbserverInfos(i: object, o: object, cb: (err: unknown, r: Record<string, unknown>) => void): void }).getFbserverInfos({ fbversion: true }, {}, (err, r) =>
+            err ? reject(err) : resolve(r)
+          )
+        )
+        return String(info.fbversion ?? '')
+      } finally {
+        await new Promise<void>((resolve) => svc.detach(() => resolve()))
+      }
+    },
+    createDatabase: (path, o) =>
+      new Promise<void>((resolve, reject) =>
+        Firebird.create(dbOptions(path, { pageSize: o.pageSize ?? 8192, encoding: 'UTF8', defaultCharset: o.charset || 'UTF8' }), (err, db) =>
+          err ? reject(err) : db.detach(() => resolve())
+        )
+      ),
+    dropDatabase: (path) =>
+      new Promise<void>((resolve, reject) =>
+        Firebird.attach(dbOptions(path), (err, db) => (err ? reject(err) : db.drop((e: unknown) => (e ? reject(e) : resolve()))))
+      ),
     backup: (dest, _o, progress, signal) => run('backup', { database: target.profile.database, files: dest, verbose: true }, progress, signal),
     restore: (source, o, progress, signal) =>
-      run('restore', { files: source, database: o.targetPath, replace: o.replace, pagesize: o.pageSize ?? 8192, verbose: true }, progress, signal)
+      run('restore', { files: source, database: o.targetPath, replace: o.replace, pagesize: o.pageSize ?? 8192, verbose: !!o.verbose }, progress, signal)
   }
 }
 

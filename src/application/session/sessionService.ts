@@ -1,4 +1,5 @@
 import type {
+  StandaloneRestoreRequest,
   AppSettings,
   BackupFileInfo,
   BackupRequest,
@@ -743,30 +744,91 @@ export class SessionService {
   async restoreDatabase(p: RestoreRequest): Promise<RestoreResult> {
     const db = this.require()
     const ctl = this.startOperation(p.operationId)
-    let last: Omit<ProgressInfo, 'operationId' | 'label'> = { done: 0 }
-    const report = (x: Omit<ProgressInfo, 'operationId' | 'label'>): void => {
-      last = x
-      this.deps.emit('progress', { operationId: p.operationId, label: 'restore', phase: 'restore', ...x })
-    }
+    const report = this.restoreReporter(p.operationId)
     try {
       const result = await this.backups.restore(db, p, this.connectionTarget(), {
         isCancelled: () => ctl.cancelled,
         onAbort: (abort) => (ctl.abort = abort),
-        progress: (x) => report({ done: x.done, bytes: x.bytes, totalBytes: x.totalBytes }),
+        progress: report.progress,
         error: (message, sql) => this.log('error', `${message}
 ${sql.slice(0, 500)}`),
         reopen: () => this.reopen()
       })
-      report({ ...last, done: result.statements, finished: true })
+      report.finish({ done: result.statements })
       this.log('info', `Restore finished: ${result.statements} statements, ${result.errors} errors`)
       for (const w of result.warnings) this.log('info', `Restore: ${w}`)
       return result
     } catch (err) {
       const message = ctl.cancelled ? 'Restore cancelled' : toErrorPayload(err).message
-      report({ ...last, finished: true, error: message })
+      report.finish({ error: message })
       throw ctl.cancelled ? new Error(message) : err
     } finally {
       this.operations.delete(p.operationId)
+    }
+  }
+
+  /**
+   * Restore progress events. Output lines of verbose restores (one per object) are sent in batches
+   * at most every 150 ms instead of one event each.
+   */
+  private restoreReporter(operationId: string): {
+    progress(x: { done: number; bytes: number; totalBytes: number; line?: string }): void
+    finish(x: { done?: number; error?: string }): void
+  } {
+    let last: Omit<ProgressInfo, 'operationId' | 'label'> = { done: 0 }
+    let lines: string[] = []
+    let timer: NodeJS.Timeout | null = null
+    const emit = (x: Omit<ProgressInfo, 'operationId' | 'label'>): void => this.deps.emit('progress', { operationId, label: 'restore', phase: 'restore', ...x })
+    const flush = (): void => {
+      if (timer) clearTimeout(timer)
+      timer = null
+      if (!lines.length) return
+      emit({ ...last, lines })
+      lines = []
+    }
+    return {
+      progress: (x) => {
+        last = { done: x.done, bytes: x.bytes, totalBytes: x.totalBytes }
+        if (x.line === undefined) return emit(last)
+        lines.push(x.line)
+        timer ??= setTimeout(flush, 150)
+      },
+      finish: (x) => {
+        flush()
+        emit({ ...last, ...x, finished: true })
+      }
+    }
+  }
+
+  /** Firebird restore into a database file before any connection to it exists (Session Manager). */
+  async restoreStandalone(p: { profile: ConnectionProfile; secrets: ConnectionSecrets; request: StandaloneRestoreRequest }): Promise<RestoreResult> {
+    const req = p.request
+    const ctl = this.startOperation(req.operationId)
+    const report = this.restoreReporter(req.operationId)
+    const tunnel = await this.deps.openTunnel(p.profile, p.secrets)
+    const endpoint = tunnel ? { host: '127.0.0.1', port: tunnel.localPort } : { host: p.profile.host, port: p.profile.port }
+    try {
+      const result = await this.backups.restoreStandalone(
+        { profile: p.profile, secrets: p.secrets, endpoint },
+        req,
+        {
+          isCancelled: () => ctl.cancelled,
+          onAbort: (abort) => (ctl.abort = abort),
+          progress: report.progress,
+          error: (message, sql) => this.log('error', `${message}
+${sql.slice(0, 500)}`)
+        },
+        (profile) => this.deps.openDatabase(profile, p.secrets, endpoint)
+      )
+      report.finish({ done: result.statements })
+      return result
+    } catch (err) {
+      const message = ctl.cancelled ? 'Restore cancelled' : toErrorPayload(err).message
+      report.finish({ error: message })
+      throw ctl.cancelled ? new Error(message) : err
+    } finally {
+      this.operations.delete(req.operationId)
+      await tunnel?.close().catch(() => undefined)
     }
   }
 

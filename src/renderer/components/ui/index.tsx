@@ -172,6 +172,8 @@ export interface DialogProps {
   width?: number | string
   height?: number | string
   className?: string
+  /** While an operation runs: clicks outside and Escape leave the dialog open (only its close button closes it). */
+  locked?: boolean
 }
 
 /**
@@ -189,7 +191,7 @@ if (typeof document !== 'undefined') {
   )
 }
 
-export function Dialog({ open, onOpenChange, title, children, footer, width = 560, height, className }: DialogProps) {
+export function Dialog({ open, onOpenChange, title, children, footer, width = 560, height, className, locked }: DialogProps) {
   const { t } = useTranslation()
   return (
     <RDialog.Root open={open} onOpenChange={onOpenChange}>
@@ -202,8 +204,12 @@ export function Dialog({ open, onOpenChange, title, children, footer, width = 56
           // Menus opened from inside the dialog (e.g. a text field's context menu) render in a portal:
           // using them is not a click outside the dialog.
           onInteractOutside={(e) => {
+            if (locked) return e.preventDefault()
             const original = (e.detail as { originalEvent?: Event } | undefined)?.originalEvent
             if (original === menuPointerDown || (e.target instanceof Element && e.target.closest('[role="menu"]'))) e.preventDefault()
+          }}
+          onEscapeKeyDown={(e) => {
+            if (locked) e.preventDefault()
           }}
           // Focus the content, not the close button (which would pop its tooltip on open).
           onOpenAutoFocus={(e) => {

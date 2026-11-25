@@ -1,4 +1,4 @@
-import type { BackupRequest, BackupResult, BackupToolName, RestoreRequest, RestoreResult } from '@shared/model'
+import type { BackupRequest, BackupResult, BackupToolName, RestoreRequest, RestoreResult, ServerInfo } from '@shared/model'
 import type { OpenDatabase } from '@domain/ports/database'
 import type { BackupFiles, LocatedTool, ToolInvocation } from '@domain/ports/backup'
 import { isMariaDbTool, toolCompatibility } from '@domain/backup/toolVersion'
@@ -41,7 +41,7 @@ const CANDIDATES: Record<string, BackupToolName[]> = {
   gbak: ['gbak']
 }
 
-async function pickTool(db: OpenDatabase, tools: BackupToolDeps, method: string, toolPath?: string): Promise<LocatedTool> {
+async function pickTool(db: { info: ServerInfo }, tools: BackupToolDeps, method: string, toolPath?: string): Promise<LocatedTool> {
   let names = CANDIDATES[method] ?? []
   // Prefer the client built for the server family.
   if (db.info.engine === 'mysql') names = [...names].reverse()
@@ -128,7 +128,13 @@ export async function runToolBackup(db: OpenDatabase, tools: BackupToolDeps, fil
 }
 
 /** Restore with mysql / mariadb, pg_restore, psql or gbak. */
-export async function runToolRestore(db: OpenDatabase, tools: BackupToolDeps, files: BackupFiles, req: RestoreRequest, target: ConnectionTarget, ctl: RestoreControl): Promise<RestoreResult> {
+/** What a tool restore needs from the database: the server, and how to create a database (multi-database engines). */
+export interface ToolRestoreDb {
+  info: ServerInfo
+  createDatabase?(name: string): Promise<void>
+}
+
+export async function runToolRestore(db: ToolRestoreDb, tools: BackupToolDeps, files: BackupFiles, req: RestoreRequest, target: ConnectionTarget, ctl: RestoreControl): Promise<RestoreResult> {
   const started = Date.now()
   const tool = await pickTool(db, tools, req.method, req.native?.toolPath)
   const t = toolTarget(target)
@@ -141,11 +147,12 @@ export async function runToolRestore(db: OpenDatabase, tools: BackupToolDeps, fi
       errors++
       ctl.error(line, '')
     }
-    ctl.progress({ done: lines, errors, bytes: 0, totalBytes: 0 })
+    ctl.progress({ done: lines, errors, bytes: 0, totalBytes: 0, line })
   }
   const database = req.createDatabase || req.database || target.profile.database || ''
   if (req.createDatabase && !isSingleDatabase(db.info.engine)) {
-    await db.metaLock.run(() => db.meta.run(`CREATE DATABASE ${db.dialect.quoteIdent(req.createDatabase!)}`, null, { maxRows: 1, chunkSize: 1 }))
+    if (!db.createDatabase) throw new Error('Cannot create the database before restoring')
+    await db.createDatabase(req.createDatabase)
   }
   switch (req.method) {
     case 'mysql':

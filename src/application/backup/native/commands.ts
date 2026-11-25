@@ -204,11 +204,12 @@ export function gbakBackupInvocation(path: string, t: ToolTarget, serverPath: st
 export function gbakRestoreInvocation(
   path: string,
   t: ToolTarget,
-  o: { targetPath: string; replace: boolean; pageSize?: number; serverFile?: boolean },
+  o: { targetPath: string; replace: boolean; pageSize?: number; serverFile?: boolean; verbose?: boolean },
   source: string | 'stdin',
   extraArgs: string[] = []
 ): ToolInvocation {
-  const args = [o.replace ? '-rep' : '-c', '-v']
+  const args = [o.replace ? '-rep' : '-c']
+  if (o.verbose) args.push('-v')
   if (o.pageSize) args.push('-page_size', String(o.pageSize))
   args.push(...extraArgs)
   if (o.serverFile) args.push('-se', `${t.endpoint.host}/${t.endpoint.port}:service_mgr`, source, o.targetPath)

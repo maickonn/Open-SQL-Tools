@@ -1,4 +1,7 @@
 import type {
+  BackupFileInfo,
+  RestoreResult,
+  StandaloneRestoreRequest,
   AiProviderId,
   AppSettings,
   BackupToolName,
@@ -44,6 +47,11 @@ export interface IpcInvokeMap {
   'connections:duplicate': { args: [id: string]; result: ConnectionProfile }
   'connections:hasPassword': { args: [id: string]; result: boolean }
   'connections:test': { args: [profile: ConnectionProfile, secrets: ConnectionSecrets | null]; result: ServerInfo }
+  /** Firebird: restores a backup into a database file without a session; progress arrives as `progress` events. */
+  'connections:restore': { args: [profile: ConnectionProfile, secrets: ConnectionSecrets | null, request: StandaloneRestoreRequest]; result: RestoreResult }
+  'connections:cancelRestore': { args: [operationId: string]; result: void }
+  /** What a local backup file holds (no session needed). */
+  'backup:inspect': { args: [filePath: string, engine: DbEngine]; result: BackupFileInfo }
   'connections:export': { args: [filePath: string, ids: string[]]; result: number }
   'connections:import': { args: [filePath: string]; result: number }
 

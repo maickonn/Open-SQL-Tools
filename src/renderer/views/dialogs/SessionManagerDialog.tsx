@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react'
+import { lazy, Suspense, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ChevronDown, CopyPlus, Download, Folder, Plug, Plus, Search, Trash2, Upload, CheckCircle2 } from 'lucide-react'
+import { ArchiveRestore, ChevronDown, CopyPlus, Download, Folder, Plug, Plus, Search, Trash2, Upload, CheckCircle2 } from 'lucide-react'
 import { ENGINE_LABELS, type ConnectionProfile, type DbEngine } from '@shared/model'
 import { useConnections } from '../../stores/connectionsStore'
 import { Button, Checkbox, Dialog, DropdownMenu, Field, IconButton, Input, SegmentedTabs, Select, Textarea, cx } from '../../components/ui'
@@ -11,6 +11,8 @@ import { notify } from '../../stores/toast'
 import { isFileBased } from '@domain/engineTraits'
 import { defaultSessionName, endpointLabel } from '../../lib/format'
 
+const FirebirdRestoreDialog = lazy(() => import('./BackupDialogs').then((m) => ({ default: m.FirebirdRestoreDialog })))
+
 const ENGINES: DbEngine[] = ['mysql', 'mariadb', 'postgres', 'firebird', 'sqlite']
 const SQLITE_EXTENSIONS = ['db', 'sqlite', 'sqlite3', 'db3', 's3db', 'sl3']
 const COLORS = ['', '#ef4444', '#f59e0b', '#22c55e', '#06b6d4', '#3b82f6', '#a855f7', '#ec4899']
@@ -20,6 +22,7 @@ export function SessionManagerDialog() {
   const vm = useConnections()
   const [filter, setFilter] = useState('')
   const [section, setSection] = useState<'settings' | 'ssh' | 'ssl' | 'advanced'>('settings')
+  const [restoring, setRestoring] = useState(false)
 
   const groups = useMemo(() => {
     const f = filter.trim().toLowerCase()
@@ -70,6 +73,11 @@ export function SessionManagerDialog() {
             <span className="mr-auto flex items-center gap-1.5 text-xs text-success">
               <CheckCircle2 size={14} /> {t('sessions.testOk', { label: vm.testResult.label })}
             </span>
+          )}
+          {d?.engine === 'firebird' && (
+            <Button icon={<ArchiveRestore size={14} />} onClick={() => setRestoring(true)}>
+              {t('sessions.restoreBackup')}
+            </Button>
           )}
           <Button onClick={() => void vm.test()} disabled={!d} loading={vm.busy === 'test'}>
             {t('sessions.test')}
@@ -358,6 +366,19 @@ export function SessionManagerDialog() {
           )}
         </section>
       </div>
+      {restoring && d && (
+        <Suspense fallback={null}>
+          <FirebirdRestoreDialog
+            profile={d}
+            secrets={vm.secrets}
+            onClose={() => setRestoring(false)}
+            onConnect={() => {
+              setRestoring(false)
+              void vm.connect()
+            }}
+          />
+        </Suspense>
+      )}
     </Dialog>
   )
 }

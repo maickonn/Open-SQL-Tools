@@ -1,7 +1,7 @@
 import { MessageChannelMain, utilityProcess, type MessagePortMain, type UtilityProcess, type WebContents } from 'electron'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import type { ConnectionProfile, ConnectionSecrets, ServerInfo } from '@shared/model'
+import type { ConnectionProfile, ConnectionSecrets, ProgressInfo, RestoreResult, ServerInfo, StandaloneRestoreRequest } from '@shared/model'
 import { RpcEndpoint, type PortLike } from '@shared/rpc'
 import type { WorkerApi, WorkerEvents } from '@shared/workerApi'
 import { SESSION_PORT_CHANNEL } from '@shared/ipc'
@@ -32,6 +32,8 @@ function wrap(port: MessagePortMain): PortLike {
  */
 export class SessionManager {
   private readonly sessions = new Map<string, LiveSession>()
+  /** Throwaway workers running a restore without a session, by operation id. */
+  private readonly restores = new Map<string, RpcEndpoint<WorkerApi, WorkerEvents>>()
 
   constructor(private readonly onClosed: (sessionId: string, reason?: string) => void) {}
 
@@ -108,6 +110,30 @@ export class SessionManager {
       rpc.close()
       child.kill()
     }
+  }
+
+  /** Restores a Firebird backup into a database file with a throwaway process (no session needed). */
+  async restoreStandalone(
+    profile: ConnectionProfile,
+    secrets: ConnectionSecrets,
+    request: StandaloneRestoreRequest,
+    onProgress: (p: ProgressInfo) => void
+  ): Promise<RestoreResult> {
+    const { child, rpc } = this.spawn()
+    const off = rpc.on('progress', onProgress)
+    this.restores.set(request.operationId, rpc)
+    try {
+      return await rpc.call('restoreStandalone', { profile, secrets, request })
+    } finally {
+      this.restores.delete(request.operationId)
+      off()
+      rpc.close()
+      child.kill()
+    }
+  }
+
+  cancelRestore(operationId: string): void {
+    void this.restores.get(operationId)?.call('cancelOperation', { operationId }).catch(() => undefined)
   }
 
   async closeAll(): Promise<void> {

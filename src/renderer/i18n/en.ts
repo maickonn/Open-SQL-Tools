@@ -23,6 +23,7 @@ export const en = {
   },
   sessions: {
     title: 'Session manager', newSession: 'New session', newFolder: 'New folder', connect: 'Open', test: 'Test',
+    restoreBackup: 'Restore backup…',
     testOk: 'Connected to {{label}}', importSessions: 'Import…', exportSessions: 'Export…', empty: 'No saved sessions yet',
     filter: 'Filter sessions', exported: '{{count}} sessions exported to {{file}}', imported: '{{count}} sessions imported', engine: 'Network type', host: 'Hostname / IP', port: 'Port', user: 'User', password: 'Password',
     passwordSaved: 'Saved — leave empty to keep', savePassword: 'Save password (encrypted)', database: 'Database(s)',
@@ -161,7 +162,16 @@ export const en = {
     commitEvery: 'Commit every N statements', clean: 'Drop objects first (--clean)', jobs: 'Parallel jobs',
     confirmReplace: 'Replace {{target}} with the backup? Its current contents are lost.',
     confirmInto: 'Restore into {{target}}? Existing objects with the same names may be replaced.',
-    done: 'Restore finished: {{count}} statements', doneErrors: 'Restore finished with {{errors}} errors ({{count}} statements): see the SQL log'
+    done: 'Restore finished: {{count}} statements', doneErrors: 'Restore finished with {{errors}} errors ({{count}} statements): see the SQL log',
+    verbose: 'Show each restored object (verbose)', verboseHint: 'Slower on large databases: the server reports every table, index and trigger.',
+    log: 'Restore output',
+    standalone: {
+      title: 'Restore Firebird backup', intro: 'Builds the database file on {{server}} from a backup. Nothing needs to be connected.',
+      methodLogical: 'Built-in SQL backup (.sql, .sql.gz)', methodGbak: 'gbak: .fbk on this computer ({{tool}})',
+      methodGbakMissing: 'gbak: .fbk on this computer (gbak not found)', methodService: '.fbk on the server (Firebird services)',
+      charset: 'Default character set', charsetHint: 'Of the new database; columns without their own character set use it.',
+      done: 'Database restored: {{path}}', doneErrors: 'Database restored with {{errors}} errors: {{path}}', connect: 'Connect'
+    }
   },
   import: {
     sqlTitle: 'Run SQL file', csvTitle: 'Import CSV file', stopOnError: 'Stop on first error', skipLines: 'Skip first lines',

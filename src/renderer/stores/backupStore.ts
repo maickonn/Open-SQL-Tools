@@ -1,5 +1,18 @@
 import { create } from 'zustand'
-import type { BackupFileInfo, BackupRequest, BackupResult, BackupToolInfo, DbObjectInfo, RestoreRequest, RestoreResult } from '@shared/model'
+import type {
+  BackupFileInfo,
+  BackupRequest,
+  BackupResult,
+  BackupToolInfo,
+  ConnectionProfile,
+  ConnectionSecrets,
+  DbEngine,
+  DbObjectInfo,
+  RestoreRequest,
+  RestoreResult,
+  StandaloneRestoreRequest
+} from '@shared/model'
+import { api } from '../gateways/api'
 import { isSingleDatabase } from '@domain/engineTraits'
 import { useWorkspace } from './workspaceStore'
 import { useSettings } from './settingsStore'
@@ -21,6 +34,13 @@ interface BackupVM {
   inspect(sessionId: string, filePath: string): Promise<BackupFileInfo>
   restore(sessionId: string, req: RestoreRequest): Promise<RestoreResult>
   cancel(sessionId: string, operationId: string): void
+  /** Client tools found on this computer for an engine, without a session (no compatibility check). */
+  detectLocalTools(engine: DbEngine): Promise<BackupToolInfo[]>
+  /** What a local backup file holds, without a session. */
+  inspectFile(filePath: string, engine: DbEngine): Promise<BackupFileInfo>
+  /** Firebird: restores a backup into a database file before connecting (Session Manager). */
+  restoreStandalone(profile: ConnectionProfile, secrets: ConnectionSecrets | null, req: StandaloneRestoreRequest): Promise<RestoreResult>
+  cancelStandalone(operationId: string): void
 }
 
 function client(sessionId: string) {
@@ -70,6 +90,19 @@ export const useBackup = create<BackupVM>((set, get) => ({
 
   cancel(sessionId, operationId) {
     void client(sessionId).client.call('cancelOperation', { operationId })
+  },
+
+  async detectLocalTools(engine) {
+    const found = await api.invoke('tools:detect', engine, useSettings.getState().settings.backupTools)
+    return found.map((t) => ({ ...t, compatible: true }))
+  },
+
+  inspectFile: (filePath, engine) => api.invoke('backup:inspect', filePath, engine),
+
+  restoreStandalone: (profile, secrets, req) => api.invoke('connections:restore', profile, secrets, req),
+
+  cancelStandalone(operationId) {
+    void api.invoke('connections:cancelRestore', operationId)
   }
 }))
 

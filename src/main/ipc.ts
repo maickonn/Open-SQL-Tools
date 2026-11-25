@@ -14,6 +14,8 @@ import { demoAi, type ProviderRegistry } from './providers'
 import { applyTitleBarTheme } from './window'
 import { setAppMenu } from './appMenu'
 import { toolLocator } from '@infrastructure/backup/toolLocator'
+import { backupFiles } from '@infrastructure/fs/backupFiles'
+import { inspectBackupHead } from '@application/backup/backupService'
 
 export interface IpcServices {
   store: SqliteStore
@@ -51,6 +53,16 @@ export function registerIpc(s: IpcServices): void {
   handle('connections:test', async (_e, profile, secrets) => {
     const stored = profile.id ? await s.connections.resolveSecrets(profile.id) : {}
     return s.sessions.test(profile, { ...stored, ...Object.fromEntries(Object.entries(secrets ?? {}).filter(([, v]) => v)) })
+  })
+  handle('connections:restore', async (_e, profile, secrets, request) => {
+    const stored = profile.id ? await s.connections.resolveSecrets(profile.id) : {}
+    const merged = { ...stored, ...Object.fromEntries(Object.entries(secrets ?? {}).filter(([, v]) => v)) }
+    return s.sessions.restoreStandalone(profile, merged, request, (p) => broadcast('progress', p))
+  })
+  handle('connections:cancelRestore', (_e, operationId) => s.sessions.cancelRestore(operationId))
+  handle('backup:inspect', async (_e, filePath, engine) => {
+    const head = await backupFiles.head(filePath, 64 * 1024)
+    return inspectBackupHead(filePath, head, engine)
   })
   handle('connections:export', async (_e, filePath, ids) => {
     const file = s.connections.exportProfiles(ids)
